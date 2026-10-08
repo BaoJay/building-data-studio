@@ -21,8 +21,8 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, pipeline, probe, tools
-from .jobs import FileRegistry, JobManager
+from . import __version__, diff, pipeline, probe, tools
+from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +34,17 @@ HOST = "127.0.0.1"
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 
 registry = FileRegistry()
-jobs = JobManager(execute=lambda job: pipeline.execute(job, registry))
+
+
+def execute(job: Job) -> None:
+    """Run a job of either kind on the worker thread."""
+    if job.kind == "diff":
+        diff.execute(job, registry)
+    else:
+        pipeline.execute(job, registry)
+
+
+jobs = JobManager(execute=execute)
 
 
 class LocalOnlyMiddleware:
@@ -146,11 +156,14 @@ async def probe_file(request: Request) -> Response:
 
 async def create_job(request: Request) -> Response:
     body = await _json(request)
+    kind = body.get("kind") or "convert"
+    if kind not in ("convert", "diff"):
+        return _error(f"Loại job không hợp lệ: {kind}")
     try:
-        cfg = pipeline.parse_config(body)
+        cfg = diff.parse_config(body) if kind == "diff" else pipeline.parse_config(body)
     except pipeline.ConfigError as exc:
         return _error(str(exc))
-    job = jobs.submit(body, name=cfg.out_name)
+    job = jobs.submit(body, name=cfg.out_name, kind=kind)
     return JSONResponse({"id": job.id}, status_code=201)
 
 

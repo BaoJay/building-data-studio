@@ -274,49 +274,35 @@ def build_height_rule(raw: dict[str, Any], fields: dict[str, dict[str, Any]]) ->
     return rule
 
 
-class Pipeline:
-    """Runs one job's stages in order, updating the Job for the UI."""
+class StagedPipeline:
+    """Runs a job's steps in order, updating the Job for the UI.
 
-    def __init__(self, job: Job, registry: FileRegistry, cfg: JobConfig) -> None:
+    Subclasses provide plan(), intro(), the `_step_<key>` methods and the
+    output folder; this class owns the run loop, logging, command execution,
+    cancellation and output registration.
+    """
+
+    # Errors that end a run as "failed" with their message shown to the user.
+    handled_errors: tuple[type[BaseException], ...] = (
+        PipelineError, ConfigError, ProbeError, SpecError, tools.ToolMissingError,
+        OSError, sqlite3.Error, json.JSONDecodeError,
+    )
+
+    def __init__(self, job: Job, registry: FileRegistry, out_dir: Path) -> None:
         self.job = job
         self.registry = registry
-        self.cfg = cfg
-        self.out_dir = cfg.out_dir / f"{cfg.out_name}__{time.strftime('%Y%m%d-%H%M%S')}"
-        self.work = self.out_dir / WORK_DIR_NAME
-        self.gpkg_out = self.out_dir / f"{cfg.out_name}.gpkg"
-        self.pmtiles_out = self.out_dir / f"{cfg.out_name}.pmtiles"
-        direct = cfg.want_gpkg and _same_crs(cfg.gpkg_crs, WGS84)
-        self.normalized = self.gpkg_out if direct else self.work / NORMALIZED_NAME
+        self.out_dir = out_dir
+        self.work = out_dir / WORK_DIR_NAME
         self.commands: list[str] = []
-        self.accounting: dict[str, Any] = {}
-        self.info: dict[str, Any] = {}
-        self.rule: HeightRule | None = None
-        self.passthrough: list[str] = []
-        self.src_crs: str | None = None
-        self.tiles_info: dict[str, Any] | None = None
+
+    def plan(self) -> list[Step]:
+        raise NotImplementedError
+
+    def intro(self) -> list[str]:
+        """First log lines of a run."""
+        return [f"Building Data Studio {__version__}", f"Thư mục output: {self.out_dir}"]
 
     # ---------------------------------------------------------------- driver
-    def plan(self) -> list[Step]:
-        cfg = self.cfg
-        steps = [
-            Step("probe", "Đọc file đầu vào"),
-            Step("normalize", "Chuẩn hoá → GeoPackage (EPSG:4326)"),
-        ]
-        if cfg.parts:
-            steps.append(Step("parts", "Gán has_parts / is_part"))
-        steps.append(Step("verify", "Đối soát số lượng feature"))
-        if cfg.want_gpkg and not _same_crs(cfg.gpkg_crs, WGS84):
-            steps.append(Step("reproject", f"Đổi hệ toạ độ GPKG → {cfg.gpkg_crs}"))
-        steps.append(Step("report", "Báo cáo chiều cao"))
-        if cfg.want_pmtiles:
-            steps += [
-                Step("fgb", "Chuẩn bị dữ liệu cho tippecanoe"),
-                Step("tiles", f"Cắt tile z{cfg.tiles.minzoom}–{cfg.tiles.maxzoom} → PMTiles"),
-                Step("check", "Kiểm tra PMTiles"),
-            ]
-        steps.append(Step("finalize", "Ghi báo cáo & dọn file tạm"))
-        return steps
-
     def run(self) -> None:
         job = self.job
         self.work.mkdir(parents=True, exist_ok=True)
@@ -328,8 +314,8 @@ class Pipeline:
             job.output_dir_token = self.registry.register(self.out_dir)
             job.log_file = (self.out_dir / "log.txt").open("a", encoding="utf-8")
         self._add_output("log", "Log chạy", self.out_dir / "log.txt", "log")
-        job.add_log(f"Building Data Studio {__version__} — input: {self.cfg.input_path}")
-        job.add_log(f"Thư mục output: {self.out_dir}")
+        for line in self.intro():
+            job.add_log(line)
         try:
             for step in job.steps:
                 if job.runner.cancelled:
@@ -339,24 +325,34 @@ class Pipeline:
                 job.status = "done"
             job.add_log("HOÀN TẤT ✔")
         except tools.CancelledError:
-            with job.lock:
-                job.status = "cancelled"
-                job.error = "Đã huỷ theo yêu cầu."
-            job.add_log("Đã huỷ. File trung gian giữ lại trong _work/.")
-        except (PipelineError, ConfigError, ProbeError, SpecError, tools.ToolMissingError,
-                OSError, sqlite3.Error, json.JSONDecodeError) as exc:
-            with job.lock:
-                job.status = "failed"
-                job.error = str(exc)
-            job.add_log(f"LỖI: {exc}")
-            job.add_log(f"File trung gian được giữ lại để debug: {self.work}")
+            self._mark_cancelled()
+        except self.handled_errors as exc:
+            if job.runner.cancelled:
+                # An interrupted in-process query surfaces as its own error type.
+                self._mark_cancelled()
+            else:
+                with job.lock:
+                    job.status = "failed"
+                    job.error = str(exc)
+                job.add_log(f"LỖI: {exc}")
+                job.add_log(f"File trung gian được giữ lại để debug: {self.work}")
         finally:
+            self.cleanup()
             with job.lock:
                 job.ended = time.time()
                 if job.log_file is not None:
                     job.log_file.close()
                     job.log_file = None
             self._refresh_output_sizes()
+
+    def cleanup(self) -> None:
+        """Release resources held by the run (called on success, failure and cancel)."""
+
+    def _mark_cancelled(self) -> None:
+        with self.job.lock:
+            self.job.status = "cancelled"
+            self.job.error = "Đã huỷ theo yêu cầu."
+        self.job.add_log("Đã huỷ. File trung gian giữ lại trong _work/.")
 
     def _run_step(self, step: Step) -> None:
         job = self.job
@@ -377,6 +373,91 @@ class Pipeline:
                 step.progress = 100.0
             step.ended = time.time()
         job.add_log(f"✔ {step.title} ({step.ended - step.started:.1f}s)")
+
+    # ---------------------------------------------------------------- helpers
+    def _run(self, cmd: list[str], step: Step, *, fail_on_error_lines: bool = False,
+             line_hook=None) -> None:
+        display = shlex.join([Path(cmd[0]).name, *cmd[1:]])
+        self.commands.append(display)
+        self.job.add_log(f"$ {display}")
+        errors: list[str] = []
+
+        def on_line(line: str) -> None:
+            self.job.add_log(line)
+            if line.startswith("ERROR"):
+                errors.append(line)
+            if line_hook:
+                line_hook(line)
+
+        def on_progress(value: float) -> None:
+            step.progress = value
+
+        code = self.job.runner.run(cmd, on_line, on_progress, cwd=self.work)
+        tool = Path(cmd[0]).name
+        if code != 0:
+            raise PipelineError(f"{tool} thất bại (mã {code}): {errors[-1] if errors else 'xem log'}")
+        if fail_on_error_lines and errors:
+            raise PipelineError(f"{tool} báo lỗi: {errors[-1]}")
+
+    def _add_output(self, key: str, label: str, path: Path, kind: str) -> None:
+        with self.job.lock:
+            self.job.outputs[key] = {
+                "key": key,
+                "label": label,
+                "name": path.name,
+                "path": str(path),
+                "size": path.stat().st_size if path.exists() else None,
+                "token": self.registry.register(path),
+                "kind": kind,
+            }
+
+    def _refresh_output_sizes(self) -> None:
+        with self.job.lock:
+            for out in self.job.outputs.values():
+                p = Path(out["path"])
+                out["size"] = p.stat().st_size if p.exists() else None
+
+
+class Pipeline(StagedPipeline):
+    """Conversion: input -> normalised GeoPackage (+ reprojected copy) -> PMTiles."""
+
+    def __init__(self, job: Job, registry: FileRegistry, cfg: JobConfig) -> None:
+        super().__init__(job, registry, cfg.out_dir / f"{cfg.out_name}__{time.strftime('%Y%m%d-%H%M%S')}")
+        self.cfg = cfg
+        self.gpkg_out = self.out_dir / f"{cfg.out_name}.gpkg"
+        self.pmtiles_out = self.out_dir / f"{cfg.out_name}.pmtiles"
+        direct = cfg.want_gpkg and _same_crs(cfg.gpkg_crs, WGS84)
+        self.normalized = self.gpkg_out if direct else self.work / NORMALIZED_NAME
+        self.accounting: dict[str, Any] = {}
+        self.info: dict[str, Any] = {}
+        self.rule: HeightRule | None = None
+        self.passthrough: list[str] = []
+        self.src_crs: str | None = None
+        self.tiles_info: dict[str, Any] | None = None
+
+    def intro(self) -> list[str]:
+        return [f"Building Data Studio {__version__} — input: {self.cfg.input_path}", f"Thư mục output: {self.out_dir}"]
+
+    def plan(self) -> list[Step]:
+        cfg = self.cfg
+        steps = [
+            Step("probe", "Đọc file đầu vào"),
+            Step("normalize", "Chuẩn hoá → GeoPackage (EPSG:4326)"),
+        ]
+        if cfg.parts:
+            steps.append(Step("parts", "Gán has_parts / is_part"))
+        steps.append(Step("verify", "Đối soát số lượng feature"))
+        if cfg.want_gpkg and not _same_crs(cfg.gpkg_crs, WGS84):
+            steps.append(Step("reproject", f"Đổi hệ toạ độ GPKG → {cfg.gpkg_crs}"))
+        steps.append(Step("report", "Báo cáo chiều cao"))
+        if cfg.want_pmtiles:
+            steps += [
+                Step("fgb", "Chuẩn bị dữ liệu cho tippecanoe"),
+                Step("tiles", f"Cắt tile z{cfg.tiles.minzoom}–{cfg.tiles.maxzoom} → PMTiles"),
+                Step("check", "Kiểm tra PMTiles"),
+            ]
+        steps.append(Step("finalize", "Ghi báo cáo & dọn file tạm"))
+        return steps
 
     # ---------------------------------------------------------------- stages
     def _step_probe(self, step: Step) -> None:
@@ -630,48 +711,6 @@ class Pipeline:
             shutil.rmtree(self.work, ignore_errors=True)
 
     # ---------------------------------------------------------------- helpers
-    def _run(self, cmd: list[str], step: Step, *, fail_on_error_lines: bool = False,
-             line_hook=None) -> None:
-        display = shlex.join([Path(cmd[0]).name, *cmd[1:]])
-        self.commands.append(display)
-        self.job.add_log(f"$ {display}")
-        errors: list[str] = []
-
-        def on_line(line: str) -> None:
-            self.job.add_log(line)
-            if line.startswith("ERROR"):
-                errors.append(line)
-            if line_hook:
-                line_hook(line)
-
-        def on_progress(value: float) -> None:
-            step.progress = value
-
-        code = self.job.runner.run(cmd, on_line, on_progress, cwd=self.work)
-        tool = Path(cmd[0]).name
-        if code != 0:
-            raise PipelineError(f"{tool} thất bại (mã {code}): {errors[-1] if errors else 'xem log'}")
-        if fail_on_error_lines and errors:
-            raise PipelineError(f"{tool} báo lỗi: {errors[-1]}")
-
-    def _add_output(self, key: str, label: str, path: Path, kind: str) -> None:
-        with self.job.lock:
-            self.job.outputs[key] = {
-                "key": key,
-                "label": label,
-                "name": path.name,
-                "path": str(path),
-                "size": path.stat().st_size if path.exists() else None,
-                "token": self.registry.register(path),
-                "kind": kind,
-            }
-
-    def _refresh_output_sizes(self) -> None:
-        with self.job.lock:
-            for out in self.job.outputs.values():
-                p = Path(out["path"])
-                out["size"] = p.stat().st_size if p.exists() else None
-
     def _provenance(self) -> dict[str, Any]:
         stat = self.cfg.input_path.stat()
         return {

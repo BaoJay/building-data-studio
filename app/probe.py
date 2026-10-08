@@ -30,6 +30,7 @@ GENERATED_FIELDS = ("h_m", "h_src", "h_outlier", "has_parts", "is_part")
 NUMERIC_TYPES = frozenset({"Integer", "Integer64", "Real"})
 TEXT_TYPES = frozenset({"String"})
 GEOMETRY_NAME_HINTS = ("geometry", "geom", "wkb", "wkt", "shape")
+PMTILES_CRS = "EPSG:3857"
 
 GEOM_SAMPLE_SIZE = 1000
 PROBE_TIMEOUT_S = 300
@@ -101,7 +102,7 @@ def probe(path: Path, geom_column: str | None = None, layer: str | None = None) 
     """
     suffix = path.suffix.lower()
     if suffix in TILES_SUFFIXES:
-        return probe_pmtiles(path)
+        return probe_pmtiles(path, layer)
 
     open_options: dict[str, str] = {}
     is_parquet = suffix in PARQUET_SUFFIXES
@@ -170,8 +171,13 @@ def probe(path: Path, geom_column: str | None = None, layer: str | None = None) 
     }
 
 
-def probe_pmtiles(path: Path) -> dict[str, Any]:
-    """Read header and layer metadata of a PMTiles archive."""
+def probe_pmtiles(path: Path, layer: str | None = None) -> dict[str, Any]:
+    """Read header and layer metadata of a PMTiles archive.
+
+    Fields come from the tippecanoe `vector_layers` metadata (typed as GDAL
+    would report them), the feature count from `tilestats` (the number of
+    features fed to tippecanoe, before any tile-level dropping).
+    """
     result: dict[str, Any] = {
         "kind": "pmtiles",
         "path": str(path),
@@ -179,6 +185,13 @@ def probe_pmtiles(path: Path) -> dict[str, Any]:
         "size": path.stat().st_size,
         "header": None,
         "vector_layers": [],
+        "layers": [],
+        "layer": None,
+        "fields": [],
+        "feature_count": None,
+        "crs": {"missing": False, "label": PMTILES_CRS, "name": "WGS 84 / Pseudo-Mercator",
+                "definition": PMTILES_CRS, "suggested": None, "note": None},
+        "suggest": suggest_mapping([]),
         "warnings": [],
     }
     exe = tools.which("pmtiles")
@@ -194,7 +207,37 @@ def probe_pmtiles(path: Path) -> dict[str, Any]:
         metadata = json.loads(meta.stdout)
         result["vector_layers"] = metadata.get("vector_layers", [])
         result["generator"] = metadata.get("generator")
+        result["tilestats"] = _tilestats_counts(metadata)
+    result["layers"] = [lyr.get("id") for lyr in result["vector_layers"] if lyr.get("id")]
+    if layer is not None and layer not in result["layers"]:
+        raise ProbeError(f"Không có layer '{layer}' trong file PMTiles.")
+    chosen = layer or (result["layers"][0] if result["layers"] else None)
+    result["layer"] = chosen
+    if chosen is not None:
+        vl = next(lyr for lyr in result["vector_layers"] if lyr.get("id") == chosen)
+        fields = pmtiles_fields(vl.get("fields") or {})
+        result["fields"] = [asdict(f) | {"generated": f.name in GENERATED_FIELDS} for f in fields]
+        result["feature_count"] = result.get("tilestats", {}).get(chosen)
+        result["suggest"] = suggest_mapping(fields)
     return result
+
+
+def pmtiles_fields(declared: dict[str, str]) -> list[Field]:
+    """Map tippecanoe vector_layers field types to the GDAL types used elsewhere."""
+    fields = []
+    for name, kind in declared.items():
+        if kind == "Number":
+            fields.append(Field(name, "Real"))
+        elif kind == "Boolean":
+            fields.append(Field(name, "Integer", "Boolean"))
+        else:  # String, Mixed
+            fields.append(Field(name, "String"))
+    return fields
+
+
+def _tilestats_counts(metadata: dict[str, Any]) -> dict[str, int]:
+    layers = (metadata.get("tilestats") or {}).get("layers") or []
+    return {lyr["layer"]: int(lyr["count"]) for lyr in layers if "layer" in lyr and "count" in lyr}
 
 
 def describe_crs(coordinate_system: dict | None, extent: list[float] | None) -> dict[str, Any]:

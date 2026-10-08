@@ -44,6 +44,10 @@
       .collapse-btn { display: inline-flex; }
     }
     .head { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+    #diffControls { display: grid; gap: 12px; }
+    #diffControls[hidden] { display: none; }
+    .legend label.item { cursor: pointer; }
+    .legend .n { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink-2); }
   </style>
 </head>
 <body>
@@ -54,8 +58,22 @@
       <button class="btn small collapse-btn" id="collapseBtn" type="button">Thu gọn</button>
     </div>
     <label class="field" id="layerField" hidden><span>Layer</span><select id="layerSel"></select></label>
-    <label class="field"><span>Tô màu theo</span><select id="colorSel"></select></label>
+    <label class="field" id="colorField"><span>Tô màu theo</span><select id="colorSel"></select></label>
     <div class="legend" id="legend"></div>
+    <div id="diffControls" hidden>
+      <div class="legend" id="diffLegend"></div>
+      <label class="field"><span>Lưới thống kê tô theo</span>
+        <select id="gridSel">
+          <option value="total">Tổng thay đổi (thêm + xoá + đổi)</option>
+          <option value="removed">Số building bị xoá</option>
+          <option value="added">Số building thêm mới</option>
+          <option value="changed">Số building có thay đổi</option>
+          <option value="delta">Chênh lệch số lượng B − A</option>
+        </select>
+      </label>
+      <div class="legend" id="gridLegend"></div>
+      <label class="check"><input type="checkbox" id="showGrid" checked> Hiện lưới thống kê</label>
+    </div>
     <label class="check"><input type="checkbox" id="threeD" checked> Dựng 3D</label>
     <label class="check" id="hideParentsWrap" hidden><input type="checkbox" id="hideParents" checked>Ẩn outline có khối con (<code>has_parts</code>)</label>
     <label class="field"><span>Bản đồ nền</span>
@@ -68,7 +86,7 @@
       </select>
     </label>
     <div class="hint" id="baseNote" style="color:var(--warn-ink)"></div>
-    <div class="hint">Click building để xem thuộc tính. Chuột phải (hoặc Ctrl) + kéo để xoay / nghiêng. Bản đồ nền cần internet.</div>
+    <div class="hint" id="panelHint">Click building để xem thuộc tính. Chuột phải (hoặc Ctrl) + kéo để xoay / nghiêng. Bản đồ nền cần internet.</div>
   </aside>
   <div class="zoomnote" id="zoomNote" hidden></div>
   <div class="zbadge" id="zBadge"></div>

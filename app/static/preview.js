@@ -6,16 +6,12 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 const HEIGHT_ATTRS = ["h_m", "height_m", "height", "render_height"];
 const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
-// Sequential blue (light = low, dark = tall).
-const HEIGHT_STOPS = [[0, "#cde2fb"], [6, "#9ec5f4"], [12, "#6da7ec"], [20, "#3987e5"], [35, "#256abf"], [60, "#1c5cab"], [100, "#184f95"], [200, "#104281"], [400, "#0d366b"]];
-// Dark basemap: same blue hue, lightness reversed so tall buildings stay the most salient.
-const HEIGHT_STOPS_DARK = [[0, "#184f95"], [6, "#1c5cab"], [12, "#256abf"], [20, "#2a78d6"], [35, "#3987e5"], [60, "#5598e7"], [100, "#86b6ef"], [200, "#b7d3f6"], [400, "#cde2fb"]];
-// Categorical slots in fixed order; anything past 8 values folds into neutral "khác".
-const CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
-const NEUTRAL = "#c3c2b7";
-const SRC_COLORS = { height: "#2a78d6", levels: "#1baf7a", clamped: "#eda100", default: NEUTRAL };
-const OUTLIER_COLOR = "#d03b3b";
-const HIGHLIGHT = "#eb6834";
+// Map colours are the Studio Indochine tokens in tokens.css: height-1…9 sit on these
+// breaks (paper yellow → roof brown), cat-1…8 are the categorical slots (anything past
+// 8 values folds into map-neutral "khác").
+const HEIGHT_BREAKS = [0, 6, 12, 20, 35, 60, 100, 200, 400];
+const CAT_COUNT = 8;
+const SRC_TOKENS = { height: "cat-1", levels: "cat-3", clamped: "cat-2", default: "map-neutral" };
 // OpenFreeMap: free vector basemaps, no API key. Their own building layers are
 // removed so they never overlap the buildings being checked.
 const BASEMAPS = {
@@ -30,6 +26,37 @@ const params = new URLSearchParams(location.search);
 const token = params.get("f");
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
 const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
+
+// The colour set follows the basemap, not the page: dark tiles get the dark set, whose
+// height ramp is reversed so tall buildings stay the most salient.
+function mapTheme(key = $("#baseSel").value) {
+  return key === "dark" || (key === "none" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+}
+
+const palettes = {};
+function palette(theme) {
+  if (palettes[theme]) return palettes[theme];
+  // Read the tokens off a probe element pinned to that theme.
+  const probe = document.createElement("div");
+  probe.dataset.theme = theme;
+  probe.hidden = true;
+  document.body.append(probe);
+  const cs = getComputedStyle(probe);
+  const v = (name) => cs.getPropertyValue(`--${name}`).trim();
+  const pal = {
+    height: HEIGHT_BREAKS.map((h, i) => [h, v(`height-${i + 1}`)]),
+    cat: Array.from({ length: CAT_COUNT }, (_, i) => v(`cat-${i + 1}`)),
+    src: Object.fromEntries(Object.entries(SRC_TOKENS).map(([k, t]) => [k, v(t)])),
+    neutral: v("map-neutral"),
+    outlier: v("map-outlier"),
+    highlight: v("map-highlight"),
+    plain: v("height-4"),
+    ground: v("map-ground"),
+    outline: v("ink"),
+  };
+  probe.remove();
+  return (palettes[theme] = pal);
+}
 
 async function main() {
   if (!token) { $("#title").textContent = "Thiếu tham số f (token file PMTiles)."; return; }
@@ -118,8 +145,7 @@ async function main() {
 
 async function basemapStyle(key, bldgSource) {
   const def = BASEMAPS[key] || BASEMAPS.none;
-  const dark = key === "dark" || (key === "none" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  const bg = { id: "bg", type: "background", paint: { "background-color": dark ? "#1a1a19" : "#f3f2ee" } };
+  const bg = { id: "bg", type: "background", paint: { "background-color": palette(mapTheme(key)).ground } };
   let style = { version: 8, sources: {}, layers: [bg] };
   $("#baseNote").textContent = "";
   try {
@@ -174,41 +200,42 @@ function addBuildingLayers(map) {
   const layerId = state.layer;
   ["bldg-3d", "bldg-2d", "bldg-line"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
   map.addLayer({ id: "bldg-2d", type: "fill", source: "bldg", "source-layer": layerId, paint: { "fill-opacity": 0.85 } });
-  map.addLayer({ id: "bldg-line", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-color": "rgba(11,11,11,0.25)", "line-width": 0.5 } });
+  map.addLayer({ id: "bldg-line", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-color": palette(mapTheme()).outline, "line-opacity": 0.3, "line-width": 0.5 } });
   map.addLayer({ id: "bldg-3d", type: "fill-extrusion", source: "bldg", "source-layer": layerId, paint: { "fill-extrusion-opacity": 0.92, "fill-extrusion-vertical-gradient": true } });
 }
 
 function colorExpression() {
   const by = state.colorBy;
+  const pal = palette(mapTheme());
   let expr;
   let legend;
   if (by === "height" && state.heightAttr) {
-    const stops = $("#baseSel").value === "dark" ? HEIGHT_STOPS_DARK : HEIGHT_STOPS;
+    const stops = pal.height;
     expr = ["interpolate", ["linear"], ["to-number", ["get", state.heightAttr], 0], ...stops.flat()];
-    const grad = stops.map(([, c], i) => `${c} ${(100 * i) / (HEIGHT_STOPS.length - 1)}%`).join(", ");
+    const grad = stops.map(([, c], i) => `${c} ${(100 * i) / (stops.length - 1)}%`).join(", ");
     legend = `<div class="ramp" style="background:linear-gradient(90deg, ${grad})"></div>
       <div class="ramp-labels">${stops.filter((_, i) => i % 2 === 0).map(([v]) => `<span>${v}</span>`).join("")}</div>
       <div class="hint">mét (${esc(state.heightAttr)}), thang không tuyến tính</div>`;
   } else if (by === "h_src") {
-    expr = ["match", ["get", "h_src"], ...Object.entries(SRC_COLORS).flat(), NEUTRAL];
-    legend = Object.entries(SRC_COLORS).map(([k, c]) => item(c, k)).join("");
+    expr = ["match", ["get", "h_src"], ...Object.entries(pal.src).flat(), pal.neutral];
+    legend = Object.entries(pal.src).map(([k, c]) => item(c, k)).join("");
   } else if (by === "outlier") {
-    expr = ["case", ["any", ["==", ["get", "h_outlier"], 1], ["==", ["get", "h_outlier"], true]], OUTLIER_COLOR, "#e1e0d9"];
-    legend = item(OUTLIER_COLOR, "Outlier (giá trị gốc ngoài khoảng hợp lệ)") + item("#e1e0d9", "Bình thường");
+    expr = ["case", ["any", ["==", ["get", "h_outlier"], 1], ["==", ["get", "h_outlier"], true]], pal.outlier, pal.neutral];
+    legend = item(pal.outlier, "Outlier (giá trị gốc ngoài khoảng hợp lệ)") + item(pal.neutral, "Bình thường");
   } else if (by.startsWith("cat:")) {
     const attr = by.slice(4);
-    const values = (state.stats[attr]?.values || []).slice(0, CATEGORICAL.length);
-    expr = values.length ? ["match", ["to-string", ["get", attr]], ...values.flatMap((v, i) => [String(v), CATEGORICAL[i]]), NEUTRAL] : NEUTRAL;
-    legend = values.map((v, i) => item(CATEGORICAL[i], v)).join("") + ((state.stats[attr]?.values || []).length > values.length ? item(NEUTRAL, "khác") : "");
+    const values = (state.stats[attr]?.values || []).slice(0, pal.cat.length);
+    expr = values.length ? ["match", ["to-string", ["get", attr]], ...values.flatMap((v, i) => [String(v), pal.cat[i]]), pal.neutral] : pal.neutral;
+    legend = values.map((v, i) => item(pal.cat[i], v)).join("") + ((state.stats[attr]?.values || []).length > values.length ? item(pal.neutral, "khác") : "");
   } else {
-    expr = "#9ec5f4";
+    expr = pal.plain;
     legend = "";
   }
   if (state.selected && state.idCol) {
     // Also light up the parts of a multi-part building (its outline may be hidden).
     const match = [["==", ["to-string", ["get", state.idCol]], state.selected]];
     if (state.parentAttr) match.push(["==", ["to-string", ["get", state.parentAttr]], state.selected]);
-    expr = ["case", ["any", ...match], HIGHLIGHT, expr];
+    expr = ["case", ["any", ...match], pal.highlight, expr];
   }
   return { expr, legend };
 }
@@ -282,20 +309,17 @@ function updateZoomUI(map) {
 }
 
 // ------------------------------------------------------------------ diff mode
-// Building colours match the report: green = only in B, red = only in A, amber = changed.
+// Building colours come from the tokens, like the swatches of the report: added = cat-1
+// (street-sign blue), removed = map-outlier, changed = cat-2 (ochre). Blue / red / ochre
+// stay apart for red-green colour blindness too.
 const DIFF_KINDS = [
-  ["added", "#1baf7a", "Thêm mới (chỉ có ở B)"],
-  ["removed", "#d03b3b", "Bị xoá (chỉ có ở A)"],
-  ["changed", "#eda100", "Có thay đổi"],
+  ["added", (pal) => pal.cat[0], "Thêm mới (chỉ có ở B)"],
+  ["removed", (pal) => pal.outlier, "Bị xoá (chỉ có ở A)"],
+  ["changed", (pal) => pal.cat[1], "Có thay đổi"],
 ];
-const GRID_RAMPS = {
-  total: ["#fff1d6", "#f7c873", "#eb8a34", "#c8461c", "#8a2a10"],
-  removed: ["#fde3e3", "#f3a5a5", "#e06464", "#c03232", "#7f1d1d"],
-  added: ["#dcf5ea", "#9fe0c2", "#4fc293", "#1a9466", "#0b5e40"],
-  changed: ["#fff1d6", "#f7d27f", "#eda100", "#b87800", "#7a5200"],
-};
-const GRID_DIVERGING = ["#c03232", "#f3a5a5", "#efeeea", "#9fe0c2", "#1a9466"];
+// The statistics grid fades out as the buildings come in.
 const GRID_FADE = [10, 0.62, 12.5, 0.08];
+const GRID_LINE_FADE = [10, 0.3, 12.5, 0.04];
 const DIFF_FIELDS = ["diff_change", "diff_key", "diff_h", "diff_dh", "diff_geom", "diff_cols"];
 
 async function mainDiff(url, header, meta) {
@@ -317,11 +341,10 @@ async function mainDiff(url, header, meta) {
       if (res.ok) state.diff.grid = await res.json();
     } catch { /* the map still works without the grid */ }
   }
-  const totals = { added: 0, removed: 0, changed: 0 };
-  for (const f of state.diff.grid?.features || []) for (const k of Object.keys(totals)) totals[k] += f.properties[k] || 0;
-  $("#diffLegend").innerHTML = DIFF_KINDS.map(([k, color, label]) => `
-    <label class="item"><input type="checkbox" data-kind="${k}" checked><span class="sw" style="background:${color}"></span>${esc(label)}
-      <span class="n">${state.diff.grid ? totals[k].toLocaleString("vi-VN") : ""}</span></label>`).join("");
+  state.diff.totals = { added: 0, removed: 0, changed: 0 };
+  for (const f of state.diff.grid?.features || []) {
+    for (const k of Object.keys(state.diff.totals)) state.diff.totals[k] += f.properties[k] || 0;
+  }
   if (!state.diff.grid) $("#gridSel").closest("label").hidden = true;
 
   const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -382,16 +405,21 @@ async function mainDiff(url, header, meta) {
 }
 
 function addDiffLayers(map) {
+  // Colours follow the basemap (light / dark set), so they are re-read after every style switch.
+  const pal = palette(mapTheme());
   if (state.diff.grid && !map.getSource("grid")) map.addSource("grid", { type: "geojson", data: state.diff.grid });
   if (state.diff.grid) {
     map.addLayer({ id: "grid-fill", type: "fill", source: "grid", paint: { "fill-opacity": ["interpolate", ["linear"], ["zoom"], ...GRID_FADE] } });
-    map.addLayer({ id: "grid-line", type: "line", source: "grid", paint: { "line-color": "rgba(11,11,11,0.18)", "line-width": 0.5, "line-opacity": ["interpolate", ["linear"], ["zoom"], ...GRID_FADE] } });
+    map.addLayer({ id: "grid-line", type: "line", source: "grid", paint: { "line-color": pal.outline, "line-width": 0.5, "line-opacity": ["interpolate", ["linear"], ["zoom"], ...GRID_LINE_FADE] } });
   }
-  const color = ["match", ["get", "diff_change"], ...DIFF_KINDS.flatMap(([k, c]) => [k, c]), "#898781"];
+  const color = ["match", ["get", "diff_change"], ...DIFF_KINDS.flatMap(([k, c]) => [k, c(pal)]), pal.neutral];
   map.addLayer({ id: "diff-fill", type: "fill", source: "bldg", "source-layer": "diff", paint: { "fill-color": color, "fill-opacity": 0.8 } });
   map.addLayer({ id: "diff-line", type: "line", source: "bldg", "source-layer": "diff", paint: { "line-color": color, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.4, 17, 1.4] } });
   map.addLayer({ id: "diff-3d", type: "fill-extrusion", source: "bldg", "source-layer": "diff", paint: { "fill-extrusion-color": color, "fill-extrusion-opacity": 0.9, "fill-extrusion-height": ["to-number", ["coalesce", ["get", "diff_h"], 4], 4] } });
-  map.addLayer({ id: "diff-sel", type: "line", source: "bldg", "source-layer": "diff", paint: { "line-color": "#0b0b0b", "line-width": 3 } });
+  map.addLayer({ id: "diff-sel", type: "line", source: "bldg", "source-layer": "diff", paint: { "line-color": pal.highlight, "line-width": 3 } });
+  $("#diffLegend").innerHTML = DIFF_KINDS.map(([k, c, label]) => `
+    <label class="item"><input type="checkbox" data-kind="${k}" ${state.diff.show.has(k) ? "checked" : ""}><span class="sw" style="background:${c(pal)}"></span>${esc(label)}
+      <span class="n">${state.diff.grid ? state.diff.totals[k].toLocaleString("vi-VN") : ""}</span></label>`).join("");
   applyDiffStyle(map);
 }
 
@@ -413,14 +441,16 @@ function applyDiffStyle(map) {
 }
 
 function gridColor(by) {
+  const pal = palette(mapTheme());
   const values = (state.diff.grid?.features || []).map((f) => f.properties[by] || 0);
   if (by === "delta") {
+    // Diverging: fewer buildings in B = the "removed" colour, more = the "added" colour.
+    const diverging = [pal.outlier, pal.neutral, pal.cat[0]];
     const sorted = values.map(Math.abs).filter((v) => v > 0).sort((a, b) => a - b);
     const m = Math.max(1, sorted[Math.floor(sorted.length * 0.95)] || 1);
-    const stops = [-m, -m / 4, 0, m / 4, m];
     return {
-      expr: ["interpolate", ["linear"], ["get", "delta"], ...stops.flatMap((v, i) => [v, GRID_DIVERGING[i]])],
-      legend: rampLegend(GRID_DIVERGING, [`−${fmtCount(m)}`, "0", `+${fmtCount(m)}`], "B ít hơn A ← → B nhiều hơn A (số building / ô)"),
+      expr: ["interpolate", ["linear"], ["get", "delta"], -m, diverging[0], 0, diverging[1], m, diverging[2]],
+      legend: rampLegend(diverging, [`−${fmtCount(m)}`, "0", `+${fmtCount(m)}`], "B ít hơn A ← → B nhiều hơn A (số building / ô)"),
     };
   }
   const nonzero = values.filter((v) => v > 0).sort((a, b) => a - b);
@@ -429,7 +459,8 @@ function gridColor(by) {
   const raw = [0, q(0.25), q(0.6), q(0.9), Math.max(q(1), 1)];
   const stops = raw.map((v, i) => (i === 0 ? 0 : Math.max(v, i)));
   for (let i = 1; i < stops.length; i++) if (stops[i] <= stops[i - 1]) stops[i] = stops[i - 1] + 1;
-  const ramp = GRID_RAMPS[by];
+  // Counts use the height ramp (paper yellow → roof brown): darker = more buildings in the cell.
+  const ramp = [0, 2, 4, 6, 8].map((i) => pal.height[i][1]);
   return {
     expr: ["case", ["==", ["get", by], 0], "rgba(0,0,0,0)", ["interpolate", ["linear"], ["get", by], ...stops.flatMap((v, i) => [v, ramp[i]])]],
     legend: rampLegend(ramp, ["1", fmtCount(stops[2]), fmtCount(stops[4])], "số building trong ô (ô trống thay đổi = trong suốt)"),

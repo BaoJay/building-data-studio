@@ -1,0 +1,197 @@
+/* Studio Indochine — generated from tokens.json
+   Nguồn: design system https://claude.ai/artifact/8EMMwiufYUYL3j8ChyQ6iL
+   Sửa token ở design system rồi sinh lại file này; đừng sửa tay giá trị ở đây.
+   Chế độ tối theo prefers-color-scheme; [data-theme] ép một chế độ cho một phần tử. */
+
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --page: #f4ecd8;
+  --surface: #fbf6ea;
+  --surface-2: #ece2c9;
+  --line: #dccfb0;
+  --line-strong: #8c7a58;
+  --ink: #2b2219;
+  --ink-2: #574837;
+  --muted: #6f5f48;
+  --ochre: #d9a23a;
+  --ochre-soft: #f3e2b3;
+  --on-ochre: #2b2219;
+  --shutter: #2f5f4c;
+  --shutter-strong: #234a3b;
+  --shutter-soft: #dce6d8;
+  --on-shutter: #fbf6ea;
+  --brick: #b2502b;
+  --accent: var(--shutter);
+  --accent-hover: var(--shutter-strong);
+  --accent-soft: var(--shutter-soft);
+  --accent-ink: var(--on-shutter);
+  --focus: var(--shutter);
+  --ornament: var(--ochre);
+  --good: var(--shutter);
+  --good-soft: var(--shutter-soft);
+  --warn: var(--ochre);
+  --warn-soft: var(--ochre-soft);
+  --warn-ink: #7a5212;
+  --bad: #a3301f;
+  --bad-soft: #f6ded3;
+  --bar: #a8732a;
+  --bar-track: var(--surface-2);
+  --map-ground: #ece2c9;
+  --map-neutral: #d6c9a8;
+  --map-outlier: var(--bad);
+  --map-highlight: var(--brick);
+  --height-1: #f0dca6;
+  --height-2: #e9c77e;
+  --height-3: #e0ad55;
+  --height-4: #d4923a;
+  --height-5: #bf772d;
+  --height-6: #a35d27;
+  --height-7: #844622;
+  --height-8: #63331d;
+  --height-9: #452316;
+  --cat-1: #2f5b8a;
+  --cat-2: #d29a2e;
+  --cat-3: #3f7a5f;
+  --cat-4: #b4532a;
+  --cat-5: #7b4a80;
+  --cat-6: #7fae98;
+  --cat-7: #7a5a3a;
+  --cat-8: #d4808a;
+  --shadow-float: 0 1px 0 #2b22190f, 0 10px 28px -8px #2b221940;
+  --focus-ring: 0 0 0 2px #fbf6ea, 0 0 0 4px #2f5f4c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #16120d;
+    --surface: #1f1a13;
+    --surface-2: #29221a;
+    --line: #3b3226;
+    --line-strong: #7d6c52;
+    --ink: #f0e5cc;
+    --ink-2: #cdbd9e;
+    --muted: #a69579;
+    --ochre: #ddb050;
+    --ochre-soft: #3a2d14;
+    --on-ochre: #2b2219;
+    --shutter: #86bba1;
+    --shutter-strong: #a3cdb8;
+    --shutter-soft: #1e3329;
+    --on-shutter: #16120d;
+    --brick: #d97a52;
+    --accent: var(--shutter);
+    --accent-hover: var(--shutter-strong);
+    --accent-soft: var(--shutter-soft);
+    --accent-ink: var(--on-shutter);
+    --focus: var(--shutter);
+    --ornament: var(--ochre);
+    --good: var(--shutter);
+    --good-soft: var(--shutter-soft);
+    --warn: var(--ochre);
+    --warn-soft: var(--ochre-soft);
+    --warn-ink: #e6c06d;
+    --bad: #ee8a73;
+    --bad-soft: #3d1d16;
+    --bar: #d4a24a;
+    --bar-track: var(--surface-2);
+    --map-ground: #1f1a13;
+    --map-neutral: #4d4335;
+    --map-outlier: var(--bad);
+    --map-highlight: var(--brick);
+    --height-1: #5c3b1e;
+    --height-2: #774b21;
+    --height-3: #925d25;
+    --height-4: #ad722c;
+    --height-5: #c48a37;
+    --height-6: #d6a248;
+    --height-7: #e3ba63;
+    --height-8: #ecd08a;
+    --height-9: #f4e3b4;
+    --cat-1: #7aa3cf;
+    --cat-2: #e2b356;
+    --cat-3: #79b597;
+    --cat-4: #e08560;
+    --cat-5: #b787bc;
+    --cat-6: #a3cdb9;
+    --cat-7: #b8936c;
+    --cat-8: #eba6ae;
+    --shadow-float: 0 12px 32px -8px #000000b3;
+    --focus-ring: 0 0 0 2px #1f1a13, 0 0 0 4px #86bba1;
+  }
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #16120d;
+  --surface: #1f1a13;
+  --surface-2: #29221a;
+  --line: #3b3226;
+  --line-strong: #7d6c52;
+  --ink: #f0e5cc;
+  --ink-2: #cdbd9e;
+  --muted: #a69579;
+  --ochre: #ddb050;
+  --ochre-soft: #3a2d14;
+  --on-ochre: #2b2219;
+  --shutter: #86bba1;
+  --shutter-strong: #a3cdb8;
+  --shutter-soft: #1e3329;
+  --on-shutter: #16120d;
+  --brick: #d97a52;
+  --accent: var(--shutter);
+  --accent-hover: var(--shutter-strong);
+  --accent-soft: var(--shutter-soft);
+  --accent-ink: var(--on-shutter);
+  --focus: var(--shutter);
+  --ornament: var(--ochre);
+  --good: var(--shutter);
+  --good-soft: var(--shutter-soft);
+  --warn: var(--ochre);
+  --warn-soft: var(--ochre-soft);
+  --warn-ink: #e6c06d;
+  --bad: #ee8a73;
+  --bad-soft: #3d1d16;
+  --bar: #d4a24a;
+  --bar-track: var(--surface-2);
+  --map-ground: #1f1a13;
+  --map-neutral: #4d4335;
+  --map-outlier: var(--bad);
+  --map-highlight: var(--brick);
+  --height-1: #5c3b1e;
+  --height-2: #774b21;
+  --height-3: #925d25;
+  --height-4: #ad722c;
+  --height-5: #c48a37;
+  --height-6: #d6a248;
+  --height-7: #e3ba63;
+  --height-8: #ecd08a;
+  --height-9: #f4e3b4;
+  --cat-1: #7aa3cf;
+  --cat-2: #e2b356;
+  --cat-3: #79b597;
+  --cat-4: #e08560;
+  --cat-5: #b787bc;
+  --cat-6: #a3cdb9;
+  --cat-7: #b8936c;
+  --cat-8: #eba6ae;
+  --shadow-float: 0 12px 32px -8px #000000b3;
+  --focus-ring: 0 0 0 2px #1f1a13, 0 0 0 4px #86bba1;
+}
+
+:root {
+  --rule-gap: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-none: 0;
+  --radius-sm: 2px;
+  --radius-round: 50%;
+  --font-serif: "Playfair Display", "Times New Roman", Georgia, serif;
+  --font-sans: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}

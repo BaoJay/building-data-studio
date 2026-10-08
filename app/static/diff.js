@@ -36,9 +36,10 @@ const DEFAULTS = {
   thresholds: Object.fromEntries(Object.entries(THRESHOLDS).map(([k, v]) => [k, v[2]])),
   fail_layer_change: true, grid_deg: 0.05, want_tiles: true, keep_temp: false, out_dir: "", last_a: "",
 };
-const VERDICT = { pass: "PASS", warn: "WARN", fail: "FAIL" };
+const VERDICT = { pass: "✓ Pass", warn: "! Warn", fail: "✕ Fail" };
 const VERDICT_TEXT = { pass: "Không vi phạm ngưỡng nào", warn: "Có điểm cần xem lại trước khi release", fail: "Không nên release" };
-const LEVEL_LABEL = { fail: "FAIL", warn: "WARN", info: "INFO" };
+const LEVEL_LABEL = { fail: "Fail", warn: "Warn", info: "Info" };
+const levelBadge = (level) => `<span class="badge ${level === "info" ? "" : `st-${level}`}">${LEVEL_LABEL[level]}</span>`;
 const GEOM_CLASSES = [["identical", "Giống hệt"], ["minor", "Khác nhỏ"], ["moderate", "Khác vừa"], ["major", "Đáng kể"]];
 
 const ds = {
@@ -391,7 +392,7 @@ export function renderDiffReport(job) {
   const counts = `${g.counts.fail} fail · ${g.counts.warn} warn · ${g.counts.info} thông tin`;
   let html = `
     <div class="verdict ${g.verdict}">
-      <span class="big">${VERDICT[g.verdict]}</span>
+      <span class="badge st-${g.verdict}">${VERDICT[g.verdict]}</span>
       <div class="grow"><div class="vt">${esc(VERDICT_TEXT[g.verdict])}</div>
         <div class="meta">${esc(counts)} · khớp theo ${m.mode === "key" ? `ID <code>${esc(m.key_a)}</code>` : "vị trí"}</div></div>
       ${mapUrl() && job.status === "done" ? `<a class="btn primary" href="${mapUrl()}" target="_blank" rel="noopener">Xem bản đồ diff</a>` : ""}
@@ -399,9 +400,9 @@ export function renderDiffReport(job) {
     <div class="ab-names"><span><span class="side-badge a sm">A</span> ${esc(sa.name)}</span><span>→</span><span><span class="side-badge b sm">B</span> ${esc(sb.name)}</span></div>`;
 
   html += `<div class="findings">${g.findings.length ? g.findings.map((f) => `
-      <div class="finding ${f.level}"><span class="lv">${LEVEL_LABEL[f.level]}</span>
+      <div class="finding">${levelBadge(f.level)}
         <div><div class="t">${esc(f.title)}</div>${f.detail ? `<div class="d">${esc(f.detail)}</div>` : ""}</div></div>`).join("")
-    : `<div class="finding info"><span class="lv">PASS</span><div class="t">Không vi phạm ngưỡng nào.</div></div>`}</div>`;
+    : `<div class="finding"><span class="badge st-pass">Pass</span><div class="t">Không vi phạm ngưỡng nào.</div></div>`}</div>`;
 
   const kpi = (label, value, sub = "", cls = "") => `<div class="kpi ${cls}"><div class="label">${esc(label)}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
   html += `<div class="kpis diff-kpis">
@@ -486,7 +487,7 @@ function schemaBlock(s) {
   if (s.added.length) html += `<p class="accounting"><b>B có ${fmtInt(s.added.length)} field mới</b> <span class="hint">(% = tỉ lệ building ở B có dữ liệu)</span></p>` + chips(s.added, () => "");
   if (s.type_changed.length) {
     html += `<div class="tbl-wrap"><table><thead><tr><th>Field</th><th>A</th><th>B</th><th>Mức</th><th>Ghi chú</th></tr></thead><tbody>${s.type_changed.map((c) => `
-      <tr><td class="mono">${esc(c.name)}</td><td>${esc(c.type_a)}</td><td>${esc(c.type_b)}</td><td><span class="lvl ${c.level}">${LEVEL_LABEL[c.level]}</span></td><td>${esc(c.note)}</td></tr>`).join("")}</tbody></table></div>`;
+      <tr><td class="mono">${esc(c.name)}</td><td>${esc(c.type_a)}</td><td>${esc(c.type_b)}</td><td>${levelBadge(c.level)}</td><td>${esc(c.note)}</td></tr>`).join("")}</tbody></table></div>`;
   }
   if (s.null_changes.length) {
     html += `<p class="accounting"><b>Tỉ lệ null thay đổi</b> <span class="hint">(cột chung, sắp theo mức tăng)</span></p>
@@ -533,7 +534,7 @@ function changesBlock(c, matched) {
   const cols = c.columns.filter((x) => x.changed);
   html += `<div class="subhead">Thuộc tính (số building khớp có giá trị khác)</div>`;
   html += cols.length ? `<div class="tbl-wrap scroll-y"><table><thead><tr><th>Cột</th><th class="n">Building đổi</th><th class="n">%</th><th></th></tr></thead><tbody>${cols.map((x) => `
-      <tr><td class="mono">${esc(x.column)}</td><td class="n">${fmtInt(x.changed)}</td><td class="n">${pct(x.pct)}</td><td>${x.ignored ? '<span class="lvl info">bỏ qua</span>' : ""}</td></tr>`).join("")}</tbody></table></div>`
+      <tr><td class="mono">${esc(x.column)}</td><td class="n">${fmtInt(x.changed)}</td><td class="n">${pct(x.pct)}</td><td>${x.ignored ? '<span class="badge">bỏ qua</span>' : ""}</td></tr>`).join("")}</tbody></table></div>`
     : `<p class="hint">Không cột chung nào đổi giá trị.</p>`;
   return html;
 }

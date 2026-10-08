@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+output/
+uploads/
+*.parquet
+*.gpkg
+*.pmtiles
+*.fgb
+.DS_Store

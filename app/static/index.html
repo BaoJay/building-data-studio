@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Building Data Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232a78d6' d='M3 21V9l6-4v4l6-4v16H3zm14 0V3h4v18h-4z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 21V9l6-4v4l6-4v16H3zm14 0V3h4v18h-4z"/></svg>
+      Building Data Studio
+      <span class="sub">Convert Parquet / GeoPackage → GeoPackage + PMTiles · QA chiều cao</span>
+    </div>
+    <div class="tool-status" id="toolStatus"></div>
+  </header>
+
+  <main class="layout">
+    <section class="card" id="inputCard">
+      <h2><span class="num">1</span> File đầu vào</h2>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Kéo thả hoặc chọn file">
+        <svg class="dz-icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        <div class="dz-title">Kéo thả file vào đây</div>
+        <div class="dz-sub">.parquet · .gpkg · .fgb · .geojson để convert — hoặc .pmtiles để xem bản đồ 3D</div>
+        <span class="btn">Chọn file…</span>
+        <input type="file" id="fileInput" hidden>
+      </div>
+      <div class="path-row">
+        <input type="text" id="pathInput" placeholder="…hoặc dán đường dẫn file trên máy (không phải upload — nhanh hơn với file lớn)">
+        <button class="btn" id="pathBtn" type="button">Mở</button>
+      </div>
+      <div class="upload-status" id="uploadStatus" hidden>
+        <div id="uploadText"></div>
+        <div class="progress" id="uploadBar"><span></span></div>
+      </div>
+      <div id="fileInfo"></div>
+    </section>
+
+    <section class="card" id="optionsCard" hidden>
+      <h2><span class="num">2</span> Tuỳ chọn</h2>
+      <form id="optForm" autocomplete="off"></form>
+      <div class="run-row">
+        <button class="btn primary" id="runBtn" type="button">Chạy convert</button>
+        <button class="btn" id="resetBtn" type="button">Khôi phục mặc định</button>
+        <span class="hint" id="runHint"></span>
+      </div>
+    </section>
+
+    <section class="card" id="jobCard" hidden>
+      <h2><span class="num">3</span> Tiến trình &amp; kết quả</h2>
+      <div class="job-head" id="jobHead"></div>
+      <ol class="steps" id="steps"></ol>
+      <div id="jobError"></div>
+      <div class="outputs" id="outputs"></div>
+      <div class="out-actions" id="outActions"></div>
+      <details class="log" id="logBox">
+        <summary>Log chi tiết</summary>
+        <pre id="log"></pre>
+      </details>
+    </section>
+
+    <section class="card" id="reportCard" hidden>
+      <h2>Báo cáo chiều cao</h2>
+      <div id="report"></div>
+    </section>
+
+    <section class="card" id="historyCard" hidden>
+      <h3>Lịch sử chạy (phiên này)</h3>
+      <ul class="history" id="history"></ul>
+    </section>
+  </main>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

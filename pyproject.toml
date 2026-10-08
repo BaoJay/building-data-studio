@@ -1,0 +1,13 @@
+[project]
+name = "building-data-studio"
+version = "0.1.0"
+description = "Local web app for building data: convert Parquet/GeoPackage -> GeoPackage + PMTiles, height QA, release diff"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Xem PMTiles 3D</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232a78d6' d='M3 21V9l6-4v4l6-4v16H3zm14 0V3h4v18h-4z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    html, body { height: 100%; }
+    body { overflow: hidden; }
+    #map { position: absolute; inset: 0; background: var(--page); }
+    .panel {
+      position: absolute; top: 12px; left: 12px; z-index: 5; width: 300px; max-height: calc(100% - 24px); overflow: auto;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 14px 16px; display: grid; gap: 12px;
+    }
+    .panel h1 { font-size: 14px; margin: 0; overflow-wrap: anywhere; }
+    .panel .meta { font-size: 12px; color: var(--muted); }
+    .legend { display: grid; gap: 4px; font-size: 12.5px; }
+    .legend .item { display: flex; align-items: center; gap: 8px; }
+    .legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+    .ramp { height: 10px; border-radius: 3px; }
+    .ramp-labels { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .zoomnote {
+      position: absolute; bottom: 36px; left: 50%; transform: translateX(-50%); z-index: 5; background: var(--ink); color: var(--page);
+      padding: 6px 12px; border-radius: 8px; font-size: 12.5px;
+    }
+    .zbadge {
+      position: absolute; bottom: 10px; left: 12px; z-index: 5; font: 12px var(--mono); background: var(--surface);
+      border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; color: var(--ink-2);
+    }
+    .maplibregl-popup-content { background: var(--surface); color: var(--ink); border-radius: 10px; padding: 10px 12px; max-width: 360px; }
+    .maplibregl-popup-tip { border-top-color: var(--surface) !important; border-bottom-color: var(--surface) !important; }
+    .maplibregl-popup-close-button { color: var(--ink-2); font-size: 16px; }
+    .props { border-collapse: collapse; font-size: 12px; }
+    .props td { padding: 2px 8px 2px 0; border: 0; white-space: normal; word-break: break-all; vertical-align: top; }
+    .props td:first-child { color: var(--muted); font-family: var(--mono); white-space: nowrap; word-break: normal; }
+    .collapse-btn { display: none; }
+    @media (max-width: 640px) {
+      .panel { width: auto; right: 12px; max-height: 45%; }
+      .panel.collapsed > :not(.head) { display: none; }
+      .collapse-btn { display: inline-flex; }
+    }
+    .head { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <aside class="panel" id="panel">
+    <div class="head">
+      <div><h1 id="title">Đang tải…</h1><div class="meta" id="meta"></div></div>
+      <button class="btn small collapse-btn" id="collapseBtn" type="button">Thu gọn</button>
+    </div>
+    <label class="field" id="layerField" hidden><span>Layer</span><select id="layerSel"></select></label>
+    <label class="field"><span>Tô màu theo</span><select id="colorSel"></select></label>
+    <div class="legend" id="legend"></div>
+    <label class="check"><input type="checkbox" id="threeD" checked> Dựng 3D</label>
+    <label class="check" id="hideParentsWrap" hidden><input type="checkbox" id="hideParents" checked>Ẩn outline có khối con (<code>has_parts</code>)</label>
+    <label class="field"><span>Bản đồ nền</span>
+      <select id="baseSel">
+        <option value="positron">Sáng (OpenFreeMap Positron)</option>
+        <option value="dark">Tối (OpenFreeMap Dark)</option>
+        <option value="liberty">Chi tiết (OpenFreeMap Liberty)</option>
+        <option value="osm">OpenStreetMap (raster)</option>
+        <option value="none">Không nền (offline)</option>
+      </select>
+    </label>
+    <div class="hint" id="baseNote" style="color:var(--warn-ink)"></div>
+    <div class="hint">Click building để xem thuộc tính. Chuột phải (hoặc Ctrl) + kéo để xoay / nghiêng. Bản đồ nền cần internet.</div>
+  </aside>
+  <div class="zoomnote" id="zoomNote" hidden></div>
+  <div class="zbadge" id="zBadge"></div>
+
+  <script src="/static/vendor/maplibre-gl.js"></script>
+  <script src="/static/vendor/pmtiles.js"></script>
+  <script src="/static/preview.js"></script>
+</body>
+</html>

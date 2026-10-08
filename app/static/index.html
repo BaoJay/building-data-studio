@@ -14,13 +14,18 @@
     <div class="brand">
       <span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 21V9l6-4v4l6-4v16H3zm14 0V3h4v18h-4z"/></svg></span>
       Building Data Studio
-      <span class="sub">Convert Parquet / GeoPackage → GeoPackage + PMTiles · QA chiều cao</span>
+      <span class="sub">Convert Parquet / GeoPackage → GeoPackage + PMTiles · QA chiều cao · So sánh trước release</span>
     </div>
     <div class="tool-status" id="toolStatus"></div>
   </header>
 
   <main class="layout">
-    <section class="card" id="inputCard">
+    <nav class="tabs" role="tablist" aria-label="Chức năng">
+      <button class="tab" role="tab" type="button" data-tab-btn="convert" aria-selected="true">Convert</button>
+      <button class="tab" role="tab" type="button" data-tab-btn="diff" aria-selected="false">So sánh 2 file (trước release)</button>
+    </nav>
+
+    <section class="card" id="inputCard" data-tab="convert">
       <h2><span class="num">1</span> File đầu vào</h2>
       <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Kéo thả hoặc chọn file">
         <svg class="dz-icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
@@ -40,13 +45,53 @@
       <div id="fileInfo"></div>
     </section>
 
-    <section class="card" id="optionsCard" hidden>
+    <section class="card" id="optionsCard" data-tab="convert" hidden>
       <h2><span class="num">2</span> Tuỳ chọn</h2>
       <form id="optForm" autocomplete="off"></form>
       <div class="run-row">
         <button class="btn primary" id="runBtn" type="button">Chạy convert</button>
         <button class="btn" id="resetBtn" type="button">Khôi phục mặc định</button>
         <span class="hint" id="runHint"></span>
+      </div>
+    </section>
+
+    <section class="card" id="diffInputCard" data-tab="diff">
+      <h2><span class="num">1</span> Hai file cần so sánh</h2>
+      <p class="hint lead">A là bản đang chạy production, B là bản sắp release. Nhận .parquet · .gpkg · .fgb · .geojson · .pmtiles, A và B có thể khác định dạng.</p>
+      <div class="slots">
+        <div class="slot" data-side="a">
+          <div class="slot-head"><span class="side-badge a">A</span><div><b>Production</b> <span class="hint">· bản đang chạy</span></div></div>
+          <div class="dropzone compact" tabindex="0" role="button" aria-label="Kéo thả hoặc chọn file A">
+            <div class="dz-title">Kéo thả file A</div>
+            <span class="btn small">Chọn file…</span>
+            <input type="file" hidden>
+          </div>
+          <div class="path-row"><input type="text" placeholder="…hoặc dán đường dẫn file A"><button class="btn" type="button">Mở</button></div>
+          <div class="upload-status" hidden><div class="up-text"></div><div class="progress"><span></span></div></div>
+          <div class="slot-info"></div>
+        </div>
+        <button class="btn small swap" id="swapBtn" type="button" title="Đổi chỗ A ↔ B" aria-label="Đổi chỗ A và B">⇄</button>
+        <div class="slot" data-side="b">
+          <div class="slot-head"><span class="side-badge b">B</span><div><b>Bản sắp release</b> <span class="hint">· cần kiểm tra</span></div></div>
+          <div class="dropzone compact" tabindex="0" role="button" aria-label="Kéo thả hoặc chọn file B">
+            <div class="dz-title">Kéo thả file B</div>
+            <span class="btn small">Chọn file…</span>
+            <input type="file" hidden>
+          </div>
+          <div class="path-row"><input type="text" placeholder="…hoặc dán đường dẫn file B"><button class="btn" type="button">Mở</button></div>
+          <div class="upload-status" hidden><div class="up-text"></div><div class="progress"><span></span></div></div>
+          <div class="slot-info"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="diffOptionsCard" data-tab="diff" hidden>
+      <h2><span class="num">2</span> Tuỳ chọn so sánh</h2>
+      <form id="diffForm" autocomplete="off"></form>
+      <div class="run-row">
+        <button class="btn primary" id="diffRunBtn" type="button">So sánh</button>
+        <button class="btn" id="diffResetBtn" type="button">Khôi phục mặc định</button>
+        <span class="hint" id="diffHint"></span>
       </div>
     </section>
 
@@ -66,6 +111,11 @@
     <section class="card" id="reportCard" hidden>
       <h2>Báo cáo chiều cao</h2>
       <div id="report"></div>
+    </section>
+
+    <section class="card" id="diffReportCard" hidden>
+      <h2>Kết quả so sánh</h2>
+      <div id="diffReport"></div>
     </section>
 
     <section class="card" id="historyCard" hidden>

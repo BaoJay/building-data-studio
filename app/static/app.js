@@ -1,20 +1,7 @@
 // Building Data Studio — UI logic (vanilla JS, no build step).
 
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const nf = new Intl.NumberFormat("vi-VN");
-const fmtInt = (n) => (n == null ? "—" : nf.format(n));
-const fmtNum = (n, d = 1) => (n == null ? "—" : new Intl.NumberFormat("vi-VN", { maximumFractionDigits: d }).format(n));
-const fmtBytes = (n) => {
-  if (n == null) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  let v = n;
-  while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
-  return `${fmtNum(v, i ? 1 : 0)} ${units[i]}`;
-};
-const fmtDur = (s) => (s == null ? "" : s < 60 ? `${fmtNum(s, 1)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`);
+import { $, $$, api, esc, fmtBytes, fmtDur, fmtInt, fmtNum, hbars, loadJSON, previewUrl, reveal, saveJSON, section, toast, uploadFile } from "./util.js";
+import { initDiff, renderDiffReport, setDiffHealth } from "./diff.js";
 
 const GENERATED_HEIGHT = ["h_m", "h_src", "h_outlier"];
 const GENERATED_PARTS = ["has_parts", "is_part"];
@@ -27,6 +14,8 @@ const CRS_PRESETS = [
   ["EPSG:3406", "EPSG:3406 — VN-2000 / UTM 49N"],
 ];
 const STATUS_LABEL = { queued: "Đang chờ", running: "Đang chạy", done: "Hoàn tất", failed: "Lỗi", cancelled: "Đã huỷ" };
+const KIND_LABEL = { convert: "Convert", diff: "So sánh" };
+const TAB_KEY = "building-data-studio.tab.v1";
 const PREF_KEY = "building-data-studio.prefs.v1";
 const LEGACY_PREF_KEY = "building-converter.prefs.v1"; // before the rename
 const DEFAULTS = {
@@ -46,52 +35,16 @@ const state = {
   catCols: new Set(),
   reportKey: null,
   outputsKey: null,
-  prefs: { ...DEFAULTS, ...loadPrefs() },
+  prefs: { ...DEFAULTS, ...loadJSON(PREF_KEY, LEGACY_PREF_KEY) },
 };
 
-// ------------------------------------------------------------------ utils
-function loadPrefs() {
-  try {
-    return JSON.parse(localStorage.getItem(PREF_KEY) || localStorage.getItem(LEGACY_PREF_KEY) || "{}") || {};
-  } catch { return {}; }
-}
-function savePrefs(prefs) {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* private mode: ignore */ }
-}
-
-async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
-}
-
-let toastTimer;
-function toast(message) {
-  let el = $(".toast");
-  if (!el) { el = document.createElement("div"); el.className = "toast"; el.setAttribute("role", "status"); document.body.append(el); }
-  el.textContent = message;
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 4000);
-}
-
-async function reveal(token) {
-  try { await api("/api/reveal", { method: "POST", body: { token } }); } catch (e) { toast(e.message); }
-}
-
-const previewUrl = (token, params = {}) => {
-  const q = new URLSearchParams({ f: token, ...params });
-  return `/preview?${q}`;
-};
+const savePrefs = (prefs) => saveJSON(PREF_KEY, prefs);
 
 // ------------------------------------------------------------------ init
 async function init() {
+  setupTabs();
   setupDropzone();
+  initDiff({ showJob });
   $("#pathBtn").addEventListener("click", () => openPath($("#pathInput").value));
   $("#pathInput").addEventListener("keydown", (e) => { if (e.key === "Enter") openPath(e.target.value); });
   $("#runBtn").addEventListener("click", runJob);
@@ -106,6 +59,7 @@ async function init() {
     if (!state.prefs.out_dir) state.prefs.out_dir = state.health.defaults.output_dir;
     $("#fileInput").accept = state.health.accept.join(",");
     renderTools(state.health);
+    setDiffHealth(state.health);
   } catch (e) {
     toast(`Không kết nối được server: ${e.message}`);
   }
@@ -130,6 +84,23 @@ function renderTools(health) {
   }
 }
 
+// ------------------------------------------------------------------ tabs
+function setupTabs() {
+  $$("[data-tab-btn]").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tabBtn, true)));
+  const fromHash = location.hash === "#diff" ? "diff" : location.hash === "#convert" ? "convert" : null;
+  setTab(fromHash || loadJSON(TAB_KEY).tab || "convert");
+  window.addEventListener("hashchange", () => { if (["#diff", "#convert"].includes(location.hash)) setTab(location.hash.slice(1)); });
+}
+
+function setTab(tab, remember = false) {
+  document.body.dataset.tab = tab;
+  $$("[data-tab-btn]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tabBtn === tab)));
+  if (remember) {
+    saveJSON(TAB_KEY, { tab });
+    history.replaceState(null, "", `#${tab}`);
+  }
+}
+
 function onGlobalClick(e) {
   const btn = e.target.closest("[data-reveal]");
   if (btn) { e.preventDefault(); reveal(btn.dataset.reveal); }
@@ -149,11 +120,13 @@ function setupDropzone() {
     const file = e.dataTransfer.files[0];
     if (file) handleFile(file);
   });
-  // A file dropped outside the zone must not navigate the tab away.
+  // A file dropped outside the zones must not navigate the tab away. On the convert tab it is
+  // taken as the input; on the diff tab there are two slots, so it is ignored.
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => {
     e.preventDefault();
-    if (!dz.contains(e.target) && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    if (document.body.dataset.tab !== "convert" || e.target.closest(".dropzone")) return;
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   });
 }
 
@@ -168,18 +141,7 @@ async function handleFile(file) {
   const bar = $("#uploadBar > span");
   $("#uploadText").textContent = `Đang upload ${file.name} (${fmtBytes(file.size)}) vào thư mục uploads/…`;
   try {
-    const res = await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", `/api/upload?name=${encodeURIComponent(file.name)}`);
-      xhr.upload.onprogress = (e) => { if (e.lengthComputable) bar.style.width = `${(100 * e.loaded) / e.total}%`; };
-      xhr.onload = () => {
-        let data = {};
-        try { data = JSON.parse(xhr.responseText || "{}"); } catch { /* keep empty */ }
-        if (xhr.status < 300) resolve(data); else reject(new Error(data.error || `HTTP ${xhr.status}`));
-      };
-      xhr.onerror = () => reject(new Error("Upload thất bại."));
-      xhr.send(file);
-    });
+    const res = await uploadFile(file, (pct) => { bar.style.width = `${pct}%`; });
     bar.style.width = "100%";
     status.hidden = true;
     $("#pathInput").value = res.path;
@@ -553,6 +515,7 @@ function showJob(id, scroll = false) {
   $("#log").textContent = "";
   $("#jobCard").hidden = false;
   $("#reportCard").hidden = true;
+  $("#diffReportCard").hidden = true;
   if (scroll) $("#jobCard").scrollIntoView({ behavior: "smooth", block: "start" });
   poll();
 }
@@ -588,6 +551,7 @@ function renderJob(job) {
   const elapsed = job.started ? (job.ended || now) - job.started : null;
   const active = job.status === "running" || job.status === "queued";
   $("#jobHead").innerHTML = `
+    <span class="badge kind">${esc(KIND_LABEL[job.kind] || job.kind)}</span>
     <span class="name">${esc(job.name)}</span>
     <span class="badge ${job.status}">${STATUS_LABEL[job.status] || job.status}</span>
     <span class="hint">${elapsed != null ? fmtDur(elapsed) : ""}</span>
@@ -616,14 +580,15 @@ function renderJob(job) {
     const key = `${job.id}:${job.status}`;
     if (key !== state.reportKey) {
       state.reportKey = key;
-      renderReport(job);
+      if (job.kind === "diff") renderDiffReport(job);
+      else renderReport(job);
     }
   }
 }
 
 function renderOutputs(job) {
-  const order = ["gpkg", "pmtiles", "report_md", "report_json", "log"];
-  const icons = { gpkg: "GPKG", pmtiles: "PMT", report: "MD", log: "LOG" };
+  const order = ["gpkg", "pmtiles", "grid", "report_md", "report_json", "log"];
+  const icons = { gpkg: "GPKG", pmtiles: "PMT", geojson: "JSON", report: "MD", log: "LOG" };
   const outs = order.map((k) => job.outputs[k]).filter(Boolean);
   $("#outputs").innerHTML = outs.map((o) => `
     <div class="out-row">
@@ -635,9 +600,12 @@ function renderOutputs(job) {
       </div>
     </div>`).join("");
   const pm = job.outputs.pmtiles;
+  const map = job.kind === "diff"
+    ? previewUrl(pm?.token, { mode: "diff", grid: job.outputs.grid?.token || "", name: job.name })
+    : previewUrl(pm?.token, { name: pm?.name });
   $("#outActions").innerHTML = job.output_dir_token ? `
     <button class="btn" type="button" data-reveal="${esc(job.output_dir_token)}">Mở thư mục output</button>
-    ${pm && job.status === "done" ? `<a class="btn primary" href="${previewUrl(pm.token, { name: pm.name })}" target="_blank" rel="noopener">Xem bản đồ 3D</a>` : ""}
+    ${pm && job.status === "done" ? `<a class="btn primary" href="${map}" target="_blank" rel="noopener">${job.kind === "diff" ? "Xem bản đồ diff" : "Xem bản đồ 3D"}</a>` : ""}
     <span class="hint mono">${esc(job.output_dir || "")}</span>` : "";
 }
 
@@ -695,20 +663,6 @@ function renderReport(job) {
   $("#report").innerHTML = html;
 }
 
-function section(title, hint, body) {
-  return `<div class="report-section"><h3>${esc(title)} ${hint ? `<span class="hint">${esc(hint)}</span>` : ""}</h3>${body}</div>`;
-}
-
-function hbars(items) {
-  const max = Math.max(...items.map((i) => i.count), 1);
-  return `<div class="hbars">${items.map((i) => `
-    <div class="hbar" title="${esc(i.label)}: ${fmtInt(i.count)} (${fmtNum(i.pct, 2)}%)">
-      <span class="lbl">${esc(i.label)}</span>
-      <span class="track"><span class="fill ${i.count ? "" : "zero"}" style="width:${(100 * i.count) / max}%"></span></span>
-      <span class="val">${fmtInt(i.count)}<em>${fmtNum(i.pct, 2)}%</em></span>
-    </div>`).join("")}</div>`;
-}
-
 function featureTable(rows, pm, idCol, isOutlier) {
   if (!rows?.length) return `<p class="hint">Không có.</p>`;
   const skip = new Set(["bbox", "center", "fid"]);
@@ -739,7 +693,7 @@ async function loadHistory() {
   $("#historyCard").hidden = list.length === 0;
   $("#history").innerHTML = list.map((j) => `
     <li><button type="button" data-job="${esc(j.id)}" class="${j.id === state.jobId ? "active" : ""}">
-      <span>${esc(j.name)} <span class="badge ${j.status}">${STATUS_LABEL[j.status] || j.status}</span></span>
+      <span><span class="badge kind">${esc(KIND_LABEL[j.kind] || j.kind)}</span> ${esc(j.name)} <span class="badge ${j.status}">${STATUS_LABEL[j.status] || j.status}</span></span>
       <span class="when">${new Date(j.created * 1000).toLocaleTimeString("vi-VN")}</span>
     </button></li>`).join("");
   $$("#history [data-job]").forEach((b) => b.addEventListener("click", () => showJob(b.dataset.job, true)));

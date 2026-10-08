@@ -20,6 +20,7 @@ from typing import Literal
 from .probe import quote_ident as q
 
 OutlierMode = Literal["fallback", "clamp", "keep"]
+Dialect = Literal["sqlite", "duckdb"]
 OUTLIER_MODES: tuple[str, ...] = ("fallback", "clamp", "keep")
 
 MIN_LEVELS = 1
@@ -93,13 +94,20 @@ def sql_str(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def numeric_expr(column: str, is_text: bool) -> str:
-    """SQL that reads a column as REAL; text like '12,5' or '12 m' is tolerated.
+def numeric_expr(column: str, is_text: bool, dialect: Dialect = "sqlite") -> str:
+    """SQL that reads a column as a float; text like '12,5' or '12 m' is tolerated.
 
     Text that does not start with a digit becomes NULL rather than 0, so junk
     values fall through to the next rule instead of looking like a 0 m height.
+    SQLite casts the leading number of '12 m'; DuckDB needs it extracted first
+    (and its REAL is 32-bit, so it gets DOUBLE).
     """
     col = q(column)
+    if dialect == "duckdb":
+        if not is_text:
+            return f"TRY_CAST({col} AS DOUBLE)"
+        text = f"REPLACE(TRIM(CAST({col} AS VARCHAR)), ',', '.')"
+        return f"TRY_CAST(NULLIF(regexp_extract({text}, '^[0-9]*[.]?[0-9]+'), '') AS DOUBLE)"
     if not is_text:
         return f"CAST({col} AS REAL)"
     trimmed = f"TRIM({col})"
@@ -109,18 +117,24 @@ def numeric_expr(column: str, is_text: bool) -> str:
     )
 
 
-def height_expressions(rule: HeightRule) -> dict[str, str]:
-    """Return SQL expressions for the generated columns h_m, h_src and h_outlier."""
+def height_expressions(rule: HeightRule, dialect: Dialect = "sqlite") -> dict[str, str]:
+    """Return SQL expressions for the generated columns h_m, h_src and h_outlier.
+
+    Args:
+        rule: The height rule (validated here).
+        dialect: "sqlite" for GDAL's SQLite dialect, "duckdb" for the diff engine.
+    """
     rule.validate()
     d = int(rule.decimals)
     lo, hi = lit(rule.min_valid_m), lit(rule.max_valid_m)
 
-    hv = numeric_expr(rule.height_col, rule.height_is_text) if rule.height_col else None
+    real = "DOUBLE" if dialect == "duckdb" else "REAL"
+    hv = numeric_expr(rule.height_col, rule.height_is_text, dialect) if rule.height_col else None
     if hv and rule.prov_col and rule.prov_missing:
         # Rows whose provenance says "default" carry a placeholder, not a measurement.
         values = ", ".join(sql_str(v) for v in rule.prov_missing)
         hv = f"(CASE WHEN {q(rule.prov_col)} IN ({values}) THEN NULL ELSE {hv} END)"
-    lv = numeric_expr(rule.levels_col, rule.levels_is_text) if rule.levels_col else None
+    lv = numeric_expr(rule.levels_col, rule.levels_is_text, dialect) if rule.levels_col else None
 
     valid_h = f"({hv} BETWEEN {lo} AND {hi})" if hv else None
     valid_l = f"({lv} BETWEEN {MIN_LEVELS} AND {lit(rule.max_levels)})" if lv else None
@@ -139,10 +153,10 @@ def height_expressions(rule: HeightRule) -> dict[str, str]:
     if branches:
         whens_m = " ".join(f"WHEN {cond} THEN {value}" for cond, value, _ in branches)
         whens_src = " ".join(f"WHEN {cond} THEN {sql_str(src)}" for cond, _, src in branches)
-        h_m = f"CAST(CASE {whens_m} ELSE {default} END AS REAL)"
+        h_m = f"CAST(CASE {whens_m} ELSE {default} END AS {real})"
         h_src = f"CAST(CASE {whens_src} ELSE 'default' END AS TEXT)"
     else:
-        h_m = f"CAST({default} AS REAL)"
+        h_m = f"CAST({default} AS {real})"
         h_src = "CAST('default' AS TEXT)"
 
     outlier_terms = []

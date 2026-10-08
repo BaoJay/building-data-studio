@@ -64,6 +64,7 @@ class Job:
     id: str
     config: dict[str, Any]
     name: str
+    kind: str = "convert"  # convert | diff
     created: float = field(default_factory=time.time)
     status: str = "queued"  # queued | running | done | failed | cancelled
     steps: list[Step] = field(default_factory=list)
@@ -102,6 +103,7 @@ class Job:
             return {
                 "id": self.id,
                 "name": self.name,
+                "kind": self.kind,
                 "status": self.status,
                 "created": self.created,
                 "started": self.started,
@@ -121,6 +123,7 @@ class Job:
             return {
                 "id": self.id,
                 "name": self.name,
+                "kind": self.kind,
                 "status": self.status,
                 "created": self.created,
                 "ended": self.ended,
@@ -139,8 +142,8 @@ class JobManager:
         self._worker = threading.Thread(target=self._loop, name="job-worker", daemon=True)
         self._worker.start()
 
-    def submit(self, config: dict[str, Any], name: str) -> Job:
-        job = Job(id=secrets.token_hex(6), config=config, name=name)
+    def submit(self, config: dict[str, Any], name: str, kind: str = "convert") -> Job:
+        job = Job(id=secrets.token_hex(6), config=config, name=name, kind=kind)
         with self._lock:
             self._jobs[job.id] = job
         self._queue.put(job)

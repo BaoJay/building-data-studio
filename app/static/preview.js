@@ -77,6 +77,10 @@ async function main() {
   }
   state.minzoom = header.minZoom;
   state.maxzoom = header.maxZoom;
+  if (params.get("mode") === "diff") {
+    await mainDiff(url, header, meta);
+    return;
+  }
   const layers = (meta.vector_layers || []).map((l) => l.id);
   const name = params.get("name") || meta.name || "PMTiles";
   document.title = `${name} — 3D`;
@@ -296,10 +300,224 @@ function updateZoomUI(map) {
   const note = $("#zoomNote");
   if (z < state.minzoom) {
     note.hidden = false;
-    note.textContent = `Dữ liệu chỉ có từ zoom ${state.minzoom} — hãy phóng to để thấy building.`;
+    note.textContent = state.diff
+      ? `Đang xem lưới thống kê — phóng to tới zoom ${state.minzoom} để thấy từng building.`
+      : `Dữ liệu chỉ có từ zoom ${state.minzoom} — hãy phóng to để thấy building.`;
   } else {
     note.hidden = true;
   }
+}
+
+// ------------------------------------------------------------------ diff mode
+// Building colours come from the tokens, like the swatches of the report: added = cat-1
+// (street-sign blue), removed = map-outlier, changed = cat-2 (ochre). Blue / red / ochre
+// stay apart for red-green colour blindness too.
+const DIFF_KINDS = [
+  ["added", (pal) => pal.cat[0], "Thêm mới (chỉ có ở B)"],
+  ["removed", (pal) => pal.outlier, "Bị xoá (chỉ có ở A)"],
+  ["changed", (pal) => pal.cat[1], "Có thay đổi"],
+];
+// The statistics grid fades out as the buildings come in.
+const GRID_FADE = [10, 0.62, 12.5, 0.08];
+const GRID_LINE_FADE = [10, 0.3, 12.5, 0.04];
+const DIFF_FIELDS = ["diff_change", "diff_key", "diff_h", "diff_dh", "diff_geom", "diff_cols"];
+
+async function mainDiff(url, header, meta) {
+  state.diff = { show: new Set(DIFF_KINDS.map(([k]) => k)), grid: null, gridBy: "total" };
+  const name = params.get("name") || meta.name || "Diff";
+  document.title = `${name} — bản đồ diff`;
+  $("#title").textContent = name;
+  $("#meta").textContent = `Bản đồ diff A → B · building từ zoom ${header.minZoom}`;
+  $("#colorField").hidden = true;
+  $("#diffControls").hidden = false;
+  $("#threeD").checked = false;
+  $("#panelHint").textContent = "Click building hoặc ô lưới để xem chi tiết. Lưới mờ dần khi phóng to. Bản đồ nền cần internet.";
+  state.idCol = "diff_key";
+
+  const gridToken = params.get("grid");
+  if (gridToken) {
+    try {
+      const res = await fetch(`/api/files/${encodeURIComponent(gridToken)}`);
+      if (res.ok) state.diff.grid = await res.json();
+    } catch { /* the map still works without the grid */ }
+  }
+  state.diff.totals = { added: 0, removed: 0, changed: 0 };
+  for (const f of state.diff.grid?.features || []) {
+    for (const k of Object.keys(state.diff.totals)) state.diff.totals[k] += f.properties[k] || 0;
+  }
+  if (!state.diff.grid) $("#gridSel").closest("label").hidden = true;
+
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  $("#baseSel").value = dark ? "dark" : "positron";
+  const hasCenter = params.has("lon") && params.has("lat");
+  const bldgSource = { type: "vector", url: `pmtiles://${url}`, attribution: meta.attribution || "" };
+  const map = new maplibregl.Map({
+    container: "map",
+    center: hasCenter ? [Number(params.get("lon")), Number(params.get("lat"))] : [header.centerLon, header.centerLat],
+    zoom: hasCenter ? Number(params.get("z") || 16) : 5,
+    pitch: 0,
+    maxPitch: 85,
+    attributionControl: false,
+    canvasContextAttributes: { antialias: true, preserveDrawingBuffer: true },
+    style: await basemapStyle($("#baseSel").value, bldgSource),
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+  map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
+  map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+  window.map = map;
+
+  map.on("load", () => {
+    addDiffLayers(map);
+    if (!hasCenter) fitGrid(map);
+    updateZoomUI(map);
+    if (hasCenter && state.selected) {
+      map.once("idle", () => {
+        const feats = map.querySourceFeatures("bldg", { sourceLayer: "diff", filter: ["==", ["to-string", ["get", "diff_key"]], state.selected] });
+        if (feats.length) showPopup(map, map.getCenter(), pick(feats[0].properties));
+      });
+    }
+  });
+  map.on("zoom", () => updateZoomUI(map));
+  map.on("click", (e) => onDiffClick(map, e));
+  ["diff-fill", "diff-3d", "grid-fill"].forEach((id) => {
+    map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
+    map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
+  });
+  $("#baseSel").addEventListener("change", async (e) => {
+    const style = await basemapStyle(e.target.value, bldgSource);
+    map.once("style.load", () => addDiffLayers(map));
+    map.setStyle(style, { diff: false });
+  });
+  $("#diffLegend").addEventListener("change", (e) => {
+    const kind = e.target.dataset.kind;
+    if (!kind) return;
+    if (e.target.checked) state.diff.show.add(kind); else state.diff.show.delete(kind);
+    applyDiffStyle(map);
+  });
+  $("#gridSel").addEventListener("change", (e) => { state.diff.gridBy = e.target.value; applyDiffStyle(map); });
+  $("#showGrid").addEventListener("change", () => applyDiffStyle(map));
+  $("#threeD").addEventListener("change", () => applyDiffStyle(map));
+  $("#collapseBtn").addEventListener("click", () => {
+    const p = $("#panel");
+    p.classList.toggle("collapsed");
+    $("#collapseBtn").textContent = p.classList.contains("collapsed") ? "Mở" : "Thu gọn";
+  });
+}
+
+function addDiffLayers(map) {
+  // Colours follow the basemap (light / dark set), so they are re-read after every style switch.
+  const pal = palette(mapTheme());
+  if (state.diff.grid && !map.getSource("grid")) map.addSource("grid", { type: "geojson", data: state.diff.grid });
+  if (state.diff.grid) {
+    map.addLayer({ id: "grid-fill", type: "fill", source: "grid", paint: { "fill-opacity": ["interpolate", ["linear"], ["zoom"], ...GRID_FADE] } });
+    map.addLayer({ id: "grid-line", type: "line", source: "grid", paint: { "line-color": pal.outline, "line-width": 0.5, "line-opacity": ["interpolate", ["linear"], ["zoom"], ...GRID_LINE_FADE] } });
+  }
+  const color = ["match", ["get", "diff_change"], ...DIFF_KINDS.flatMap(([k, c]) => [k, c(pal)]), pal.neutral];
+  map.addLayer({ id: "diff-fill", type: "fill", source: "bldg", "source-layer": "diff", paint: { "fill-color": color, "fill-opacity": 0.8 } });
+  map.addLayer({ id: "diff-line", type: "line", source: "bldg", "source-layer": "diff", paint: { "line-color": color, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.4, 17, 1.4] } });
+  map.addLayer({ id: "diff-3d", type: "fill-extrusion", source: "bldg", "source-layer": "diff", paint: { "fill-extrusion-color": color, "fill-extrusion-opacity": 0.9, "fill-extrusion-height": ["to-number", ["coalesce", ["get", "diff_h"], 4], 4] } });
+  map.addLayer({ id: "diff-sel", type: "line", source: "bldg", "source-layer": "diff", paint: { "line-color": pal.highlight, "line-width": 3 } });
+  $("#diffLegend").innerHTML = DIFF_KINDS.map(([k, c, label]) => `
+    <label class="item"><input type="checkbox" data-kind="${k}" ${state.diff.show.has(k) ? "checked" : ""}><span class="sw" style="background:${c(pal)}"></span>${esc(label)}
+      <span class="n">${state.diff.grid ? state.diff.totals[k].toLocaleString("vi-VN") : ""}</span></label>`).join("");
+  applyDiffStyle(map);
+}
+
+function applyDiffStyle(map) {
+  const kinds = ["in", ["get", "diff_change"], ["literal", [...state.diff.show]]];
+  ["diff-fill", "diff-line", "diff-3d"].forEach((id) => map.setFilter(id, kinds));
+  map.setFilter("diff-sel", ["==", ["to-string", ["get", "diff_key"]], state.selected || "\u0000"]);
+  const threeD = $("#threeD").checked;
+  map.setLayoutProperty("diff-3d", "visibility", threeD ? "visible" : "none");
+  map.setLayoutProperty("diff-fill", "visibility", threeD ? "none" : "visible");
+  if (threeD && map.getPitch() < 20) map.easeTo({ pitch: 55 });
+  if (!threeD && map.getPitch() > 0) map.easeTo({ pitch: 0 });
+  if (!map.getLayer("grid-fill")) return;
+  const showGrid = $("#showGrid").checked;
+  ["grid-fill", "grid-line"].forEach((id) => map.setLayoutProperty(id, "visibility", showGrid ? "visible" : "none"));
+  const { expr, legend } = gridColor(state.diff.gridBy);
+  map.setPaintProperty("grid-fill", "fill-color", expr);
+  $("#gridLegend").innerHTML = showGrid ? legend : "";
+}
+
+function gridColor(by) {
+  const pal = palette(mapTheme());
+  const values = (state.diff.grid?.features || []).map((f) => f.properties[by] || 0);
+  if (by === "delta") {
+    // Diverging: fewer buildings in B = the "removed" colour, more = the "added" colour.
+    const diverging = [pal.outlier, pal.neutral, pal.cat[0]];
+    const sorted = values.map(Math.abs).filter((v) => v > 0).sort((a, b) => a - b);
+    const m = Math.max(1, sorted[Math.floor(sorted.length * 0.95)] || 1);
+    return {
+      expr: ["interpolate", ["linear"], ["get", "delta"], -m, diverging[0], 0, diverging[1], m, diverging[2]],
+      legend: rampLegend(diverging, [`−${fmtCount(m)}`, "0", `+${fmtCount(m)}`], "B ít hơn A ← → B nhiều hơn A (số building / ô)"),
+    };
+  }
+  const nonzero = values.filter((v) => v > 0).sort((a, b) => a - b);
+  const q = (p) => nonzero[Math.min(nonzero.length - 1, Math.floor(p * nonzero.length))] || 1;
+  // Quantile stops (strictly increasing) keep a few huge cells from washing out the rest.
+  const raw = [0, q(0.25), q(0.6), q(0.9), Math.max(q(1), 1)];
+  const stops = raw.map((v, i) => (i === 0 ? 0 : Math.max(v, i)));
+  for (let i = 1; i < stops.length; i++) if (stops[i] <= stops[i - 1]) stops[i] = stops[i - 1] + 1;
+  // Counts use the height ramp (paper yellow → roof brown): darker = more buildings in the cell.
+  const ramp = [0, 2, 4, 6, 8].map((i) => pal.height[i][1]);
+  return {
+    expr: ["case", ["==", ["get", by], 0], "rgba(0,0,0,0)", ["interpolate", ["linear"], ["get", by], ...stops.flatMap((v, i) => [v, ramp[i]])]],
+    legend: rampLegend(ramp, ["1", fmtCount(stops[2]), fmtCount(stops[4])], "số building trong ô (ô trống thay đổi = trong suốt)"),
+  };
+}
+
+function fmtCount(v) {
+  return Math.round(v).toLocaleString("vi-VN");
+}
+
+function rampLegend(colors, labels, note) {
+  const grad = colors.map((c, i) => `${c} ${(100 * i) / (colors.length - 1)}%`).join(", ");
+  return `<div class="ramp" style="background:linear-gradient(90deg, ${grad})"></div>
+    <div class="ramp-labels">${labels.map((l) => `<span>${esc(l)}</span>`).join("")}</div><div class="hint">${esc(note)}</div>`;
+}
+
+function fitGrid(map) {
+  const feats = state.diff.grid?.features || [];
+  if (!feats.length) return;
+  let [x0, y0, x1, y1] = [180, 90, -180, -90];
+  for (const f of feats) {
+    for (const [x, y] of f.geometry.coordinates[0]) {
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+  }
+  map.fitBounds([[x0, y0], [x1, y1]], { padding: 40, animate: false });
+}
+
+function pick(props) {
+  const out = {};
+  for (const k of DIFF_FIELDS) if (props[k] != null && props[k] !== "") out[k] = props[k];
+  return out;
+}
+
+function onDiffClick(map, e) {
+  const layers = ["diff-3d", "diff-fill"].filter((id) => map.getLayoutProperty(id, "visibility") !== "none");
+  const feats = map.queryRenderedFeatures(e.point, { layers });
+  if (feats.length) {
+    const p = feats[0].properties;
+    state.selected = p.diff_key != null ? String(p.diff_key) : null;
+    applyDiffStyle(map);
+    showPopup(map, e.lngLat, pick(p));
+    return;
+  }
+  if (!map.getLayer("grid-fill") || map.getLayoutProperty("grid-fill", "visibility") === "none") return;
+  const cells = map.queryRenderedFeatures(e.point, { layers: ["grid-fill"] });
+  if (!cells.length) return;
+  const c = cells[0].properties;
+  const ring = cells[0].geometry.coordinates[0];
+  const rows = [["Building ở A", c.n_a], ["Building ở B", c.n_b], ["Thêm mới", c.added], ["Bị xoá", c.removed], ["Có thay đổi", c.changed]]
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${Number(v).toLocaleString("vi-VN")}</td></tr>`).join("");
+  const popup = new maplibregl.Popup({ maxWidth: "320px" }).setLngLat(e.lngLat)
+    .setHTML(`<table class="props">${rows}</table><button class="btn small" type="button" id="zoomCell" style="margin-top:8px">Phóng to ô này</button>`).addTo(map);
+  popup.getElement().querySelector("#zoomCell").addEventListener("click", () => {
+    popup.remove();
+    map.fitBounds([ring[0], ring[2]], { padding: 20 });
+  });
 }
 
 main();

@@ -122,7 +122,15 @@ class ProcessRunner:
     def __init__(self) -> None:
         self._proc: subprocess.Popen[bytes] | None = None
         self._lock = threading.Lock()
+        self._cancel_hooks: list[Callable[[], None]] = []
         self.cancelled = False
+
+    def add_cancel_hook(self, hook: Callable[[], None]) -> None:
+        """Call hook on cancel() too, e.g. to interrupt an in-process DuckDB query."""
+        with self._lock:
+            self._cancel_hooks.append(hook)
+        if self.cancelled:
+            hook()
 
     def run(
         self,
@@ -204,6 +212,12 @@ class ProcessRunner:
         self.cancelled = True
         with self._lock:
             proc = self._proc
+            hooks = list(self._cancel_hooks)
+        for hook in hooks:
+            try:
+                hook()
+            except Exception:  # noqa: BLE001 — a failing hook must not block killing the process
+                log.exception("Cancel hook failed")
         if proc is None or proc.poll() is not None:
             return
         try:

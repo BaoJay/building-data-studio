@@ -6,16 +6,12 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 const HEIGHT_ATTRS = ["h_m", "height_m", "height", "render_height"];
 const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
-// Sequential blue (light = low, dark = tall).
-const HEIGHT_STOPS = [[0, "#cde2fb"], [6, "#9ec5f4"], [12, "#6da7ec"], [20, "#3987e5"], [35, "#256abf"], [60, "#1c5cab"], [100, "#184f95"], [200, "#104281"], [400, "#0d366b"]];
-// Dark basemap: same blue hue, lightness reversed so tall buildings stay the most salient.
-const HEIGHT_STOPS_DARK = [[0, "#184f95"], [6, "#1c5cab"], [12, "#256abf"], [20, "#2a78d6"], [35, "#3987e5"], [60, "#5598e7"], [100, "#86b6ef"], [200, "#b7d3f6"], [400, "#cde2fb"]];
-// Categorical slots in fixed order; anything past 8 values folds into neutral "khác".
-const CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
-const NEUTRAL = "#c3c2b7";
-const SRC_COLORS = { height: "#2a78d6", levels: "#1baf7a", clamped: "#eda100", default: NEUTRAL };
-const OUTLIER_COLOR = "#d03b3b";
-const HIGHLIGHT = "#eb6834";
+// Map colours are the Studio Indochine tokens in tokens.css: height-1…9 sit on these
+// breaks (paper yellow → roof brown), cat-1…8 are the categorical slots (anything past
+// 8 values folds into map-neutral "khác").
+const HEIGHT_BREAKS = [0, 6, 12, 20, 35, 60, 100, 200, 400];
+const CAT_COUNT = 8;
+const SRC_TOKENS = { height: "cat-1", levels: "cat-3", clamped: "cat-2", default: "map-neutral" };
 // OpenFreeMap: free vector basemaps, no API key. Their own building layers are
 // removed so they never overlap the buildings being checked.
 const BASEMAPS = {
@@ -30,6 +26,37 @@ const params = new URLSearchParams(location.search);
 const token = params.get("f");
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
 const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
+
+// The colour set follows the basemap, not the page: dark tiles get the dark set, whose
+// height ramp is reversed so tall buildings stay the most salient.
+function mapTheme(key = $("#baseSel").value) {
+  return key === "dark" || (key === "none" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+}
+
+const palettes = {};
+function palette(theme) {
+  if (palettes[theme]) return palettes[theme];
+  // Read the tokens off a probe element pinned to that theme.
+  const probe = document.createElement("div");
+  probe.dataset.theme = theme;
+  probe.hidden = true;
+  document.body.append(probe);
+  const cs = getComputedStyle(probe);
+  const v = (name) => cs.getPropertyValue(`--${name}`).trim();
+  const pal = {
+    height: HEIGHT_BREAKS.map((h, i) => [h, v(`height-${i + 1}`)]),
+    cat: Array.from({ length: CAT_COUNT }, (_, i) => v(`cat-${i + 1}`)),
+    src: Object.fromEntries(Object.entries(SRC_TOKENS).map(([k, t]) => [k, v(t)])),
+    neutral: v("map-neutral"),
+    outlier: v("map-outlier"),
+    highlight: v("map-highlight"),
+    plain: v("height-4"),
+    ground: v("map-ground"),
+    outline: v("ink"),
+  };
+  probe.remove();
+  return (palettes[theme] = pal);
+}
 
 async function main() {
   if (!token) { $("#title").textContent = "Thiếu tham số f (token file PMTiles)."; return; }
@@ -114,8 +141,7 @@ async function main() {
 
 async function basemapStyle(key, bldgSource) {
   const def = BASEMAPS[key] || BASEMAPS.none;
-  const dark = key === "dark" || (key === "none" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  const bg = { id: "bg", type: "background", paint: { "background-color": dark ? "#1a1a19" : "#f3f2ee" } };
+  const bg = { id: "bg", type: "background", paint: { "background-color": palette(mapTheme(key)).ground } };
   let style = { version: 8, sources: {}, layers: [bg] };
   $("#baseNote").textContent = "";
   try {
@@ -170,41 +196,42 @@ function addBuildingLayers(map) {
   const layerId = state.layer;
   ["bldg-3d", "bldg-2d", "bldg-line"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
   map.addLayer({ id: "bldg-2d", type: "fill", source: "bldg", "source-layer": layerId, paint: { "fill-opacity": 0.85 } });
-  map.addLayer({ id: "bldg-line", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-color": "rgba(11,11,11,0.25)", "line-width": 0.5 } });
+  map.addLayer({ id: "bldg-line", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-color": palette(mapTheme()).outline, "line-opacity": 0.3, "line-width": 0.5 } });
   map.addLayer({ id: "bldg-3d", type: "fill-extrusion", source: "bldg", "source-layer": layerId, paint: { "fill-extrusion-opacity": 0.92, "fill-extrusion-vertical-gradient": true } });
 }
 
 function colorExpression() {
   const by = state.colorBy;
+  const pal = palette(mapTheme());
   let expr;
   let legend;
   if (by === "height" && state.heightAttr) {
-    const stops = $("#baseSel").value === "dark" ? HEIGHT_STOPS_DARK : HEIGHT_STOPS;
+    const stops = pal.height;
     expr = ["interpolate", ["linear"], ["to-number", ["get", state.heightAttr], 0], ...stops.flat()];
-    const grad = stops.map(([, c], i) => `${c} ${(100 * i) / (HEIGHT_STOPS.length - 1)}%`).join(", ");
+    const grad = stops.map(([, c], i) => `${c} ${(100 * i) / (stops.length - 1)}%`).join(", ");
     legend = `<div class="ramp" style="background:linear-gradient(90deg, ${grad})"></div>
       <div class="ramp-labels">${stops.filter((_, i) => i % 2 === 0).map(([v]) => `<span>${v}</span>`).join("")}</div>
       <div class="hint">mét (${esc(state.heightAttr)}), thang không tuyến tính</div>`;
   } else if (by === "h_src") {
-    expr = ["match", ["get", "h_src"], ...Object.entries(SRC_COLORS).flat(), NEUTRAL];
-    legend = Object.entries(SRC_COLORS).map(([k, c]) => item(c, k)).join("");
+    expr = ["match", ["get", "h_src"], ...Object.entries(pal.src).flat(), pal.neutral];
+    legend = Object.entries(pal.src).map(([k, c]) => item(c, k)).join("");
   } else if (by === "outlier") {
-    expr = ["case", ["any", ["==", ["get", "h_outlier"], 1], ["==", ["get", "h_outlier"], true]], OUTLIER_COLOR, "#e1e0d9"];
-    legend = item(OUTLIER_COLOR, "Outlier (giá trị gốc ngoài khoảng hợp lệ)") + item("#e1e0d9", "Bình thường");
+    expr = ["case", ["any", ["==", ["get", "h_outlier"], 1], ["==", ["get", "h_outlier"], true]], pal.outlier, pal.neutral];
+    legend = item(pal.outlier, "Outlier (giá trị gốc ngoài khoảng hợp lệ)") + item(pal.neutral, "Bình thường");
   } else if (by.startsWith("cat:")) {
     const attr = by.slice(4);
-    const values = (state.stats[attr]?.values || []).slice(0, CATEGORICAL.length);
-    expr = values.length ? ["match", ["to-string", ["get", attr]], ...values.flatMap((v, i) => [String(v), CATEGORICAL[i]]), NEUTRAL] : NEUTRAL;
-    legend = values.map((v, i) => item(CATEGORICAL[i], v)).join("") + ((state.stats[attr]?.values || []).length > values.length ? item(NEUTRAL, "khác") : "");
+    const values = (state.stats[attr]?.values || []).slice(0, pal.cat.length);
+    expr = values.length ? ["match", ["to-string", ["get", attr]], ...values.flatMap((v, i) => [String(v), pal.cat[i]]), pal.neutral] : pal.neutral;
+    legend = values.map((v, i) => item(pal.cat[i], v)).join("") + ((state.stats[attr]?.values || []).length > values.length ? item(pal.neutral, "khác") : "");
   } else {
-    expr = "#9ec5f4";
+    expr = pal.plain;
     legend = "";
   }
   if (state.selected && state.idCol) {
     // Also light up the parts of a multi-part building (its outline may be hidden).
     const match = [["==", ["to-string", ["get", state.idCol]], state.selected]];
     if (state.parentAttr) match.push(["==", ["to-string", ["get", state.parentAttr]], state.selected]);
-    expr = ["case", ["any", ...match], HIGHLIGHT, expr];
+    expr = ["case", ["any", ...match], pal.highlight, expr];
   }
   return { expr, legend };
 }

@@ -333,3 +333,14 @@ def test_lost_geometry_counts_as_changed(extracts, tmp_path: Path) -> None:
     b2 = _rewrite(b, tmp_path / "b2.parquet", f"* REPLACE ({nulls})")
     result, engine = _run(CompareSpec(a=_side("a", a), b=_side("b", b2), mode="key", ignore_cols=("build_id",)), tmp_path)
     assert result["changes"]["geometry"]["nogeom"] == 1 and result["match"]["changed"] == 4
+
+
+def test_real_height_unknown_without_provenance_or_height_column(extracts, tmp_path: Path) -> None:
+    a, b = extracts
+    b2 = _rewrite(b, tmp_path / "b2.parquet", "building_id, height_m AS h_m, * EXCLUDE (building_id, height_m, height_provenance)")
+    fields = (("building_id", "String"), ("h_m", "Real"), ("building_tier", "String"), ("build_id", "String"))
+    side_b = SideSpec(name="b", parquet=b2, kind="vector", fields=fields, id_col="building_id",
+                      rule=HeightRule(), category_cols=("building_tier",))
+    result, _ = _run(CompareSpec(a=_side("a", a), b=side_b, mode="key"), tmp_path)
+    assert result["quality"]["b"]["real_pct"] is None and result["quality"]["a"]["real_pct"] == 80.0
+    assert result["changes"]["height"]["default_to_real"] == 0

@@ -544,7 +544,9 @@ function qualityBlock(q, columns) {
   const qb = q.b;
   const rows = [];
   const row = (label, a, b) => rows.push(`<tr><th>${esc(label)}</th><td class="n">${a}</td><td class="n">${b}</td></tr>`);
-  row("Có chiều cao thật", `${fmtInt(qa.real_height)} <span class="hint">(${pct(qa.real_pct)})</span>`, `${fmtInt(qb.real_height)} <span class="hint">(${pct(qb.real_pct)})</span>`);
+  const real = (x) => (x.real_pct == null ? '<span class="hint">không xác định — file không có cột nguồn chiều cao</span>'
+    : `${fmtInt(x.real_height)} <span class="hint">(${pct(x.real_pct)})</span>`);
+  row("Có chiều cao thật", real(qa), real(qb));
   row("Outlier chiều cao", fmtInt(qa.outliers), fmtInt(qb.outliers));
   row("Chiều cao trung vị / cao nhất", `${fmtNum(qa.median_h)} / ${fmtNum(qa.max_h)} m`, `${fmtNum(qb.median_h)} / ${fmtNum(qb.max_h)} m`);
   row("Khối con mồ côi (parent không tồn tại)", fmtInt(qa.orphan_parts), fmtInt(qb.orphan_parts));

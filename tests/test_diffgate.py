@@ -152,3 +152,11 @@ def test_render_markdown_smoke() -> None:
     r["grid"]["top"] = [{"center": [106.7, 10.8], "n_a": 10, "n_b": 4, "added": 0, "removed": 6, "changed": 0}]
     md = render_markdown(r)
     assert md.startswith("# So sánh trước release — FAIL") and "| FAIL |" in md and "10.800, 106.700" in md
+
+
+def test_unknown_real_height_skips_the_drop_rule() -> None:
+    r = _result()
+    r["quality"]["b"] |= {"real_pct": None, "real_height": None}
+    assert "real_height_drop" not in _codes(evaluate(r, Thresholds()))
+    r["gate"] = evaluate(r, Thresholds())
+    assert "không xác định" in render_markdown(r)

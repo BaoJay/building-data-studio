@@ -287,7 +287,9 @@ def evaluate(result: dict[str, Any], t: Thresholds) -> dict[str, Any]:
                 f"(ngưỡng {_n(t.warn_geom_major_pct)}%)")
 
     # --- quality
-    drop = (qa.get("real_pct") or 0) - (qb.get("real_pct") or 0)
+    # Unknown on either side (no provenance / height column) says nothing about a drop.
+    known = qa.get("real_pct") is not None and qb.get("real_pct") is not None
+    drop = (qa["real_pct"] - qb["real_pct"]) if known else 0.0
     if drop > t.warn_real_drop_pts:
         add("warn", "real_height_drop", f"% building có chiều cao thật giảm {_n(drop)} điểm",
             f"A {_n(qa.get('real_pct'))}% → B {_n(qb.get('real_pct'))}%")
@@ -394,7 +396,7 @@ def render_markdown(result: dict[str, Any]) -> str:
 
     qa, qb = result["quality"]["a"], result["quality"]["b"]
     lines += ["", "## Chất lượng", "", "| | A | B |", "|---|---:|---:|",
-              f"| Có chiều cao thật | {_cell(qa['real_height'])} ({_n(qa['real_pct'])}%) | {_cell(qb['real_height'])} ({_n(qb['real_pct'])}%) |",
+              f"| Có chiều cao thật | {_real(qa)} | {_real(qb)} |",
               f"| Outlier chiều cao | {_cell(qa['outliers'])} | {_cell(qb['outliers'])} |",
               f"| Khối con mồ côi | {_cell(qa['orphan_parts'])} | {_cell(qb['orphan_parts'])} |",
               f"| superseded_by treo | {_cell(qa['dangling_superseded'])} | {_cell(qb['dangling_superseded'])} |"]
@@ -407,6 +409,12 @@ def render_markdown(result: dict[str, Any]) -> str:
             lines.append(f"| {c['center'][1]:.3f}, {c['center'][0]:.3f} | {_i(c['n_a'])} | {_i(c['n_b'])} | "
                          f"{_i(c['added'])} | {_i(c['removed'])} | {_i(c['changed'])} |")
     return "\n".join(lines) + "\n"
+
+
+def _real(quality: dict[str, Any]) -> str:
+    if quality.get("real_pct") is None:
+        return "không xác định"
+    return f"{_cell(quality['real_height'])} ({_n(quality['real_pct'])}%)"
 
 
 def _size(num_bytes: int | None) -> str:

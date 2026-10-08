@@ -151,6 +151,7 @@ class DiffEngine:
         self.common = [n for n in spec.a.field_names if n in set(spec.b.field_names)]
         self.compare_cols: list[str] = []
         self.col_types: dict[str, dict[str, str]] = {}
+        self.real_known: dict[str, bool] = {}
         con.execute("SET TimeZone = 'UTC'")
 
     def _without_reserved(self, side: SideSpec) -> SideSpec:
@@ -367,6 +368,13 @@ class DiffEngine:
             real = f"({rule_exprs['h_src']}) <> 'default'"
         else:
             real = "FALSE"
+        # Whether a height is measured can only be told from h_src, a provenance column or a
+        # height / levels column; without them (e.g. tiles carrying only h_m) it stays unknown.
+        rule = side.rule
+        known = (side.has("h_src") or bool(side.prov_col and side.prov_missing)
+                 or bool(rule and (rule.height_col or rule.levels_col)))
+        self.real_known[s] = known
+        real_sql = f"coalesce({real}, FALSE)" if known else "CAST(NULL AS BOOLEAN)"
         if side.has("h_outlier"):
             out = 'TRY_CAST("h_outlier" AS INTEGER) = 1'
         elif rule_exprs:
@@ -375,7 +383,7 @@ class DiffEngine:
             out = "FALSE"
         self._x(f"""
             CREATE OR REPLACE TABLE {s}_bld AS SELECT *,
-              {key} AS _key, {h} AS _h, coalesce({real}, FALSE) AS _real, coalesce({out}, FALSE) AS _out
+              {key} AS _key, {h} AS _h, {real_sql} AS _real, coalesce({out}, FALSE) AS _out
             FROM {s}_bld""")
 
     # ------------------------------------------------------------------ matching
@@ -616,7 +624,8 @@ class DiffEngine:
                         f"median(_h), max(_h) FROM {s}_bld")
         total = row[0]
         out: dict[str, Any] = {
-            "total": total, "real_height": row[1], "real_pct": _pct(row[1], total), "outliers": row[2],
+            "total": total, "real_height": row[1] if self.real_known[s] else None,
+            "real_pct": _pct(row[1], total) if self.real_known[s] else None, "outliers": row[2],
             "median_h": row[3], "max_h": row[4], "categories": [], "orphan_parts": None, "dangling_superseded": None,
             "height_method": "h_m" if side.has("h_m") else ("rule" if side.rule else None),
         }

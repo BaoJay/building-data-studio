@@ -12,9 +12,11 @@ const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
 const HEIGHT_BREAKS = [0, 6, 12, 20, 35, 60, 100, 200, 400];
 const CAT_COUNT = 8;
 const SRC_TOKENS = { height: "cat-1", levels: "cat-3", clamped: "cat-2", default: "map-neutral" };
-// OpenFreeMap: free vector basemaps, no API key. Their own building layers are
-// removed so they never overlap the buildings being checked.
+// OpenFreeMap: free vector basemaps, no API key. VMAP is the mobile app's own style, served
+// through the local server (assets.vmaps.vn has no CORS) in one of four light presets.
+// Every basemap's own building layers are removed so they never overlap the buildings being checked.
 const BASEMAPS = {
+  vmap: { style: "/api/vmap/style.json", vmap: true },
   positron: { style: "https://tiles.openfreemap.org/styles/positron" },
   dark: { style: "https://tiles.openfreemap.org/styles/dark" },
   liberty: { style: "https://tiles.openfreemap.org/styles/liberty" },
@@ -25,12 +27,91 @@ const BASEMAPS = {
 const params = new URLSearchParams(location.search);
 const token = params.get("f");
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
-const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
+const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22, baseSeq: 0 };
+// VMAP light presets come from the server (app/vmap.py), the one place they are defined.
+const vmap = { presets: [], preset: "day" };
 
 // The colour set follows the basemap, not the page: dark tiles get the dark set, whose
 // height ramp is reversed so tall buildings stay the most salient.
 function mapTheme(key = $("#baseSel").value) {
+  if (key === "vmap") return vmapPreset()?.dark ? "dark" : "light";
   return key === "dark" || (key === "none" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+}
+
+// The basemap and light preset are remembered per browser; the map works without storage.
+function remember(key, value) {
+  try { localStorage.setItem(`bds.preview.${key}`, value); } catch { /* storage blocked */ }
+}
+function recall(key) {
+  try { return localStorage.getItem(`bds.preview.${key}`); } catch { return null; }
+}
+
+async function loadVmapPresets() {
+  try {
+    const res = await fetch("/api/vmap/presets");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const info = await res.json();
+    vmap.presets = info.presets;
+    vmap.preset = info.presets.some((p) => p.id === recall("preset")) ? recall("preset") : info.default;
+  } catch {
+    $("#baseSel").querySelector('option[value="vmap"]').disabled = true;
+  }
+}
+
+function vmapPreset(id = vmap.preset) {
+  return vmap.presets.find((p) => p.id === id);
+}
+
+// Building look of the mobile app: the active preset on the VMAP basemap, its day look elsewhere.
+function mobileBuilding() {
+  return vmapPreset($("#baseSel").value === "vmap" ? vmap.preset : "day")?.building;
+}
+
+function initBasemap() {
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const saved = recall("basemap");
+  const usable = (k) => k && BASEMAPS[k] && !$("#baseSel").querySelector(`option[value="${k}"]`)?.disabled;
+  $("#baseSel").value = usable(saved) ? saved : dark ? "dark" : "positron";
+  renderVmapControls();
+}
+
+function renderVmapControls() {
+  const on = $("#baseSel").value === "vmap" && vmap.presets.length > 0;
+  $("#vmapControls").hidden = !on;
+  if (!on) return;
+  $("#presetSeg").innerHTML = vmap.presets.map((p) => `<button type="button" data-preset="${esc(p.id)}" aria-pressed="${p.id === vmap.preset}"
+    ${p.origin === "suggested" ? 'title="Màu đề xuất, chưa có trong style Mobile"' : ""}>${esc(p.label)}${p.origin === "suggested" ? " *" : ""}</button>`).join("");
+  const p = vmapPreset();
+  $("#presetNote").textContent = p.origin === "mobile"
+    ? `${p.note} (* = màu đề xuất, chưa có trong style Mobile)`
+    : `Đề xuất: ${p.note}`;
+  $("#presetDownload").href = `/api/vmap/style.json?preset=${encodeURIComponent(p.id)}&download=1`;
+}
+
+// Switch basemap / preset. Only the latest request is applied, so fast clicks cannot leave
+// the map on an older style than the one selected.
+async function reloadBasemap(map, bldgSource, onLoad) {
+  remember("basemap", $("#baseSel").value);
+  remember("preset", vmap.preset);
+  renderVmapControls();
+  const seq = ++state.baseSeq;
+  const style = await basemapStyle($("#baseSel").value, bldgSource);
+  if (seq !== state.baseSeq) return;
+  map.once("style.load", onLoad);
+  map.setStyle(style, { diff: false });
+}
+
+function bindBasemapControls(map, bldgSource, onLoad, onBaseChange = () => {}) {
+  $("#baseSel").addEventListener("change", () => {
+    onBaseChange($("#baseSel").value);
+    reloadBasemap(map, bldgSource, onLoad);
+  });
+  $("#presetSeg").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-preset]");
+    if (!btn || btn.dataset.preset === vmap.preset) return;
+    vmap.preset = btn.dataset.preset;
+    reloadBasemap(map, bldgSource, onLoad);
+  });
 }
 
 const palettes = {};
@@ -91,8 +172,8 @@ async function main() {
     $("#layerSel").innerHTML = layers.map((l) => `<option>${esc(l)}</option>`).join("");
   }
 
-  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  $("#baseSel").value = dark ? "dark" : "positron";
+  await loadVmapPresets();
+  initBasemap();
   const hasCenter = params.has("lon") && params.has("lat");
   const center = hasCenter ? [Number(params.get("lon")), Number(params.get("lat"))] : [header.centerLon, header.centerLat];
   const zoom = hasCenter ? Number(params.get("z") || 17) : Math.max(header.centerZoom, header.minZoom + 1);
@@ -127,10 +208,12 @@ async function main() {
     map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
   });
 
-  $("#baseSel").addEventListener("change", async (e) => {
-    const style = await basemapStyle(e.target.value, bldgSource);
-    map.once("style.load", () => { addBuildingLayers(map); applyStyle(map); });
-    map.setStyle(style, { diff: false });
+  // Picking the mobile basemap also switches the buildings to the mobile look.
+  bindBasemapControls(map, bldgSource, () => { addBuildingLayers(map); applyStyle(map); }, (key) => {
+    if (key === "vmap" && $("#colorSel").querySelector('option[value="mobile"]')) {
+      state.colorBy = "mobile";
+      $("#colorSel").value = "mobile";
+    }
   });
   $("#layerSel").addEventListener("change", (e) => selectLayer(map, meta, e.target.value));
   $("#colorSel").addEventListener("change", (e) => { state.colorBy = e.target.value; applyStyle(map); });
@@ -150,9 +233,12 @@ async function basemapStyle(key, bldgSource) {
   $("#baseNote").textContent = "";
   try {
     if (def.style) {
-      const res = await fetch(def.style);
+      const res = await fetch(def.vmap ? `${def.style}?preset=${encodeURIComponent(vmap.preset)}` : def.style);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       style = await res.json();
+      if (def.vmap && res.headers.get("X-VMAP-Source") === "repo") {
+        $("#baseNote").textContent = "Không tải được style live từ assets.vmaps.vn — đang dùng bản lưu trong repo (map-styles/streets-v1.style.json).";
+      }
       style.layers = style.layers.filter((l) => l["source-layer"] !== "building");
     } else if (def.raster) {
       style.sources.base = { type: "raster", tiles: def.raster, tileSize: 256, attribution: def.attribution, maxzoom: 19 };
@@ -188,9 +274,11 @@ function selectLayer(map, meta, layerId) {
       options.push([`cat:${attr}`, `Theo ${attr}`]);
     }
   }
+  if (vmap.presets.length) options.push(["mobile", "Như app Mobile (theo ánh sáng bản đồ)"]);
   options.push(["plain", "Một màu"]);
   $("#colorSel").innerHTML = options.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
-  state.colorBy = options[0][0];
+  state.colorBy = $("#baseSel").value === "vmap" && vmap.presets.length ? "mobile" : options[0][0];
+  $("#colorSel").value = state.colorBy;
 
   addBuildingLayers(map);
   applyStyle(map);
@@ -227,6 +315,12 @@ function colorExpression() {
     const values = (state.stats[attr]?.values || []).slice(0, pal.cat.length);
     expr = values.length ? ["match", ["to-string", ["get", attr]], ...values.flatMap((v, i) => [String(v), pal.cat[i]]), pal.neutral] : pal.neutral;
     legend = values.map((v, i) => item(pal.cat[i], v)).join("") + ((state.stats[attr]?.values || []).length > values.length ? item(pal.neutral, "khác") : "");
+  } else if (by === "mobile" && mobileBuilding()) {
+    const b = mobileBuilding();
+    const p = vmapPreset($("#baseSel").value === "vmap" ? vmap.preset : "day");
+    expr = b.color;
+    legend = item(b.color, `Building — ${p.label}${p.origin === "suggested" ? " (đề xuất)" : ""}`)
+      + `<div class="hint">${esc(b.color)}, độ mờ ${b.opacity}${p.origin === "mobile" ? " — giá trị của layer building-3d (streets-v1-3d-qa)" : ""}. Ánh sáng (light) đổi theo chế độ.</div>`;
   } else {
     expr = pal.plain;
     legend = "";
@@ -253,10 +347,15 @@ function applyStyle(map) {
   const height = state.heightAttr ? ["to-number", ["get", state.heightAttr], 0] : 4;
   const base = state.baseAttr ? ["to-number", ["coalesce", ["get", state.baseAttr], 0], 0] : 0;
 
+  // The mobile look is translucent (as in the app); the QA colourings stay near-opaque.
+  const mobile = state.colorBy === "mobile" ? mobileBuilding() : null;
+
   map.setPaintProperty("bldg-3d", "fill-extrusion-color", expr);
   map.setPaintProperty("bldg-3d", "fill-extrusion-height", height);
   map.setPaintProperty("bldg-3d", "fill-extrusion-base", base);
+  map.setPaintProperty("bldg-3d", "fill-extrusion-opacity", mobile ? mobile.opacity : 0.92);
   map.setPaintProperty("bldg-2d", "fill-color", expr);
+  map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-3d", "bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
   map.setLayoutProperty("bldg-3d", "visibility", threeD ? "visible" : "none");
   map.setLayoutProperty("bldg-2d", "visibility", threeD ? "none" : "visible");
@@ -347,8 +446,8 @@ async function mainDiff(url, header, meta) {
   }
   if (!state.diff.grid) $("#gridSel").closest("label").hidden = true;
 
-  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  $("#baseSel").value = dark ? "dark" : "positron";
+  await loadVmapPresets();
+  initBasemap();
   const hasCenter = params.has("lon") && params.has("lat");
   const bldgSource = { type: "vector", url: `pmtiles://${url}`, attribution: meta.attribution || "" };
   const map = new maplibregl.Map({
@@ -383,11 +482,7 @@ async function mainDiff(url, header, meta) {
     map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
     map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
   });
-  $("#baseSel").addEventListener("change", async (e) => {
-    const style = await basemapStyle(e.target.value, bldgSource);
-    map.once("style.load", () => addDiffLayers(map));
-    map.setStyle(style, { diff: false });
-  });
+  bindBasemapControls(map, bldgSource, () => addDiffLayers(map));
   $("#diffLegend").addEventListener("change", (e) => {
     const kind = e.target.dataset.kind;
     if (!kind) return;
@@ -407,6 +502,8 @@ async function mainDiff(url, header, meta) {
 function addDiffLayers(map) {
   // Colours follow the basemap (light / dark set), so they are re-read after every style switch.
   const pal = palette(mapTheme());
+  // Re-entrant: "load" can fire after a basemap switch already added them.
+  ["grid-fill", "grid-line", "diff-fill", "diff-line", "diff-3d", "diff-sel"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
   if (state.diff.grid && !map.getSource("grid")) map.addSource("grid", { type: "geojson", data: state.diff.grid });
   if (state.diff.grid) {
     map.addLayer({ id: "grid-fill", type: "fill", source: "grid", paint: { "fill-opacity": ["interpolate", ["linear"], ["zoom"], ...GRID_FADE] } });

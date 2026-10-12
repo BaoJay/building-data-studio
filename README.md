@@ -133,6 +133,17 @@ Kéo file `.gpkg` vào QGIS, chuột phải layer → **Filter…**:
 
 Filter `has_parts != true` ẩn các outline đã được chia thành khối con, để không bị vẽ chồng. Cách làm này giống pipeline `vmap-buildings-to-pmtiles`.
 
+### Xem trên nền bản đồ của app Mobile (VMAP) với 4 chế độ ánh sáng
+
+Trong trang xem 3D, ô **Bản đồ nền** có lựa chọn **VMAP streets-v1 (nền app Mobile)**: đúng style `https://assets.vmaps.vn/styles/streets-v1/style.json` mà app đang dùng. Khi chọn nền này:
+
+- Ô **Ánh sáng bản đồ** hiện 4 nút **Bình minh / Ban ngày / Hoàng hôn / Ban đêm**. *Ban ngày* là style Mobile nguyên bản; ba chế độ có dấu `*` là **màu đề xuất**, chưa có trong style Mobile.
+- Building tự chuyển sang cách tô **Như app Mobile**: màu và độ mờ của building cùng ánh sáng (`light`) đổi theo chế độ. Vẫn chọn lại được các cách tô khác (chiều cao, outlier…).
+- Nút **Tải style.json chế độ này** tải file style đầy đủ của chế độ đang chọn (giữ nguyên URL sprite / glyphs / tiles gốc) để gửi team Mobile.
+- `assets.vmaps.vn` không bật CORS nên server local tải hộ style, sprite và glyphs. Nếu không tải được style live, app dùng bản lưu trong `map-styles/streets-v1.style.json` và báo dưới ô chọn nền.
+
+Chi tiết các file style của Mobile, cách sinh màu và bảng màu 4 chế độ: [`map-styles/README.md`](map-styles/README.md).
+
 ## 9. So sánh 2 file trước release
 
 Mở tab **So sánh 2 file**, chọn **A** (bản đang chạy production) và **B** (bản sắp release), rồi bấm **So sánh**. A và B nhận mọi định dạng app hỗ trợ (`.parquet`, `.gpkg`, `.fgb`, `.geojson`, `.pmtiles`), và hai file có thể khác định dạng nhau, ví dụ A là PMTiles đang serve, B là Parquet mới.
@@ -189,7 +200,7 @@ Thời gian chạy trên máy dev: canonical v1 (369 nghìn) ↔ v2 (1,2 triệu
 
 ## 10. Lưu ý
 
-- **Bản đồ nền** trong trang xem 3D lấy từ OpenFreeMap / OpenStreetMap, nên cần internet. Khi offline thì chọn *Không nền*, building vẫn hiển thị bình thường.
+- **Bản đồ nền** trong trang xem 3D lấy từ VMAP / OpenFreeMap / OpenStreetMap, nên cần internet. Khi offline thì chọn *Không nền*, building vẫn hiển thị bình thường. Lựa chọn nền và chế độ ánh sáng được nhớ trong trình duyệt.
 - File kéo thả được copy vào `uploads/` và **không tự xoá**. Hãy dọn thư mục này khi cần.
 - Lịch sử chạy trong app chỉ giữ trong phiên hiện tại. File output vẫn còn trên đĩa sau khi tắt app.
 - Tuỳ chọn chung (zoom, khoảng hợp lệ, thư mục output…) được nhớ trong trình duyệt. Nút **Khôi phục mặc định** đưa chúng về như ban đầu.
@@ -224,5 +235,7 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/diffcore.py` | Engine so sánh bằng DuckDB: ghép mảnh tile, khớp theo ID / vị trí, thay đổi, chất lượng, lưới |
 | `app/diffgate.py` | Release gate (ngưỡng Pass / Warn / Fail), so sánh schema, `diff_report.md` |
 | `app/jobs.py` | Hàng đợi job (chạy lần lượt từng job), huỷ job |
+| `app/vmap.py` | Nền VMAP cho trang xem 3D: proxy style / sprite / glyphs từ assets.vmaps.vn, 4 chế độ ánh sáng |
+| `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
 | `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; MapLibre + pmtiles.js (vendored) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe) |

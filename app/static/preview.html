@@ -49,6 +49,7 @@
     <label class="check" id="hideParentsWrap" hidden><input type="checkbox" id="hideParents" checked>Ẩn outline có khối con (<code>has_parts</code>)</label>
     <label class="field"><span>Bản đồ nền</span>
       <select id="baseSel">
+        <option value="vmap">VMAP streets-v1 (nền app Mobile)</option>
         <option value="positron">Sáng (OpenFreeMap Positron)</option>
         <option value="dark">Tối (OpenFreeMap Dark)</option>
         <option value="liberty">Chi tiết (OpenFreeMap Liberty)</option>
@@ -56,6 +57,12 @@
         <option value="none">Không nền (offline)</option>
       </select>
     </label>
+    <div class="field" id="vmapControls" hidden>
+      <span id="presetLabel">Ánh sáng bản đồ</span>
+      <div class="seg" id="presetSeg" role="group" aria-labelledby="presetLabel"></div>
+      <div class="hint" id="presetNote"></div>
+      <div class="btn-row"><a class="btn small" id="presetDownload" href="#" download>Tải style.json chế độ này</a></div>
+    </div>
     <div class="hint" id="baseNote" style="color:var(--warn-ink)"></div>
     <div class="hint" id="panelHint">Click building để xem thuộc tính. Chuột phải (hoặc Ctrl) + kéo để xoay / nghiêng. Bản đồ nền cần internet.</div>
   </aside>

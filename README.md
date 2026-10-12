@@ -144,6 +144,16 @@ Trong trang xem 3D, ô **Bản đồ nền** có lựa chọn **VMAP streets-v1 
 
 Chi tiết các file style của Mobile, cách sinh màu và bảng màu 4 chế độ: [`map-styles/README.md`](map-styles/README.md).
 
+### Đổ bóng vẽ sẵn (thử nghiệm)
+
+MapLibre không vẽ được bóng building đổ xuống mặt đất. Ô **Đổ bóng (vẽ sẵn, thử nghiệm)** trong trang xem 3D tính sẵn bóng của từng building rồi vẽ thành một layer `fill` mờ, nằm dưới nhãn và dưới building:
+
+- Hướng và độ dài bóng lấy theo `light` của chế độ đang chọn: Bình minh nắng từ phía đông, Ban ngày từ phía tây nam, Hoàng hôn từ phía tây; Ban đêm không có bóng. Nền khác VMAP dùng nắng Ban ngày. Độ dài bóng = chiều cao / tan(góc cao mặt trời).
+- Bóng được tính cho vùng quanh khung nhìn (từ zoom 15, tối đa khoảng 5 km mỗi chiều), khoảng 4 giây cho 12 nghìn building. Dịch bản đồ ra ngoài vùng đã tính thì tự tính lại. Bật / tắt được, lựa chọn được nhớ trong trình duyệt.
+- Mỗi building được quét theo tia nắng từ đáy (`min_height`) tới đỉnh: footprint dời tới hai độ cao cộng một hình bình hành cho mỗi cạnh, nên footprint lõm (chữ L, chữ U, có sân trong) vẫn đúng. Toàn bộ bóng được gộp thành một hình (không bị đậm lên ở chỗ chồng nhau) và trừ đi footprint.
+- Nút **Tải layer bóng vùng này (GeoJSON)** để team Mobile thử trên app.
+- Giới hạn: bóng chỉ đổ xuống mặt đất, không đổ lên mái hay tường building bên cạnh, và chỉ đúng với hướng nắng cố định của từng chế độ.
+
 ## 9. So sánh 2 file trước release
 
 Mở tab **So sánh 2 file**, chọn **A** (bản đang chạy production) và **B** (bản sắp release), rồi bấm **So sánh**. A và B nhận mọi định dạng app hỗ trợ (`.parquet`, `.gpkg`, `.fgb`, `.geojson`, `.pmtiles`), và hai file có thể khác định dạng nhau, ví dụ A là PMTiles đang serve, B là Parquet mới.
@@ -236,6 +246,7 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/diffgate.py` | Release gate (ngưỡng Pass / Warn / Fail), so sánh schema, `diff_report.md` |
 | `app/jobs.py` | Hàng đợi job (chạy lần lượt từng job), huỷ job |
 | `app/vmap.py` | Nền VMAP cho trang xem 3D: proxy style / sprite / glyphs từ assets.vmaps.vn, 4 chế độ ánh sáng |
+| `app/shadows.py` | Đổ bóng vẽ sẵn (thử nghiệm): tính bóng building theo hướng nắng của từng chế độ cho một vùng |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
 | `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; MapLibre + pmtiles.js (vendored) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe) |

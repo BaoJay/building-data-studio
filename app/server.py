@@ -21,7 +21,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, pipeline, probe, tools, vmap
+from . import __version__, diff, pipeline, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -242,6 +242,53 @@ async def vmap_asset(request: Request) -> Response:
     return Response(body, media_type=media, headers={"Cache-Control": "max-age=86400"})
 
 
+async def building_shadows(request: Request) -> Response:
+    """Prototype: dissolved ground shadows of the buildings of a registered PMTiles over one
+    area, cast along the light of a VMAP preset. ?download=1 saves the GeoJSON."""
+    q = request.query_params
+    path = registry.get(q.get("f", ""))
+    if path is None or not path.is_file():
+        return _error("File không tồn tại.", 404)
+    preset = q.get("preset") or vmap.DEFAULT_PRESET
+    if preset not in vmap.PRESETS:
+        return _error(f"Không có preset {preset}.")
+    try:
+        if vmap.PRESETS[preset].shadow is None:
+            raise shadows.ShadowError("Chế độ này không có nắng nên không đổ bóng.")
+        height = shadows.check_field(q.get("h"), "chiều cao")
+        if not height:
+            raise shadows.ShadowError("Thiếu cột chiều cao.")
+        light = await _in_thread(vmap.effective_light, preset)
+        if not light:
+            raise shadows.ShadowError("Style không có khối light để lấy hướng nắng.")
+        zoom = int(q["z"]) if q.get("z") and path.suffix.lower() == ".pmtiles" else None
+        req = shadows.Request(
+            path=path,
+            layer=shadows.check_field(q.get("layer"), "layer") or "",
+            zoom=zoom,
+            bbox=shadows.parse_bbox(q.get("bbox", "")),
+            height=height,
+            base=shadows.check_field(q.get("base"), "đáy"),
+            parts=shadows.check_field(q.get("parts"), "has_parts"),
+            sun=shadows.Sun.from_light(light),
+        )
+        body, stats = await _in_thread(shadows.cached_compute, req)
+    except ValueError as exc:  # ShadowError, bad z
+        return _error(str(exc))
+    except tools.ToolMissingError as exc:
+        return _error(str(exc), 500)
+    headers = {
+        **NO_CACHE,
+        "X-Shadow-Buildings": str(stats["buildings"]),
+        "X-Shadow-Ms": str(stats["ms"]),
+        "X-Sun-Azimuth": f"{req.sun.azimuth:g}",
+        "X-Sun-Altitude": f"{req.sun.altitude:g}",
+    }
+    if q.get("download"):
+        headers["Content-Disposition"] = f'attachment; filename="shadows-{preset}.geojson"'
+    return Response(body, media_type="application/geo+json", headers=headers)
+
+
 def open_in_file_manager(path: Path) -> None:
     """Finder on macOS, Explorer on Windows, xdg-open elsewhere."""
     if sys.platform == "darwin":
@@ -282,6 +329,7 @@ routes = [
     Route("/api/vmap/presets", vmap_presets),
     Route("/api/vmap/style.json", vmap_style),
     Route("/api/vmap/assets/{path:path}", vmap_asset),
+    Route("/api/shadows", building_shadows),
     Mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static"),
 ]
 

@@ -194,6 +194,8 @@ class Preset:
     grades: dict[str, Grade] = field(default_factory=dict)
     light: dict[str, Any] | None = None  # None = keep the style's own light
     building_opacity: float = MOBILE_BUILDING["opacity"]
+    # Precomputed ground shadows (app/shadows.py), cast along this preset's light. None: no sun.
+    shadow: dict[str, Any] | None = None
 
     def grade(self, role: str) -> Grade | None:
         return None if role == "keep" else self.grades.get(role)
@@ -228,6 +230,7 @@ PRESETS: dict[str, Preset] = {
                 "halo": Grade(tint=_ROSE, tint_amount=0.2),
             },
             light={"anchor": "map", "color": "#ffe0cc", "intensity": 0.3, "position": [1.15, 90, 50]},
+            shadow={"color": "#4b3f6b", "opacity": 0.22},
         ),
         Preset(
             id="day",
@@ -235,6 +238,7 @@ PRESETS: dict[str, Preset] = {
             origin="mobile",
             dark=False,
             note="Nguyên bản style streets-v1 app Mobile đang dùng.",
+            shadow={"color": "#3a4150", "opacity": 0.24},
         ),
         Preset(
             id="dusk",
@@ -256,6 +260,7 @@ PRESETS: dict[str, Preset] = {
             },
             light={"anchor": "map", "color": "#ffc796", "intensity": 0.4, "position": [1.15, 270, 55]},
             building_opacity=0.52,
+            shadow={"color": "#4e2f45", "opacity": 0.26},
         ),
         Preset(
             id="night",
@@ -379,6 +384,7 @@ def presets_info() -> dict[str, Any]:
                 "note": p.note,
                 "building": p.building(),
                 "light": p.light,
+                "shadow": p.shadow,
             }
             for p in PRESETS.values()
         ],
@@ -461,6 +467,11 @@ def base_style() -> tuple[str, dict[str, Any], str]:
             _parsed.clear()
             _parsed[digest] = style
     return digest, style, source
+
+
+def effective_light(preset_id: str) -> dict[str, Any] | None:
+    """The light a preset renders with: its own, or the mobile style's (day)."""
+    return PRESETS[preset_id].light or base_style()[1].get("light")
 
 
 def style_bytes(preset_id: str, asset_base: str | None) -> tuple[bytes, str]:

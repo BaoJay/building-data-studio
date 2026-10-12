@@ -21,7 +21,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, pipeline, probe, tools
+from . import __version__, diff, pipeline, probe, tools, vmap
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -212,6 +212,36 @@ async def reveal(request: Request) -> Response:
     return JSONResponse({"ok": True, "path": str(path)})
 
 
+async def vmap_presets(request: Request) -> Response:
+    return JSONResponse(vmap.presets_info(), headers=NO_CACHE)
+
+
+async def vmap_style(request: Request) -> Response:
+    """The mobile basemap in one light preset. ?download=1 keeps the assets.vmaps.vn URLs
+    (a file to hand to the mobile app); otherwise sprite / glyphs go through vmap_asset."""
+    preset = request.query_params.get("preset") or vmap.DEFAULT_PRESET
+    if preset not in vmap.PRESETS:
+        return _error(f"Không có preset {preset}.")
+    download = bool(request.query_params.get("download"))
+    asset_base = None if download else f"{request.base_url}api/vmap/assets/"
+    body, source = await _in_thread(vmap.style_bytes, preset, asset_base)
+    headers = {**NO_CACHE, "X-VMAP-Source": source}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="streets-v1-{preset}.style.json"'
+    return Response(body, media_type="application/json", headers=headers)
+
+
+async def vmap_asset(request: Request) -> Response:
+    """Same-origin copy of a sprite / glyph file from assets.vmaps.vn (it sends no CORS headers)."""
+    try:
+        body, media = await _in_thread(vmap.fetch_asset, request.path_params["path"])
+    except vmap.AssetNotAllowed:
+        return _error("Không hỗ trợ đường dẫn này.", 404)
+    except vmap.UpstreamError as exc:
+        return _error(f"Không tải được từ assets.vmaps.vn: {exc}", 502)
+    return Response(body, media_type=media, headers={"Cache-Control": "max-age=86400"})
+
+
 def open_in_file_manager(path: Path) -> None:
     """Finder on macOS, Explorer on Windows, xdg-open elsewhere."""
     if sys.platform == "darwin":
@@ -249,6 +279,9 @@ routes = [
     Route("/api/jobs/{job_id}/cancel", cancel_job, methods=["POST"]),
     Route("/api/files/{token}", get_file, methods=["GET", "HEAD"]),
     Route("/api/reveal", reveal, methods=["POST"]),
+    Route("/api/vmap/presets", vmap_presets),
+    Route("/api/vmap/style.json", vmap_style),
+    Route("/api/vmap/assets/{path:path}", vmap_asset),
     Mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static"),
 ]
 

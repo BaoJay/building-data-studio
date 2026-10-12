@@ -114,6 +114,114 @@ function bindBasemapControls(map, bldgSource, onLoad, onBaseChange = () => {}) {
   });
 }
 
+// ------------------------------------------------------------------ shadows (prototype)
+// Ground shadows precomputed on the server (app/shadows.py) for the area around the view,
+// cast along the sun of the light preset (day sun on the other basemaps). Drawn as one
+// dissolved fill under the labels and the buildings.
+const SHADOW_MINZOOM = 15;
+const SHADOW_MAX_SPAN = 0.045; // degrees; the server caps a request at 0.05
+const shadow = { key: null, bbox: null, data: null, info: "", download: "", appliedKey: null, seq: 0, timer: null };
+const COMPASS = ["bắc", "đông bắc", "đông", "đông nam", "nam", "tây nam", "tây", "tây bắc"];
+
+function shadowPresetId() {
+  return $("#baseSel").value === "vmap" ? vmap.preset : "day";
+}
+
+// Area around the centre: pitched views reach the horizon, so the box is capped at
+// `reach` × the request limit. Shadows are fetched for a wider box than the one that must be
+// covered, so small pans stay inside it.
+function viewBbox(map, pad, reach) {
+  const b = map.getBounds();
+  const c = map.getCenter();
+  const half = (SHADOW_MAX_SPAN / 2) * reach;
+  let [w, s, e, n] = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  const dx = (e - w) * pad;
+  const dy = (n - s) * pad;
+  w = Math.max(w - dx, c.lng - half); e = Math.min(e + dx, c.lng + half);
+  s = Math.max(s - dy, c.lat - half); n = Math.min(n + dy, c.lat + half);
+  return [w, s, e, n];
+}
+
+function syncShadows(map) {
+  clearTimeout(shadow.timer);
+  shadow.timer = setTimeout(() => updateShadows(map), 250);
+}
+
+async function updateShadows(map) {
+  const note = (text) => { $("#shadowNote").textContent = text; };
+  const look = vmapPreset(shadowPresetId())?.shadow;
+  $("#shadowDownloadRow").hidden = true;
+  $("#shadows").disabled = !state.heightAttr;
+  let why = "";
+  if (!state.heightAttr) why = "Layer không có cột chiều cao nên không tính được bóng.";
+  else if (!$("#shadows").checked) why = " ";
+  else if (!$("#threeD").checked) why = "Bật “Dựng 3D” để xem bóng.";
+  else if (!look) why = vmap.presets.length ? "Ban đêm không có nắng nên không đổ bóng." : "Không tải được danh sách chế độ ánh sáng.";
+  else if (map.getZoom() < SHADOW_MINZOOM) why = `Phóng to tới zoom ${SHADOW_MINZOOM} để tính bóng.`;
+  if (why) {
+    shadow.seq++;
+    note(why.trim());
+    if (map.getLayer("bldg-shadow")) map.setLayoutProperty("bldg-shadow", "visibility", "none");
+    return;
+  }
+
+  const params = new URLSearchParams({ f: token, layer: state.layer, z: String(state.maxzoom), h: state.heightAttr, preset: shadowPresetId() });
+  if (state.baseAttr) params.set("base", state.baseAttr);
+  if (!$("#hideParentsWrap").hidden && $("#hideParents").checked) params.set("parts", "has_parts");
+  const key = params.toString();
+  const [w, s, e, n] = viewBbox(map, 0, 0.6);
+  const have = shadow.key === key && shadow.bbox && shadow.bbox[0] <= w && shadow.bbox[1] <= s && shadow.bbox[2] >= e && shadow.bbox[3] >= n;
+  if (!have) {
+    const seq = ++shadow.seq;
+    if (map.getLayer("bldg-shadow")) map.setLayoutProperty("bldg-shadow", "visibility", shadow.key === key ? "visible" : "none");
+    note("Đang tính bóng cho vùng đang xem…");
+    const bbox = viewBbox(map, 0.5, 1);
+    params.set("bbox", bbox.map((v) => v.toFixed(6)).join(","));
+    let data;
+    let res;
+    try {
+      res = await fetch(`/api/shadows?${params}`);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      data = await res.json();
+    } catch (err) {
+      if (seq === shadow.seq) note(`Không tính được bóng: ${err.message}`);
+      return;
+    }
+    if (seq !== shadow.seq) return;
+    const az = Number(res.headers.get("X-Sun-Azimuth"));
+    const alt = Number(res.headers.get("X-Sun-Altitude"));
+    Object.assign(shadow, {
+      key, bbox, data,
+      info: `Nắng từ hướng ${COMPASS[Math.round(az / 45) % 8]}, cao ${alt}° → bóng dài ${(1 / Math.tan((alt * Math.PI) / 180)).toFixed(2)}× chiều cao. `
+        + `${Number(res.headers.get("X-Shadow-Buildings")).toLocaleString("vi-VN")} building, ${res.headers.get("X-Shadow-Ms")} ms. Kéo ra ngoài vùng này sẽ tự tính lại.`,
+      download: `/api/shadows?${params}&download=1`,
+    });
+  }
+  showShadow(map, look);
+  note(shadow.info);
+  $("#shadowDownload").href = shadow.download;
+  $("#shadowDownloadRow").hidden = false;
+}
+
+function showShadow(map, look) {
+  const src = map.getSource("shadow");
+  if (!src) {
+    map.addSource("shadow", { type: "geojson", data: shadow.data });
+  } else if (shadow.appliedKey !== shadow.key + shadow.bbox) {
+    src.setData(shadow.data);
+  }
+  shadow.appliedKey = shadow.key + shadow.bbox;
+  if (!map.getLayer("bldg-shadow")) {
+    // Over roads and bridges, under the first label layer (icon-only symbols such as one-way
+    // arrows sit between the roads). The building layers come after the labels, so above.
+    const before = map.getStyle().layers.find((l) => l.type === "symbol" && l.layout?.["text-field"])?.id;
+    map.addLayer({ id: "bldg-shadow", type: "fill", source: "shadow", paint: {} }, before);
+  }
+  map.setPaintProperty("bldg-shadow", "fill-color", look.color);
+  map.setPaintProperty("bldg-shadow", "fill-opacity", look.opacity);
+  map.setLayoutProperty("bldg-shadow", "visibility", "visible");
+}
+
 const palettes = {};
 function palette(theme) {
   if (palettes[theme]) return palettes[theme];
@@ -215,6 +323,12 @@ async function main() {
       $("#colorSel").value = "mobile";
     }
   });
+  $("#shadows").checked = recall("shadows") !== "0";
+  $("#shadows").addEventListener("change", () => {
+    remember("shadows", $("#shadows").checked ? "1" : "0");
+    syncShadows(map);
+  });
+  map.on("moveend", () => syncShadows(map));
   $("#layerSel").addEventListener("change", (e) => selectLayer(map, meta, e.target.value));
   $("#colorSel").addEventListener("change", (e) => { state.colorBy = e.target.value; applyStyle(map); });
   $("#threeD").addEventListener("change", () => applyStyle(map));
@@ -362,6 +476,7 @@ function applyStyle(map) {
   map.setLayoutProperty("bldg-line", "visibility", threeD ? "none" : "visible");
   if (!threeD && map.getPitch() > 0) map.easeTo({ pitch: 0 });
   if (threeD && map.getPitch() < 20) map.easeTo({ pitch: 55 });
+  syncShadows(map);
 }
 
 function onClick(map, e) {
@@ -428,6 +543,7 @@ async function mainDiff(url, header, meta) {
   $("#title").textContent = name;
   $("#meta").textContent = `Bản đồ diff A → B · building từ zoom ${header.minZoom}`;
   $("#colorField").hidden = true;
+  $("#shadowControls").hidden = true;
   $("#diffControls").hidden = false;
   $("#threeD").checked = false;
   $("#panelHint").textContent = "Click building hoặc ô lưới để xem chi tiết. Lưới mờ dần khi phóng to. Bản đồ nền cần internet.";

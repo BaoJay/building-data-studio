@@ -15,7 +15,7 @@ Bản lưu các `style.json` app Mobile (MapLibre Native) đang dùng, để đ�
 Các file trên **chỉ có một bộ màu (ban ngày)**. Không có biến thể bình minh / hoàng hôn / ban đêm, cũng không có biểu thức nào đổi màu theo chế độ.
 
 - `streets-v1` có một khối `light` cố định (`#ffffff`, cường độ 0.25, vị trí `[1.15, 210, 35]`). Nhưng style này **không có layer 3D nào**: building chỉ là `fill` 2D từ zoom 12 đến 14. Building 3D là do app tự thêm, từ PMTiles của Building Data Studio.
-- MapLibre không vẽ được bóng building đổ xuống mặt đất. `light` chỉ làm sáng / tối các mặt bên của khối 3D.
+- MapLibre không vẽ được bóng building đổ xuống mặt đất. `light` chỉ làm sáng / tối các mặt bên của khối 3D. Trang xem 3D có bản thử nghiệm **bóng vẽ sẵn** (xem mục "Đổ bóng vẽ sẵn" trong README chính).
 - Sprite không có icon SDF, nên icon POI và biển số đường (CT, QL…) **không đổi màu được qua style**. Muốn icon hợp nền tối thì cần bộ sprite riêng cho ban đêm.
 
 ## 4 chế độ trong trang xem 3D
@@ -41,6 +41,8 @@ Các file trên **chỉ có một bộ màu (ban ngày)**. Không có biến th�
 | Địa danh (chữ) | `place_city` | `#585963` | `#565a60` | `#545257` | `#a4a8ae` |
 | Building 3D (màu / độ mờ) | app tự thêm | `#d5cbca` / 0.48 | `#cfcec9` / 0.48 | `#cfbcaf` / 0.52 | `#5c616c` / 0.75 |
 | `light` (màu, cường độ, vị trí) | gốc style | `#ffe0cc`, 0.3, [1.15, 90, 50] | `#ffffff`, 0.25, [1.15, 210, 35] | `#ffc796`, 0.4, [1.15, 270, 55] | `#c8d4f5`, 0.25, [1.15, 210, 30] |
+| Bóng vẽ sẵn (màu / độ mờ, thử nghiệm) | `fill` dưới nhãn | `#4b3f6b` / 0.22 | `#3a4150` / 0.24 | `#4e2f45` / 0.26 | không có |
+| Hướng nắng → độ dài bóng | theo `light` | từ đông, cao 40° → 1,19× | từ tây nam, cao 55° → 0,70× | từ tây, cao 35° → 1,43× | — |
 
 `*` = đề xuất, chưa có trong style Mobile. Vị trí `light` là `[bán kính, góc phương vị, góc cực]`: phương vị 90 là mặt trời ở phía đông, 270 là phía tây; góc cực càng lớn thì mặt trời càng thấp.
 

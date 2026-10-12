@@ -2,6 +2,9 @@
 
 import json
 import math
+import sqlite3
+import subprocess
+from contextlib import closing
 
 import pytest
 
@@ -49,12 +52,28 @@ def test_offset_is_scaled_by_latitude():
     assert dlon60 == pytest.approx(2 * dlon0)
 
 
-def test_pieces_skip_edges_parallel_to_the_sun():
+def test_convex_footprint_is_one_hull():
     square = [_ring((0, 0), (10, 0), (10, 10), (0, 10))]
     pieces = list(shadows.shadow_pieces(square, 0, 10, 1 / M_LON, 0))
-    # two shifted copies + the two edges across the ray; the two along it sweep nothing
-    assert len(pieces) == 4
+    assert len(pieces) == 1
+    assert _area_m2({"type": "Polygon", "coordinates": pieces[0]}) == pytest.approx(200, rel=1e-6)
     assert list(shadows.shadow_pieces(square, 5, 5, 1 / M_LON, 0)) == []
+
+
+def test_concave_pieces_skip_edges_parallel_to_the_sun():
+    ell = [_ring((0, 0), (20, 0), (20, 10), (10, 10), (10, 20), (0, 20))]
+    pieces = list(shadows.shadow_pieces(ell, 0, 5, 1 / M_LON, 0))
+    # two shifted copies + the three edges across the ray; the three along it sweep nothing
+    assert len(pieces) == 5
+
+
+def test_clip_polygon_to_a_cell():
+    square = _ring((0, 0), (10, 0), (10, 10), (0, 10))
+    box = (5 / M_LON, -1.0, 1.0, 1.0)
+    clipped = shadows._clip_polygon([square], box)
+    assert _area_m2({"type": "Polygon", "coordinates": clipped}) == pytest.approx(50, rel=1e-6)
+    assert shadows._clip_polygon([square], (1.0, 1.0, 2.0, 2.0)) is None
+    assert shadows._clip_polygon([square], (-1.0, -1.0, 1.0, 1.0)) == [square]
 
 
 @pytest.mark.parametrize("bbox", ["1,2,3", "a,b,c,d", "10,10,9,11", "105,21,106,22", "0,-89,0.01,-88.99"])
@@ -137,3 +156,68 @@ def test_overlapping_shadows_are_dissolved(run):
 def test_no_heights_no_shadow(run):
     area, stats = run([([_ring((0, 0), (10, 0), (10, 10), (0, 10))], {"h": None})])
     assert area == 0 and stats["pieces"] == 0
+
+
+def _gpkg(tmp_path, features, *, dim=None):
+    src = tmp_path / "b.geojson"
+    src.write_text(json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": props, "geometry": geom} for geom, props in features]}))
+    out = tmp_path / "b.gpkg"
+    cmd = [tools.require("ogr2ogr"), "-f", "GPKG", str(out), str(src), "-nln", "buildings",
+           "-lco", "GEOMETRY_NAME=geom", "-lco", "FID=fid", "-nlt", "MULTIPOLYGON"]
+    if dim:
+        cmd += ["-dim", dim]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out
+
+
+@needs_gdal
+@pytest.mark.parametrize("dim", [None, "XYZ"])
+def test_gpkg_polygons_decode(tmp_path, dim):
+    outer = _ring((0, 0), (30, 0), (30, 30), (0, 30))
+    hole = _ring((10, 10), (20, 10), (20, 20), (10, 20))
+    gpkg = _gpkg(tmp_path, [({"type": "Polygon", "coordinates": [outer, hole]}, {"h_m": 5})], dim=dim)
+    with closing(sqlite3.connect(gpkg)) as conn:
+        (blob,) = conn.execute("SELECT geom FROM buildings").fetchone()
+    polys = shadows.gpkg_polygons(blob)
+    assert len(polys) == 1 and len(polys[0]) == 2
+    assert _area_m2({"type": "Polygon", "coordinates": polys[0]}) == pytest.approx(800, rel=1e-6)
+
+
+@needs_gdal
+def test_dataset_shadows_tile_cells_without_overlap_or_gaps(tmp_path):
+    """Cells of ~11 m cut every shadow into many pieces; summed areas must still be exact."""
+    square = _ring((0, 0), (10, 0), (10, 10), (0, 10))
+    ell = _ring((40, 0), (60, 0), (60, 10), (50, 10), (50, 20), (40, 20))
+    part = _ring((80, 0), (90, 0), (90, 10), (80, 10))
+    gpkg = _gpkg(tmp_path, [
+        ({"type": "Polygon", "coordinates": [square]}, {"h_m": 10, "min_height": 0, "has_parts": 0}),
+        ({"type": "Polygon", "coordinates": [ell]}, {"h_m": 5, "min_height": 0, "has_parts": 0}),
+        ({"type": "Polygon", "coordinates": [part]}, {"h_m": 50, "min_height": 0, "has_parts": 1}),
+    ])
+    spec = shadows.DatasetSpec(
+        gpkg=gpkg, table="buildings", geom_col="geom", height_col="h_m", base_col="min_height",
+        parts_col="has_parts", suns={"west": shadows.Sun(270, 45), "south": shadows.Sun(180, 45)},
+        out=tmp_path / "shadows.geojsonl", work=tmp_path / "work", cell_deg=0.0001, workers=2,
+    )
+    stats = shadows.compute_dataset(spec)
+    assert stats["buildings"] == 3 and stats["casting"] == 2
+    area = {"west": 0.0, "south": 0.0}
+    for line in spec.out.read_text().splitlines():
+        feat = json.loads(line)
+        area[feat["properties"]["preset"]] += _area_m2(feat["geometry"])
+    # west sun -> east shadows: square 10×10 (100) + L 5 m (100); south sun -> north: 100 + L (10×5 + 10×5 = 100)
+    assert area["west"] == pytest.approx(200, rel=0.01)
+    assert area["south"] == pytest.approx(200, rel=0.01)
+    assert not list((tmp_path / "work").glob("*.geojsonl"))  # temp pieces cleaned up
+
+
+@needs_gdal
+def test_dataset_cancel(tmp_path):
+    gpkg = _gpkg(tmp_path, [({"type": "Polygon", "coordinates": [_ring((0, 0), (10, 0), (10, 10), (0, 10))]},
+                             {"h_m": 10})])
+    spec = shadows.DatasetSpec(gpkg=gpkg, table="buildings", geom_col="geom", height_col="h_m", base_col=None,
+                               parts_col=None, suns={"day": shadows.Sun(180, 45)},
+                               out=tmp_path / "s.geojsonl", work=tmp_path / "work")
+    with pytest.raises(shadows.Cancelled):
+        shadows.compute_dataset(spec, cancelled=lambda: True)

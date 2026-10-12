@@ -5,7 +5,8 @@
            ├─ ogrinfo SQL ──► has_parts / is_part
            ├─ ogr2ogr ──► output GeoPackage in another CRS (optional)
            ├─ sqlite3 ──► height report (report.json / report.md)
-           └─ ogr2ogr ──► FlatGeobuf (temp) ── tippecanoe ──► PMTiles
+           ├─ ogr2ogr ──► FlatGeobuf (temp) ── tippecanoe ──► PMTiles
+           └─ (optional) shadows.compute_dataset ──► shadows layer, tile-joined into the PMTiles
 
 Every stage logs a feature-count accounting line so silent data loss shows up.
 """
@@ -24,7 +25,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from . import __version__, probe, tools
+from . import __version__, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, Step
 from .probe import GENERATED_FIELDS, ProbeError
 from .probe import quote_ident as q
@@ -48,6 +49,8 @@ DEFAULT_LAYER = "buildings"
 WORK_DIR_NAME = "_work"
 NORMALIZED_NAME = "normalized.gpkg"
 TILES_INPUT_NAME = "tiles_input.fgb"
+SHADOWS_INPUT_NAME = "shadows.geojsonl"
+SHADOW_MINZOOM = 15  # shadows of low-rise buildings are invisible further out
 MAX_ZOOM = 22
 MAX_NAME_LENGTH = 120
 DEFAULT_MAX_TILE_KB = 500
@@ -84,6 +87,8 @@ class TilesConfig:
     max_tile_kb: int = DEFAULT_MAX_TILE_KB
     shared_borders: bool = False
     attribution: str = ""
+    shadows: bool = False  # add the precomputed `shadows` layer (one polygon set per light preset)
+    shadow_min_height: float = 0.0  # only buildings taller than this cast a shadow
 
 
 @dataclass(frozen=True)
@@ -171,11 +176,18 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
         max_tile_kb=_int(tiles_raw.get("max_tile_kb", DEFAULT_MAX_TILE_KB), "Dung lượng tile tối đa", 50, 100000),
         shared_borders=bool(tiles_raw.get("shared_borders", False)),
         attribution=str(tiles_raw.get("attribution") or "").strip(),
+        shadows=bool(tiles_raw.get("shadows", False)),
+        shadow_min_height=_float(tiles_raw.get("shadow_min_height") or 0, "Chiều cao tối thiểu để đổ bóng", 0, 1000),
     )
 
     height = None
     if height_raw.get("enabled", True):
         height = dict(height_raw)
+    if want_pmtiles and tiles.shadows:
+        if height is None:
+            raise ConfigError("Cần bật tính chiều cao (h_m) để tạo layer bóng.")
+        if tiles.layer == shadows.SHADOW_LAYER:
+            raise ConfigError(f"Tên layer PMTiles không được trùng layer bóng '{shadows.SHADOW_LAYER}'.")
 
     parts = None
     if parts_raw.get("enabled") and parts_raw.get("id_col") and parts_raw.get("parent_col"):
@@ -434,6 +446,10 @@ class Pipeline(StagedPipeline):
         self.passthrough: list[str] = []
         self.src_crs: str | None = None
         self.tiles_info: dict[str, Any] | None = None
+        self.shadow_info: dict[str, Any] | None = None
+        # With shadows, buildings are tiled on their own first and joined with the shadow tiles.
+        self.with_shadows = cfg.want_pmtiles and cfg.tiles.shadows
+        self.buildings_tiles = self.work / "buildings.pmtiles" if self.with_shadows else self.pmtiles_out
 
     def intro(self) -> list[str]:
         return [f"Building Data Studio {__version__} — input: {self.cfg.input_path}", f"Thư mục output: {self.out_dir}"]
@@ -454,8 +470,13 @@ class Pipeline(StagedPipeline):
             steps += [
                 Step("fgb", "Chuẩn bị dữ liệu cho tippecanoe"),
                 Step("tiles", f"Cắt tile z{cfg.tiles.minzoom}–{cfg.tiles.maxzoom} → PMTiles"),
-                Step("check", "Kiểm tra PMTiles"),
             ]
+            if self.with_shadows:
+                steps += [
+                    Step("shadows", "Tính bóng building (Bình minh / Ban ngày / Hoàng hôn)"),
+                    Step("shadow_tiles", "Cắt tile layer bóng & gộp vào PMTiles"),
+                ]
+            steps.append(Step("check", "Kiểm tra PMTiles"))
         steps.append(Step("finalize", "Ghi báo cáo & dọn file tạm"))
         return steps
 
@@ -633,8 +654,9 @@ class Pipeline(StagedPipeline):
     def _step_tiles(self, step: Step) -> None:
         cfg, t = self.cfg, self.cfg.tiles
         self.pmtiles_out.unlink(missing_ok=True)
+        self.buildings_tiles.unlink(missing_ok=True)
         cmd = [
-            tools.require("tippecanoe"), "-o", str(self.pmtiles_out),
+            tools.require("tippecanoe"), "-o", str(self.buildings_tiles),
             "-l", t.layer, "-n", cfg.out_name,
             "-N", f"{cfg.out_name} — Building Data Studio {__version__}",
             "-Z", str(t.minzoom), "-z", str(t.maxzoom),
@@ -659,12 +681,107 @@ class Pipeline(StagedPipeline):
                 self.accounting["pmtiles_features"] = int(match.group(1))
 
         self._run(cmd, step, line_hook=watch)
-        self.accounting["pmtiles_bytes"] = self.pmtiles_out.stat().st_size
-        self._add_output("pmtiles", "PMTiles", self.pmtiles_out, "pmtiles")
+        self.accounting["pmtiles_bytes"] = self.buildings_tiles.stat().st_size
+        if not self.with_shadows:
+            self._add_output("pmtiles", "PMTiles", self.pmtiles_out, "pmtiles")
         expected = self.accounting.get("normalized_count")
         got = self.accounting.get("pmtiles_features")
         if expected is not None and got is not None and got != expected - self.accounting.get("null_geometry", 0):
             self.job.add_log(f"CẢNH BÁO: tippecanoe đọc {got:,} feature, GPKG có {expected:,}.")
+
+    def _step_shadows(self, step: Step) -> None:
+        cfg, job = self.cfg, self.job
+        with closing(sqlite3.connect(self.normalized.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            columns = {r[1] for r in conn.execute(f"PRAGMA table_info({q(cfg.gpkg_layer)})")}
+        base = next((c for c in probe.MIN_HEIGHT_NAMES if c in columns), None)
+        parts = "has_parts" if "has_parts" in columns else None
+        presets: dict[str, dict[str, Any]] = {}
+        suns: dict[str, shadows.Sun] = {}
+        for pid, preset in vmap.PRESETS.items():
+            light = vmap.effective_light(pid) if preset.shadow else None
+            if not light:
+                continue
+            sun = suns[pid] = shadows.Sun.from_light(light)
+            presets[pid] = {"label": preset.label, "azimuth": sun.azimuth, "altitude": sun.altitude,
+                            "length_factor": round(sun.length_factor, 3), **preset.shadow}
+            job.add_log(f"{preset.label}: nắng từ {sun.azimuth:g}°, cao {sun.altitude:g}° → bóng dài "
+                        f"{sun.length_factor:.2f}× chiều cao")
+        job.add_log(f"Chiều cao: h_m · đáy: {base or '(không có, tính từ mặt đất)'} · "
+                    f"bỏ outline có khối con: {'có (has_parts)' if parts else 'không'}"
+                    + (f" · chỉ building cao hơn {cfg.tiles.shadow_min_height:g} m" if cfg.tiles.shadow_min_height else ""))
+        spec = shadows.DatasetSpec(
+            gpkg=self.normalized, table=cfg.gpkg_layer, geom_col=GEOM_NAME, height_col="h_m",
+            base_col=base, parts_col=parts, suns=suns, min_height=cfg.tiles.shadow_min_height,
+            out=self.work / SHADOWS_INPUT_NAME, work=self.work / "shadows",
+        )
+        self.commands.append(f"shadows.compute_dataset({spec.gpkg.name}, cell {spec.cell_deg}°, {spec.workers} luồng)")
+
+        def on_progress(value: float) -> None:
+            step.progress = value
+
+        try:
+            stats = shadows.compute_dataset(spec, progress=on_progress, log=job.add_log,
+                                            cancelled=lambda: job.runner.cancelled)
+        except shadows.Cancelled as exc:
+            raise tools.CancelledError("Đã huỷ") from exc
+        except shadows.ShadowError as exc:
+            raise PipelineError(str(exc)) from exc
+        self.shadow_info = {"layer": shadows.SHADOW_LAYER, "presets": presets, "base_col": base,
+                            "parts_col": parts, "min_height": spec.min_height, "cell_deg": spec.cell_deg, **stats}
+        job.add_log(f"Bóng: {stats['features']:,} polygon gộp ({stats['bytes'] / 1e6:.0f} MB GeoJSON) "
+                    f"từ {stats['casting']:,} building có bóng, {stats['seconds']:.0f}s.")
+
+    def _step_shadow_tiles(self, step: Step) -> None:
+        cfg, t = self.cfg, self.cfg.tiles
+        shadow_tiles = self.work / "shadows.pmtiles"
+        shadow_tiles.unlink(missing_ok=True)
+        minzoom = min(max(t.minzoom, SHADOW_MINZOOM), t.maxzoom)
+        # Never drop shadow polygons: a dropped one is a hole in the shade.
+        self._run([
+            tools.require("tippecanoe"), "-o", str(shadow_tiles), "-l", shadows.SHADOW_LAYER,
+            "-Z", str(minzoom), "-z", str(t.maxzoom), "--no-feature-limit", "--no-tile-size-limit",
+            "-P", "-t", str(self.work), "--force", str(self.work / SHADOWS_INPUT_NAME),
+        ], step)
+        step.progress = 70.0
+        join = [tools.require("tile-join"), "-f", "-pk", "-o", str(self.pmtiles_out),
+                "-n", cfg.out_name, "-N", f"{cfg.out_name} — Building Data Studio {__version__}"]
+        if t.attribution:
+            join += ["-A", t.attribution]
+        self._run([*join, str(self.buildings_tiles), str(shadow_tiles)], step)
+        self._fix_joined_tilestats(shadow_tiles)
+        assert self.shadow_info is not None
+        self.shadow_info.update(minzoom=minzoom, maxzoom=t.maxzoom, tiles_bytes=shadow_tiles.stat().st_size)
+        self.accounting["pmtiles_bytes"] = self.pmtiles_out.stat().st_size
+        self.accounting["shadow_tiles_bytes"] = shadow_tiles.stat().st_size
+        self._add_output("pmtiles", "PMTiles (buildings + shadows)", self.pmtiles_out, "pmtiles")
+        self.job.add_log(f"Layer bóng z{minzoom}–{t.maxzoom}: {shadow_tiles.stat().st_size / 1e6:.1f} MB; "
+                         f"PMTiles gộp: {self.pmtiles_out.stat().st_size / 1e6:.1f} MB.")
+
+    def _fix_joined_tilestats(self, shadow_tiles: Path) -> None:
+        """tile-join counts a feature once per tile in tilestats; put back each layer's own stats
+        (the feature count read by probe / diff)."""
+        exe = tools.which("pmtiles")
+        if exe is None:
+            self.job.add_log("Lưu ý: chưa cài pmtiles CLI nên số feature trong tilestats của file gộp bị đếm theo tile.")
+            return
+
+        def metadata(path: Path) -> dict[str, Any]:
+            res = tools.run_capture([exe, "show", "--metadata", str(path)], timeout=120)
+            if res.returncode != 0:
+                raise PipelineError(f"pmtiles show lỗi: {res.stderr.strip()}")
+            return json.loads(res.stdout)
+
+        joined = metadata(self.pmtiles_out)
+        own = {lyr["layer"]: lyr for path in (self.buildings_tiles, shadow_tiles)
+               for lyr in (metadata(path).get("tilestats") or {}).get("layers", [])}
+        stats = joined.get("tilestats") or {}
+        stats["layers"] = [own.get(lyr.get("layer"), lyr) for lyr in stats.get("layers", [])]
+        joined["tilestats"] = stats
+        meta_file = self.work / "joined_metadata.json"
+        meta_file.write_text(json.dumps(joined, ensure_ascii=False), encoding="utf-8")
+        res = tools.run_capture([exe, "edit", str(self.pmtiles_out), f"--metadata={meta_file}"], timeout=600)
+        if res.returncode != 0:
+            raise PipelineError(f"pmtiles edit lỗi: {res.stderr.strip()}")
 
     def _step_check(self, step: Step) -> None:
         exe = tools.which("pmtiles")
@@ -696,6 +813,8 @@ class Pipeline(StagedPipeline):
         report = dict(self.job.report or {})
         report["accounting"] = self.accounting
         report["pmtiles"] = self.tiles_info
+        if self.shadow_info:
+            report["shadows"] = self.shadow_info
         report["provenance"] = self._provenance()
         with self.job.lock:
             self.job.report = report

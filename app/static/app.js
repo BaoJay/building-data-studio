@@ -23,6 +23,7 @@ const DEFAULTS = {
   m_per_level: 3.5, default_m: 4, min_valid_m: 2, max_valid_m: 500, max_levels: 200, outlier_mode: "fallback",
   decimals: 1, tiles_layer: "buildings", minzoom: 13, maxzoom: 15, drop: "drop-densest", extend_zooms: true,
   simplification: "", max_tile_kb: 500, shared_borders: false, attribution: "", makevalid: false, keep_temp: false,
+  shadows: false, shadow_min_height: 0,
 };
 
 const state = {
@@ -348,6 +349,10 @@ function renderOptions(p) {
       </div>
       <label class="check">${chk("extend_zooms", pr.extend_zooms)} Tự tăng max zoom nếu vẫn phải bỏ feature</label>
       <label class="check">${chk("shared_borders", pr.shared_borders)} Giữ khớp cạnh chung giữa polygon (<code>--detect-shared-borders</code>)</label>
+      <label class="check">${chk("shadows", pr.shadows)} Thêm layer bóng <code>shadows</code> cho Bình minh / Ban ngày / Hoàng hôn (thử nghiệm)
+        <span class="hint">— cần chiều cao h_m, tile từ zoom 15; cả nước mất thêm vài phút</span></label>
+      <label class="field" id="shadowMinField"><span>Chỉ đổ bóng building cao hơn (m)</span>${num("shadow_min_height", pr.shadow_min_height, 'min="0" step="0.5"')}
+        <span class="hint">0 = mọi building. 4 = bỏ nhà đang dùng chiều cao mặc định 4 m: layer bóng nhẹ hơn ~6 lần.</span></label>
       <label class="field"><span>Attribution</span><input type="text" name="attribution" value="${esc(pr.attribution)}" placeholder="vd: © OpenStreetMap contributors"></label>
     </fieldset>
 
@@ -407,6 +412,7 @@ function onFormChange(e) {
   $("#fsParts").classList.toggle("off", !partsOn);
   $("#fsGpkg").classList.toggle("off", !el.want_gpkg.checked);
   $("#fsTiles").classList.toggle("off", !el.want_pmtiles.checked);
+  $("#shadowMinField").hidden = !el.shadows.checked;
   $("#crsCustomField").hidden = el.gpkg_crs_sel.value !== "custom";
 
   const kept = $$('input[name="col"]', form).filter((c) => c.checked).map((c) => c.value);
@@ -462,6 +468,7 @@ function collectConfig() {
     minzoom: numv("minzoom"), maxzoom: numv("maxzoom"), drop: val("drop"), extend_zooms: el.extend_zooms.checked,
     simplification: val("simplification"), max_tile_kb: numv("max_tile_kb"), shared_borders: el.shared_borders.checked,
     attribution: val("attribution"), makevalid: el.makevalid.checked, keep_temp: el.keep_temp.checked,
+    shadows: el.shadows.checked, shadow_min_height: numv("shadow_min_height") || 0,
   };
   const config = {
     input: { path: p.path, layer: p.layer, geom_column: el.geom_column ? val("geom_column") : null, src_crs: el.src_crs ? val("src_crs") : null },
@@ -478,7 +485,8 @@ function collectConfig() {
       layer: prefs.tiles_layer, minzoom: prefs.minzoom, maxzoom: prefs.maxzoom,
       attributes: $$('input[name="tattr"]:checked').map((c) => c.value), drop: prefs.drop, extend_zooms: prefs.extend_zooms,
       simplification: prefs.simplification === "" ? null : Number(prefs.simplification), max_tile_kb: prefs.max_tile_kb,
-      shared_borders: prefs.shared_borders, attribution: prefs.attribution,
+      shared_borders: prefs.shared_borders, attribution: prefs.attribution, shadows: prefs.shadows,
+      shadow_min_height: prefs.shadow_min_height,
     },
     report: { category_cols: $$('input[name="cat"]:checked').map((c) => c.value), id_col: val("id_col") || null },
   };
@@ -631,7 +639,7 @@ function renderReport(job) {
   const flow = [`Input ${fmtInt(acc.input_count)}`, `GPKG ${fmtInt(acc.normalized_count)}`];
   if (acc.pmtiles_features != null) flow.push(`PMTiles ${fmtInt(acc.pmtiles_features)} feature`);
   const tiles = r.pmtiles;
-  html += `<p class="accounting">Đối soát: ${flow.join(" → ")}${acc.filtered_out ? ` · lọc bỏ ${fmtInt(acc.filtered_out)}` : ""}${acc.has_parts != null ? ` · ${fmtInt(acc.has_parts)} toà có khối con, ${fmtInt(acc.is_part)} khối con` : ""}${tiles ? ` · ${fmtInt(tiles.addressed_tiles)} tile z${tiles.minzoom}–${tiles.maxzoom}, ${fmtBytes(tiles.size_bytes)}${tiles.verified ? " · verify OK" : ""}` : ""}</p>`;
+  html += `<p class="accounting">Đối soát: ${flow.join(" → ")}${acc.filtered_out ? ` · lọc bỏ ${fmtInt(acc.filtered_out)}` : ""}${acc.has_parts != null ? ` · ${fmtInt(acc.has_parts)} toà có khối con, ${fmtInt(acc.is_part)} khối con` : ""}${tiles ? ` · ${fmtInt(tiles.addressed_tiles)} tile z${tiles.minzoom}–${tiles.maxzoom}, ${fmtBytes(tiles.size_bytes)}${tiles.verified ? " · verify OK" : ""}` : ""}${r.shadows ? ` · layer bóng ${fmtInt(r.shadows.features)} polygon z${r.shadows.minzoom}–${r.shadows.maxzoom}, ${fmtBytes(r.shadows.tiles_bytes)}` : ""}</p>`;
 
   if (h) {
     html += section("Phân bố h_m", "số building theo khoảng chiều cao", hbars(h.histogram.map((b) => ({ label: b.label, count: b.count, pct: b.pct }))));

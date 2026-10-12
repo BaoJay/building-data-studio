@@ -154,6 +154,44 @@ MapLibre không vẽ được bóng building đổ xuống mặt đất. Ô **Đ
 - Nút **Tải layer bóng vùng này (GeoJSON)** để team Mobile thử trên app.
 - Giới hạn: bóng chỉ đổ xuống mặt đất, không đổ lên mái hay tường building bên cạnh, và chỉ đúng với hướng nắng cố định của từng chế độ.
 
+### Layer bóng trong PMTiles (cho app Mobile)
+
+Trong tab **Convert**, nhóm PMTiles có ô **Thêm layer bóng `shadows`**. Khi bật, file PMTiles output có 2 layer:
+
+| Layer | Nội dung | Zoom |
+|---|---|---|
+| `buildings` | như trước (tile building cắt y như khi không bật bóng) | theo Min / Max zoom |
+| `shadows` | bóng đã gộp, mỗi feature có thuộc tính `preset` = `dawn` / `day` / `dusk` | từ zoom 15 (hoặc Min zoom nếu lớn hơn) tới Max zoom |
+
+Cách tạo: sau khi cắt tile building, app tính bóng cho cả lớp GeoPackage chuẩn hoá (chia lưới ô 0,01°, mỗi building đọc một lần, mảnh bóng cắt theo ô rồi gộp theo ô + chế độ bằng nhiều tiến trình song song), cắt tile layer `shadows` riêng rồi `tile-join` vào file building. Hướng nắng là của 3 chế độ trong `app/vmap.py` lúc chạy và được ghi vào `report.json` (`shadows.presets`). Ô **Chỉ đổ bóng building cao hơn (m)** bỏ bóng của building thấp (footprint của chúng vẫn được trừ khỏi bóng).
+
+Trên app, thêm một layer dùng chung source với building; khi người dùng đổi chế độ thì đổi `filter` và màu, ban đêm thì ẩn layer:
+
+```json
+{
+  "id": "building-shadow",
+  "type": "fill",
+  "source": "buildings",
+  "source-layer": "shadows",
+  "minzoom": 15,
+  "filter": ["==", ["get", "preset"], "dusk"],
+  "paint": { "fill-color": "#4e2f45", "fill-opacity": 0.26, "fill-antialias": false }
+}
+```
+
+Đặt layer này dưới các layer nhãn chữ và dưới layer building 3D. `fill-antialias: false` tránh đường viền mảnh ở mép các ô lưới. Màu / độ mờ của từng chế độ nằm trong bảng ở [`map-styles/README.md`](map-styles/README.md). Trang xem 3D tự nhận layer `shadows` có sẵn trong file và hiển thị đúng như vậy (không tính lại).
+
+Số đo trên `canonical_building_v2` (1.197.099 building, máy dev 15 nhân, 7 luồng gộp), ngoài 231 MB của tile building z13–17:
+
+| Đổ bóng | Building có bóng | Tính bóng | Cắt tile bóng + gộp | Layer `shadows` (z15–17) | PMTiles gộp |
+|---|---|---|---|---|---|
+| Mọi building (0 m) | 1.195.916 | ~2 phút | ~1,2 phút | 194 MB | 421 MB |
+| Cao hơn 4 m | 28.948 | ~17 giây | vài giây | 6,2 MB | ~232 MB (ước tính) |
+
+Cả lượt convert có bóng (mọi building) mất khoảng 4,5 phút, RAM đỉnh khoảng 3 GB (lúc 7 tiến trình gộp chạy song song).
+
+96,9% building của bản này đang dùng chiều cao mặc định 4 m (`h_src = default`), nên ngưỡng 4 m bỏ gần hết bóng của nhà "đoán chiều cao" và làm layer nhẹ đi khoảng 30 lần.
+
 ## 9. So sánh 2 file trước release
 
 Mở tab **So sánh 2 file**, chọn **A** (bản đang chạy production) và **B** (bản sắp release), rồi bấm **So sánh**. A và B nhận mọi định dạng app hỗ trợ (`.parquet`, `.gpkg`, `.fgb`, `.geojson`, `.pmtiles`), và hai file có thể khác định dạng nhau, ví dụ A là PMTiles đang serve, B là Parquet mới.
@@ -246,7 +284,7 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/diffgate.py` | Release gate (ngưỡng Pass / Warn / Fail), so sánh schema, `diff_report.md` |
 | `app/jobs.py` | Hàng đợi job (chạy lần lượt từng job), huỷ job |
 | `app/vmap.py` | Nền VMAP cho trang xem 3D: proxy style / sprite / glyphs từ assets.vmaps.vn, 4 chế độ ánh sáng |
-| `app/shadows.py` | Đổ bóng vẽ sẵn (thử nghiệm): tính bóng building theo hướng nắng của từng chế độ cho một vùng |
+| `app/shadows.py` | Đổ bóng vẽ sẵn: tính bóng building theo hướng nắng của từng chế độ, cho một vùng (trang xem 3D) hoặc cả GeoPackage (layer `shadows` của PMTiles) |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
 | `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; MapLibre + pmtiles.js (vendored) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe) |

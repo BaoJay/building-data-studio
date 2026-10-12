@@ -119,6 +119,8 @@ function bindBasemapControls(map, bldgSource, onLoad, onBaseChange = () => {}) {
 // cast along the sun of the light preset (day sun on the other basemaps). Drawn as one
 // dissolved fill under the labels and the buildings.
 const SHADOW_MINZOOM = 15;
+// A convert output with shadows carries them as this layer (one set per preset, `preset` field).
+const SHADOW_LAYER = "shadows";
 const SHADOW_MAX_SPAN = 0.045; // degrees; the server caps a request at 0.05
 const shadow = { key: null, bbox: null, data: null, info: "", download: "", appliedKey: null, seq: 0, timer: null };
 const COMPASS = ["bắc", "đông bắc", "đông", "đông nam", "nam", "tây nam", "tây", "tây bắc"];
@@ -162,6 +164,19 @@ async function updateShadows(map) {
     shadow.seq++;
     note(why.trim());
     if (map.getLayer("bldg-shadow")) map.setLayoutProperty("bldg-shadow", "visibility", "none");
+    return;
+  }
+  if (state.bakedShadows) {
+    // Shadows shipped in the PMTiles: the same layer + filter the mobile app would use.
+    if (!map.getLayer("bldg-shadow")) {
+      const before = map.getStyle().layers.find((l) => l.type === "symbol" && l.layout?.["text-field"])?.id;
+      map.addLayer({ id: "bldg-shadow", type: "fill", source: "bldg", "source-layer": SHADOW_LAYER, paint: { "fill-antialias": false } }, before);
+    }
+    map.setFilter("bldg-shadow", ["==", ["get", "preset"], shadowPresetId()]);
+    map.setPaintProperty("bldg-shadow", "fill-color", look.color);
+    map.setPaintProperty("bldg-shadow", "fill-opacity", look.opacity);
+    map.setLayoutProperty("bldg-shadow", "visibility", "visible");
+    note(`Bóng có sẵn trong file (layer ${SHADOW_LAYER}, z${state.bakedShadows.minzoom ?? "?"}–${state.bakedShadows.maxzoom ?? "?"}), lọc theo preset = "${shadowPresetId()}" như trên app.`);
     return;
   }
 
@@ -270,11 +285,12 @@ async function main() {
     await mainDiff(url, header, meta);
     return;
   }
-  const layers = (meta.vector_layers || []).map((l) => l.id);
+  state.bakedShadows = (meta.vector_layers || []).find((l) => l.id === SHADOW_LAYER && "preset" in (l.fields || {})) || null;
+  const layers = (meta.vector_layers || []).map((l) => l.id).filter((id) => !(state.bakedShadows && id === SHADOW_LAYER));
   const name = params.get("name") || meta.name || "PMTiles";
   document.title = `${name} — 3D`;
   $("#title").textContent = name;
-  $("#meta").textContent = `z${header.minZoom}–${header.maxZoom} · ${layers.length} layer${meta.generator ? ` · ${meta.generator}` : ""}`;
+  $("#meta").textContent = `z${header.minZoom}–${header.maxZoom} · ${layers.length} layer${state.bakedShadows ? " + layer bóng" : ""}${meta.generator ? ` · ${meta.generator}` : ""}`;
   if (layers.length > 1) {
     $("#layerField").hidden = false;
     $("#layerSel").innerHTML = layers.map((l) => `<option>${esc(l)}</option>`).join("");

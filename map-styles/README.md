@@ -15,7 +15,7 @@ Bản lưu các `style.json` app Mobile (MapLibre Native) đang dùng, để đ�
 Các file trên **chỉ có một bộ màu (ban ngày)**. Không có biến thể bình minh / hoàng hôn / ban đêm, cũng không có biểu thức nào đổi màu theo chế độ.
 
 - `streets-v1` có một khối `light` cố định (`#ffffff`, cường độ 0.25, vị trí `[1.15, 210, 35]`). Nhưng style này **không có layer 3D nào**: building chỉ là `fill` 2D từ zoom 12 đến 14. Building 3D là do app tự thêm, từ PMTiles của Building Data Studio.
-- MapLibre không vẽ được bóng building đổ xuống mặt đất. `light` chỉ làm sáng / tối các mặt bên của khối 3D. Trang xem 3D có bản thử nghiệm **bóng vẽ sẵn** (xem mục "Đổ bóng vẽ sẵn" trong README chính).
+- MapLibre không vẽ được bóng building đổ xuống mặt đất. `light` chỉ làm sáng / tối các mặt bên của khối 3D. Trang xem 3D có bản thử nghiệm **bóng vẽ sẵn**, và tab Convert tạo được layer `shadows` trong PMTiles để app dùng (xem mục "Đổ bóng vẽ sẵn" và "Layer bóng trong PMTiles" trong README chính).
 - Sprite không có icon SDF, nên icon POI và biển số đường (CT, QL…) **không đổi màu được qua style**. Muốn icon hợp nền tối thì cần bộ sprite riêng cho ban đêm.
 
 ## 4 chế độ trong trang xem 3D

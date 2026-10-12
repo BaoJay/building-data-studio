@@ -247,6 +247,13 @@ def render_markdown(report: dict[str, Any], title: str) -> str:
     if acc:
         lines.append(f"- Input: {acc.get('input_count', '?'):,} → GPKG: {acc.get('normalized_count', '?'):,}"
                      + (f" → PMTiles: {acc['pmtiles_features']:,} feature" if acc.get("pmtiles_features") else ""))
+    sh = report.get("shadows")
+    if sh:
+        suns = ", ".join(f"{p['label']} {p['azimuth']:g}°/{p['altitude']:g}°" for p in sh["presets"].values())
+        taller = f" cao hơn {sh['min_height']:g} m" if sh.get("min_height") else ""
+        lines.append(f"- Layer bóng `{sh['layer']}` z{sh.get('minzoom', '?')}–{sh.get('maxzoom', '?')}: "
+                     f"{sh['features']:,} polygon từ {sh['casting']:,} building{taller}, "
+                     f"{(sh.get('tiles_bytes') or 0) / 1e6:.1f} MB tile, {sh['seconds']:.0f}s (nắng: {suns})")
     height = report.get("height")
     if height:
         s = height["stats"]

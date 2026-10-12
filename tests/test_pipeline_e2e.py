@@ -168,3 +168,38 @@ def test_real_sample(tmp_path: Path) -> None:
     result = _run(cfg)
     acc = result["report"]["accounting"]
     assert acc["input_count"] == acc["normalized_count"] == acc["pmtiles_features"]
+
+
+@pytest.mark.skipif(tools.which("tile-join") is None, reason="tile-join not installed")
+def test_pmtiles_with_shadows_layer(plain_parquet: Path, tmp_path: Path, monkeypatch) -> None:
+    from app import probe, vmap
+
+    def offline(path, ttl):  # the day sun comes from the mobile style: use the repo copy
+        raise vmap.UpstreamError("offline")
+
+    monkeypatch.setattr(vmap, "_fetch", offline)
+    monkeypatch.setattr(vmap, "_offline_until", 0.0)
+    result = _run(_config(plain_parquet, tmp_path / "out", tiles={"shadows": True, "minzoom": 14, "maxzoom": 16}))
+    sh = result["report"]["shadows"]
+    assert set(sh["presets"]) == {"dawn", "day", "dusk"}
+    assert sh["presets"]["dusk"]["azimuth"] == 270
+    assert sh["casting"] == 5  # A is drawn by its part A1
+    assert sh["features"] > 0 and (sh["minzoom"], sh["maxzoom"]) == (15, 16)
+    assert any("shadow_tiles" == s["key"] and s["status"] == "done" for s in result["steps"])
+
+    info = probe.probe(Path(result["outputs"]["pmtiles"]["path"]))
+    if tools.which("pmtiles") is None:
+        return
+    assert info["layers"] == ["buildings", "shadows"]
+    assert info["layer"] == "buildings"
+    assert info["feature_count"] == 6  # tilestats put back after tile-join
+    shadow_layer = next(v for v in info["vector_layers"] if v["id"] == "shadows")
+    assert shadow_layer["fields"] == {"preset": "String"}
+
+
+def test_shadows_need_heights(plain_parquet: Path, tmp_path: Path) -> None:
+    cfg = _config(plain_parquet, tmp_path / "out", tiles={"shadows": True}, height={"enabled": False})
+    with pytest.raises(pipeline.ConfigError):
+        pipeline.parse_config(cfg)
+    with pytest.raises(pipeline.ConfigError):
+        pipeline.parse_config(_config(plain_parquet, tmp_path / "out", tiles={"shadows": True, "layer": "shadows"}))

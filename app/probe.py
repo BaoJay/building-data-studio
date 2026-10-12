@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from . import tools
+from .shadows import SHADOW_LAYER
 
 log = logging.getLogger(__name__)
 
@@ -211,7 +212,9 @@ def probe_pmtiles(path: Path, layer: str | None = None) -> dict[str, Any]:
     result["layers"] = [lyr.get("id") for lyr in result["vector_layers"] if lyr.get("id")]
     if layer is not None and layer not in result["layers"]:
         raise ProbeError(f"Không có layer '{layer}' trong file PMTiles.")
-    chosen = layer or (result["layers"][0] if result["layers"] else None)
+    # The precomputed shadows layer of a convert output is not a building layer.
+    buildings = [lyr for lyr in result["layers"] if lyr != SHADOW_LAYER] or result["layers"]
+    chosen = layer or (buildings[0] if buildings else None)
     result["layer"] = chosen
     if chosen is not None:
         vl = next(lyr for lyr in result["vector_layers"] if lyr.get("id") == chosen)

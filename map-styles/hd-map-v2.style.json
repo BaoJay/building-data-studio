@@ -1,0 +1,620 @@
+{
+  "version": 8,
+  "name": "VMAP Studio HD Map",
+  "metadata": {
+    "vmap:style-schema-version": 1,
+    "vmap:source-id": "vmap-published",
+    "vmap:anchor": "below-buildings"
+  },
+  "sources": {
+    "vmap-published": {
+      "type": "vector",
+      "url": "{{HDMAP_TILEJSON_URL}}"
+    }
+  },
+  "layers": [
+    {
+      "id": "vmap-published-road-surface",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "road_surface",
+      "minzoom": 15,
+      "filter": [
+        "==",
+        [
+          "get",
+          "geometry_role"
+        ],
+        "road_fill"
+      ],
+      "paint": {
+        "fill-color": "#b1bacb",
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "vmap-published-road-edge-marking-3-1",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "road_surface",
+      "minzoom": 16,
+      "filter": [
+        "==",
+        [
+          "get",
+          "geometry_role"
+        ],
+        "road_edge_marking_3_1"
+      ],
+      "paint": {
+        "fill-color": "#ffffff",
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "vmap-published-median-island-edge",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "road_surface",
+      "minzoom": 17,
+      "filter": [
+        "==",
+        [
+          "get",
+          "geometry_role"
+        ],
+        "asset_edge"
+      ],
+      "paint": {
+        "fill-color": "#d8d3c8",
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "vmap-published-median-island-fill",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "road_surface",
+      "minzoom": 17,
+      "filter": [
+        "==",
+        [
+          "get",
+          "geometry_role"
+        ],
+        "asset_fill"
+      ],
+      "paint": {
+        "fill-color": [
+          "match",
+          [
+            "get",
+            "material"
+          ],
+          "landscaped",
+          "#70835f",
+          "paving",
+          "#c2b9a7",
+          "#b9bec3"
+        ],
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "vmap-published-lane-fill",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "lanes",
+      "minzoom": 16,
+      "filter": [
+        "==",
+        [
+          "get",
+          "semantic_kind"
+        ],
+        "lane_corridor"
+      ],
+      "paint": {
+        "fill-color": [
+          "match",
+          [
+            "get",
+            "direction"
+          ],
+          "forward",
+          "#d9d6ce",
+          "backward",
+          "#cfcbc1",
+          "#d5d1c8"
+        ],
+        "fill-opacity": 0
+      }
+    },
+    {
+      "id": "vmap-published-parking-spaces",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "markings",
+      "minzoom": 16,
+      "filter": [
+        "all",
+        [
+          "==",
+          [
+            "get",
+            "type"
+          ],
+          "parking_space"
+        ],
+        [
+          "==",
+          [
+            "get",
+            "geometry_role"
+          ],
+          "parking_fill"
+        ]
+      ],
+      "paint": {
+        "fill-color": [
+          "match",
+          [
+            "get",
+            "color"
+          ],
+          "yellow",
+          "#D49A1F",
+          "ev_green",
+          "#00E5FF",
+          "#FFFFFF"
+        ],
+        "fill-opacity": 0
+      }
+    },
+    {
+      "id": "vmap-published-parking-space-outlines",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "markings",
+      "minzoom": 16,
+      "filter": [
+        "==",
+        [
+          "get",
+          "geometry_role"
+        ],
+        "parking_outline"
+      ],
+      "paint": {
+        "fill-color": [
+          "match",
+          [
+            "get",
+            "color"
+          ],
+          "yellow",
+          "#D49A1F",
+          "ev_green",
+          "#00E5FF",
+          "#FFFFFF"
+        ],
+        "fill-opacity": 0.96
+      }
+    },
+    {
+      "id": "vmap-published-crosswalk",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "crosswalk",
+      "minzoom": 16,
+      "paint": {
+        "fill-color": [
+          "case",
+          [
+            "==",
+            [
+              "get",
+              "color"
+            ],
+            "yellow"
+          ],
+          "#f0c64b",
+          "#ffffff"
+        ],
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "vmap-published-curb-side",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "markings",
+      "minzoom": 18,
+      "filter": [
+        "all",
+        [
+          "==",
+          [
+            "get",
+            "type"
+          ],
+          "curb"
+        ],
+        [
+          "==",
+          [
+            "get",
+            "geometry_role"
+          ],
+          "curb_side"
+        ]
+      ],
+      "paint": {
+        "fill-color": "#747b82",
+        "fill-opacity": 0.92
+      }
+    },
+    {
+      "id": "vmap-published-curb-top",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "markings",
+      "minzoom": 18,
+      "filter": [
+        "all",
+        [
+          "==",
+          [
+            "get",
+            "type"
+          ],
+          "curb"
+        ],
+        [
+          "==",
+          [
+            "get",
+            "geometry_role"
+          ],
+          "curb_top"
+        ]
+      ],
+      "paint": {
+        "fill-color": [
+          "case",
+          [
+            "==",
+            [
+              "get",
+              "material"
+            ],
+            "painted"
+          ],
+          "#f8f7f1",
+          "#cfd3d6"
+        ],
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "vmap-published-turn-arrow-markings",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "markings",
+      "minzoom": 19,
+      "filter": [
+        "==",
+        [
+          "get",
+          "marking_code"
+        ],
+        "9.3"
+      ],
+      "paint": {
+        "fill-color": "#ffffff",
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "vmap-published-road-inner-shadow",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "road_surface",
+      "minzoom": 15,
+      "filter": [
+        "==",
+        [
+          "get",
+          "geometry_role"
+        ],
+        "road_inner_shadow"
+      ],
+      "paint": {
+        "fill-color": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          15,
+          "#96a3b5",
+          16,
+          "#96a3b5",
+          17,
+          "#17231f"
+        ],
+        "fill-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          15,
+          0,
+          15.5,
+          [
+            "*",
+            [
+              "coalesce",
+              [
+                "get",
+                "shadow_opacity"
+              ],
+              0
+            ],
+            0.03
+          ],
+          16,
+          [
+            "*",
+            [
+              "coalesce",
+              [
+                "get",
+                "shadow_opacity"
+              ],
+              0
+            ],
+            0.1
+          ],
+          16.5,
+          [
+            "*",
+            [
+              "coalesce",
+              [
+                "get",
+                "shadow_opacity"
+              ],
+              0
+            ],
+            0.35
+          ],
+          17,
+          [
+            "coalesce",
+            [
+              "get",
+              "shadow_opacity"
+            ],
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "vmap-published-lane-boundaries",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "markings",
+      "minzoom": 16,
+      "filter": [
+        "any",
+        [
+          "all",
+          [
+            "==",
+            [
+              "get",
+              "generator"
+            ],
+            "lane_corridor_v1"
+          ],
+          [
+            "has",
+            "boundary_index"
+          ]
+        ],
+        [
+          "all",
+          [
+            "==",
+            [
+              "get",
+              "semantic_kind"
+            ],
+            "lane_boundary"
+          ],
+          [
+            "==",
+            [
+              "get",
+              "generator"
+            ],
+            "osm_lane_boundary_v2"
+          ]
+        ]
+      ],
+      "paint": {
+        "fill-color": [
+          "case",
+          [
+            "==",
+            [
+              "get",
+              "type"
+            ],
+            "hatched"
+          ],
+          "#ffffff",
+          [
+            "==",
+            [
+              "get",
+              "type"
+            ],
+            "curb"
+          ],
+          "#c9c4ba",
+          [
+            "==",
+            [
+              "get",
+              "color"
+            ],
+            "yellow"
+          ],
+          "#f0c64b",
+          "#ffffff"
+        ],
+        "fill-opacity": [
+          "case",
+          [
+            "==",
+            [
+              "get",
+              "type"
+            ],
+            "hatched"
+          ],
+          1,
+          0.96
+        ]
+      }
+    },
+    {
+      "id": "vmap-published-markings",
+      "type": "fill",
+      "source": "vmap-published",
+      "source-layer": "markings",
+      "minzoom": 16,
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "type"
+          ],
+          "parking_space"
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "type"
+          ],
+          "curb"
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "marking_code"
+          ],
+          "9.3"
+        ],
+        [
+          "!",
+          [
+            "any",
+            [
+              "all",
+              [
+                "==",
+                [
+                  "get",
+                  "generator"
+                ],
+                "lane_corridor_v1"
+              ],
+              [
+                "has",
+                "boundary_index"
+              ]
+            ],
+            [
+              "all",
+              [
+                "==",
+                [
+                  "get",
+                  "semantic_kind"
+                ],
+                "lane_boundary"
+              ],
+              [
+                "==",
+                [
+                  "get",
+                  "generator"
+                ],
+                "osm_lane_boundary_v2"
+              ]
+            ]
+          ]
+        ]
+      ],
+      "paint": {
+        "fill-color": [
+          "case",
+          [
+            "==",
+            [
+              "get",
+              "type"
+            ],
+            "hatched"
+          ],
+          "#ffffff",
+          [
+            "==",
+            [
+              "get",
+              "type"
+            ],
+            "curb"
+          ],
+          "#c9c4ba",
+          [
+            "==",
+            [
+              "get",
+              "color"
+            ],
+            "yellow"
+          ],
+          "#f0c64b",
+          "#ffffff"
+        ],
+        "fill-opacity": [
+          "case",
+          [
+            "==",
+            [
+              "get",
+              "type"
+            ],
+            "hatched"
+          ],
+          1,
+          0.96
+        ]
+      }
+    }
+  ]
+}

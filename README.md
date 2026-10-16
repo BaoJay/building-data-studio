@@ -192,6 +192,22 @@ Cả lượt convert có bóng (mọi building) mất khoảng 4,5 phút, RAM đ
 
 96,9% building của bản này đang dùng chiều cao mặc định 4 m (`h_src = default`), nên ngưỡng 4 m bỏ gần hết bóng của nhà "đoán chiều cao" và làm layer nhẹ đi khoảng 30 lần.
 
+### Landmark 3D (GLB) dưới `light` của style
+
+Mục **Landmark 3D (GLB)** ở cuối panel trang xem 3D đặt một file `.glb` lên một building. Dùng nó để kiểm tra mô hình dưới cả 5 chế độ ánh sáng trước khi upload lên MapOps:
+
+- Chọn file `.glb`. File chỉ được đọc trong trình duyệt, không upload. Click building trên bản đồ, bấm **Lấy building đang chọn**, rồi **Đặt lên building**. Server đọc footprint của `building_id` đó trong PMTiles ở zoom lớn nhất, ghép các mảnh tile lại, và neo mô hình ở tâm footprint, trên mặt đất. Với building chia khối con, server tìm theo id của chính building trước, không thấy mới tìm theo `parent_building_id`.
+- Chỉnh được **Hướng**, **Tỉ lệ** và **Điểm neo**. Hướng tính bằng độ, theo chiều kim đồng hồ nhìn từ trên xuống: ở hướng 0, trục +X của GLB chỉ hướng đông và mặt trước (+Z) quay về hướng nam. Điểm neo là gốc GLB hoặc tâm đáy hộp bao. Dòng **Chiều cao** so chiều cao mô hình (đã nhân tỉ lệ) với chiều cao của building, và cảnh báo khi lệch quá cả 2 m lẫn 5%.
+- Extrusion của building đó và các khối con của nó bị ẩn bằng filter theo id. Bóng vẽ sẵn của building vẫn giữ.
+- Mô hình được tô sáng bằng đúng công thức fill-extrusion của MapLibre, với `light` của style đang hiển thị. App đọc `light` qua `map.getLight()` và đọc lại mỗi khi style đổi, nên khi chuyển chế độ ánh sáng, landmark đổi sáng cùng lúc với các building xung quanh. Texture emissive (ví dụ cửa sổ sáng đèn) chỉ bật với style ban đêm, tức khi `metadata["tasco:light-preset"]` là `"night"`.
+- Để QA, ô **So sánh** hiện extrusion gốc của building ngay bên cạnh landmark (đục, màu so sánh). Ô **Tô landmark một màu** thay texture bằng chính màu đó: khi ấy mái, và các mặt tường quay cùng hướng, của landmark và extrusion phải sáng tối như nhau. Panel còn ghi màu mong đợi của mái và tường 4 hướng, cùng các uniform ánh sáng để đối chiếu khi port.
+
+Công thức, shader và ghi chú cho Mobile (Android / iOS) nằm chung trong [`app/static/landmark-light.js`](app/static/landmark-light.js). MapOps web và renderer LMK3 của app Mobile port nguyên công thức này. `tests/test_landmark.py` kiểm tra công thức với chính code của MapLibre, với màu pixel MapLibre vẽ ra ở cả 5 chế độ, và chạy file JS bằng Node để so với bản port Python. Ba điều dễ sai khi port:
+
+- Mọi phép tính làm trên giá trị sRGB thô (0..1), như màu viết trong style: không đổi sang linear, không tone mapping. Texture phải upload dạng RGBA8 thường, không dùng sRGB texture.
+- Vector light dài bằng `radial` (1,15), không chuẩn hoá. Tính theo hướng đông-bắc-lên với pháp tuyến hướng ra ngoài, nó là `r·(sin a·sin p, cos a·sin p, cos p)`: mặt tường quay về phía phương vị `a` sáng nhất. Trong code MapLibre có hai chỗ ngược dấu triệt tiêu nhau: phương vị cộng 90° trong hệ toạ độ tile, và pháp tuyến tường hướng vào trong.
+- Ở chế độ Ban đêm (`light` màu `#3f4455`), MapLibre kẹp gần như mọi mặt về mức sàn `0,3 × (1 − màu light)`. Building nào cũng thành một màu tối, texture của landmark cũng vậy; chỉ emissive làm landmark khác đi.
+
 ## 9. So sánh 2 file trước release
 
 Mở tab **So sánh 2 file**, chọn **A** (bản đang chạy production) và **B** (bản sắp release), rồi bấm **So sánh**. A và B nhận mọi định dạng app hỗ trợ (`.parquet`, `.gpkg`, `.fgb`, `.geojson`, `.pmtiles`), và hai file có thể khác định dạng nhau, ví dụ A là PMTiles đang serve, B là Parquet mới.
@@ -285,6 +301,7 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/jobs.py` | Hàng đợi job (chạy lần lượt từng job), huỷ job |
 | `app/vmap.py` | Nền VMAP cho trang xem 3D: proxy style / sprite / glyphs từ assets.vmaps.vn, 5 chế độ ánh sáng (mỗi chế độ một style streets-v2), màu building 3D ước lượng |
 | `app/shadows.py` | Đổ bóng vẽ sẵn: tính bóng building theo hướng nắng của từng chế độ, cho một vùng (trang xem 3D) hoặc cả GeoPackage (layer `shadows` của PMTiles) |
+| `app/landmark.py` | Neo landmark trong trang xem 3D: footprint của một `building_id` trong PMTiles (ghép mảnh tile, tâm, diện tích, chiều cao) |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
-| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; MapLibre + pmtiles.js (vendored) |
+| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; `landmark.js` (xem GLB trên bản đồ) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, three.js chỉ tải khi mở mục Landmark) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe) |

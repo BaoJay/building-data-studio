@@ -28,6 +28,9 @@ const params = new URLSearchParams(location.search);
 const token = params.get("f");
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
 const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22, baseSeq: 0 };
+// Landmark check (landmark.js, loaded on demand): the building whose extrusion a GLB replaces,
+// and where the user last clicked (the server looks for the building around it).
+const landmark = { module: null, loading: false, hidden: null, clicked: null };
 // VMAP light presets come from the server (app/vmap.py), the one place they are defined.
 // `light` is the root light of the style last loaded for the current preset.
 const vmap = { presets: [], preset: "day", light: null };
@@ -335,6 +338,7 @@ async function main() {
   map.on("load", () => {
     selectLayer(map, meta, layers[0]);
     focusSelected(map, hasCenter ? center : null);
+    syncLandmarkUI(map);
   });
   map.on("zoom", () => updateZoomUI(map));
   map.on("moveend", () => updateZoomUI(map));
@@ -346,7 +350,7 @@ async function main() {
 
   // Picking the mobile basemap also switches the buildings to the mobile look. A switch made
   // before the first "load" leaves the building layers to selectLayer (no layer chosen yet).
-  bindBasemapControls(map, bldgSource, () => { if (!state.layer) return; addBuildingLayers(map); applyStyle(map); }, (key) => {
+  bindBasemapControls(map, bldgSource, () => { if (!state.layer) return; addBuildingLayers(map); applyStyle(map); landmark.module?.ensureLayers(); }, (key) => {
     if (key === "vmap" && $("#colorSel").querySelector('option[value="mobile"]')) {
       state.colorBy = "mobile";
       $("#colorSel").value = "mobile";
@@ -367,6 +371,53 @@ async function main() {
     p.classList.toggle("collapsed");
     $("#collapseBtn").textContent = p.classList.contains("collapsed") ? "Mở" : "Thu gọn";
   });
+  $("#lmkControls").addEventListener("toggle", () => { if ($("#lmkControls").open) openLandmark(map); });
+}
+
+// ------------------------------------------------------------------ landmark (GLB) check
+// The section loads landmark.js (and three.js) the first time it is opened.
+async function openLandmark(map) {
+  if (landmark.module || landmark.loading) return;
+  landmark.loading = true;
+  $("#lmkStatus").textContent = "Đang tải three.js…";
+  try {
+    const mod = await import("/static/landmark.js");
+    landmark.module = mod.init({
+      map,
+      token,
+      state,
+      ready: () => Boolean(state.layer && state.idCol),
+      selectedId: () => state.selected,
+      lookAt: (id) => (id === state.selected && landmark.clicked) || map.getCenter(),
+      setHidden: (id) => { landmark.hidden = id; applyStyle(map); },
+      buildingFilter: (id) => ["all", partsFilter() || true, matchBuilding(id)],
+      referenceColor: () => (state.colorBy === "mobile" && mobileBuilding() ? mobileBuilding().color : palette(mapTheme()).plain),
+    });
+    $("#lmkStatus").textContent = "";
+  } catch (err) {
+    $("#lmkStatus").textContent = `Không tải được phần xem landmark: ${err.message}`;
+  } finally {
+    landmark.loading = false;
+  }
+}
+
+function syncLandmarkUI(map) {
+  $("#lmkControls").hidden = !state.idCol;
+  $("#lmkIdLabel").textContent = state.idCol || "building_id";
+  if (landmark.module) landmark.module.syncButtons();
+  else if ($("#lmkControls").open) openLandmark(map);
+}
+
+// The building itself, or one of its parts.
+function matchBuilding(id) {
+  const match = [["==", ["to-string", ["get", state.idCol]], id]];
+  if (state.parentAttr) match.push(["==", ["to-string", ["get", state.parentAttr]], id]);
+  return ["any", ...match];
+}
+
+function partsFilter() {
+  const hideParents = !$("#hideParentsWrap").hidden && $("#hideParents").checked;
+  return hideParents ? ["!", ["any", ["==", ["get", "has_parts"], true], ["==", ["get", "has_parts"], 1]]] : null;
 }
 
 async function basemapStyle(key, bldgSource) {
@@ -477,9 +528,7 @@ function colorExpression() {
   }
   if (state.selected && state.idCol) {
     // Also light up the parts of a multi-part building (its outline may be hidden).
-    const match = [["==", ["to-string", ["get", state.idCol]], state.selected]];
-    if (state.parentAttr) match.push(["==", ["to-string", ["get", state.parentAttr]], state.selected]);
-    expr = ["case", ["any", ...match], pal.highlight, expr];
+    expr = ["case", matchBuilding(state.selected), pal.highlight, expr];
   }
   return { expr, legend };
 }
@@ -492,8 +541,7 @@ function applyStyle(map) {
   const { expr, legend } = colorExpression();
   $("#legend").innerHTML = legend;
   const threeD = $("#threeD").checked;
-  const hideParents = !$("#hideParentsWrap").hidden && $("#hideParents").checked;
-  const filter = hideParents ? ["!", ["any", ["==", ["get", "has_parts"], true], ["==", ["get", "has_parts"], 1]]] : null;
+  const filter = partsFilter();
   const height = state.heightAttr ? ["to-number", ["get", state.heightAttr], 0] : 4;
   const base = state.baseAttr ? ["to-number", ["coalesce", ["get", state.baseAttr], 0], 0] : 0;
 
@@ -506,7 +554,12 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-3d", "fill-extrusion-opacity", mobile ? mobile.opacity : 0.92);
   map.setPaintProperty("bldg-2d", "fill-color", expr);
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
-  ["bldg-3d", "bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
+  ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
+  // A placed landmark replaces the extrusion of its building (parts included). Its ground
+  // shadow (bldg-shadow) stays.
+  const replaced = landmark.hidden && state.idCol ? ["!", matchBuilding(landmark.hidden)] : null;
+  map.setFilter("bldg-3d", replaced && filter ? ["all", filter, replaced] : replaced || filter);
+  landmark.module?.syncReference();
   map.setLayoutProperty("bldg-3d", "visibility", threeD ? "visible" : "none");
   map.setLayoutProperty("bldg-2d", "visibility", threeD ? "none" : "visible");
   map.setLayoutProperty("bldg-line", "visibility", threeD ? "none" : "visible");
@@ -519,9 +572,11 @@ function onClick(map, e) {
   const feats = map.queryRenderedFeatures(e.point, { layers: ["bldg-3d", "bldg-2d"].filter((id) => map.getLayoutProperty(id, "visibility") !== "none") });
   if (!feats.length) return;
   const f = feats[0];
+  landmark.clicked = e.lngLat;
   if (state.idCol && f.properties[state.idCol] != null) {
     state.selected = String(f.properties[state.idCol]);
     applyStyle(map);
+    landmark.module?.syncButtons();
   }
   showPopup(map, e.lngLat, f.properties);
 }
@@ -580,6 +635,7 @@ async function mainDiff(url, header, meta) {
   $("#meta").textContent = `Bản đồ diff A → B · building từ zoom ${header.minZoom}`;
   $("#colorField").hidden = true;
   $("#shadowControls").hidden = true;
+  $("#lmkControls").hidden = true;
   $("#diffControls").hidden = false;
   $("#threeD").checked = false;
   $("#panelHint").textContent = "Click building hoặc ô lưới để xem chi tiết. Lưới mờ dần khi phóng to. Bản đồ nền cần internet.";

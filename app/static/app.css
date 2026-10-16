@@ -454,6 +454,18 @@ td.up { color: var(--bad); }
 #diffControls { display: grid; gap: var(--space-3); }
 .legend label.item { cursor: pointer; }
 .legend .n { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+/* Landmark 3D (GLB) trong trang xem 3D */
+details.lmk { border-top: 1px solid var(--line); padding-top: var(--space-2); }
+.lmk-body { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+details.lmk > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+details.lmk input[type="file"] { font-size: 12.5px; max-width: 100%; }
+.lmk-info { display: grid; gap: var(--space-1); }
+.lmk-status.warn, .lmk-info .warn { color: var(--warn-ink); }
+.lmk-swatches { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.lmk-sw { display: inline-flex; align-items: center; gap: 4px; }
+.lmk-sw i { width: 12px; height: 12px; flex: none; border: 1px solid var(--line); }
+details.lmk-uniforms summary { cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
+details.lmk-uniforms pre { margin: var(--space-1) 0 0; font: 11.5px/1.45 var(--font-mono); white-space: pre-wrap; color: var(--ink-2); }
 
 @media (max-width: 640px) {
   .topbar { padding: var(--space-3) var(--space-4); position: static; }

@@ -13,7 +13,7 @@ const HEIGHT_BREAKS = [0, 6, 12, 20, 35, 60, 100, 200, 400];
 const CAT_COUNT = 8;
 const SRC_TOKENS = { height: "cat-1", levels: "cat-3", clamped: "cat-2", default: "map-neutral" };
 // OpenFreeMap: free vector basemaps, no API key. VMAP is the mobile app's own style, served
-// through the local server (assets.vmaps.vn has no CORS) in one of four light presets.
+// through the local server (assets.vmaps.vn has no CORS): one published style per light preset.
 // Every basemap's own building layers are removed so they never overlap the buildings being checked.
 const BASEMAPS = {
   vmap: { style: "/api/vmap/style.json", vmap: true },
@@ -29,7 +29,8 @@ const token = params.get("f");
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
 const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22, baseSeq: 0 };
 // VMAP light presets come from the server (app/vmap.py), the one place they are defined.
-const vmap = { presets: [], preset: "day" };
+// `light` is the root light of the style last loaded for the current preset.
+const vmap = { presets: [], preset: "day", light: null };
 
 // The colour set follows the basemap, not the page: dark tiles get the dark set, whose
 // height ramp is reversed so tall buildings stay the most salient.
@@ -80,12 +81,22 @@ function renderVmapControls() {
   $("#vmapControls").hidden = !on;
   if (!on) return;
   $("#presetSeg").innerHTML = vmap.presets.map((p) => `<button type="button" data-preset="${esc(p.id)}" aria-pressed="${p.id === vmap.preset}"
-    ${p.origin === "suggested" ? 'title="Màu đề xuất, chưa có trong style Mobile"' : ""}>${esc(p.label)}${p.origin === "suggested" ? " *" : ""}</button>`).join("");
+    title="Style ${esc(p.style)} của VMAP">${esc(p.label)}</button>`).join("");
   const p = vmapPreset();
-  $("#presetNote").textContent = p.origin === "mobile"
-    ? `${p.note} (* = màu đề xuất, chưa có trong style Mobile)`
-    : `Đề xuất: ${p.note}`;
   $("#presetDownload").href = `/api/vmap/style.json?preset=${encodeURIComponent(p.id)}&download=1`;
+  renderPresetNote();
+}
+
+// The style's own light, once it is loaded: it shades the buildings and casts the shadows.
+function renderPresetNote() {
+  const p = vmapPreset();
+  const l = vmap.light;
+  let light = "";
+  if (l?.position) {
+    const [, az, polar] = l.position;
+    light = ` Light của style: ${l.color ?? "#ffffff"}, cường độ ${l.intensity ?? 0.5}, từ hướng ${COMPASS[Math.round(az / 45) % 8]}, cao ${90 - polar}°.`;
+  }
+  $("#presetNote").textContent = `${p.style}: ${p.note}${light}`;
 }
 
 // Switch basemap / preset. Only the latest request is applied, so fast clicks cannot leave
@@ -93,6 +104,7 @@ function renderVmapControls() {
 async function reloadBasemap(map, bldgSource, onLoad) {
   remember("basemap", $("#baseSel").value);
   remember("preset", vmap.preset);
+  vmap.light = null;
   renderVmapControls();
   const seq = ++state.baseSeq;
   const style = await basemapStyle($("#baseSel").value, bldgSource);
@@ -158,7 +170,7 @@ async function updateShadows(map) {
   if (!state.heightAttr) why = "Layer không có cột chiều cao nên không tính được bóng.";
   else if (!$("#shadows").checked) why = " ";
   else if (!$("#threeD").checked) why = "Bật “Dựng 3D” để xem bóng.";
-  else if (!look) why = vmap.presets.length ? "Ban đêm không có nắng nên không đổ bóng." : "Không tải được danh sách chế độ ánh sáng.";
+  else if (!look) why = vmap.presets.length ? `${vmapPreset(shadowPresetId()).label} không đổ bóng (không có nắng ban ngày).` : "Không tải được danh sách chế độ ánh sáng.";
   else if (map.getZoom() < SHADOW_MINZOOM) why = `Phóng to tới zoom ${SHADOW_MINZOOM} để tính bóng.`;
   if (why) {
     shadow.seq++;
@@ -332,8 +344,9 @@ async function main() {
     map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
   });
 
-  // Picking the mobile basemap also switches the buildings to the mobile look.
-  bindBasemapControls(map, bldgSource, () => { addBuildingLayers(map); applyStyle(map); }, (key) => {
+  // Picking the mobile basemap also switches the buildings to the mobile look. A switch made
+  // before the first "load" leaves the building layers to selectLayer (no layer chosen yet).
+  bindBasemapControls(map, bldgSource, () => { if (!state.layer) return; addBuildingLayers(map); applyStyle(map); }, (key) => {
     if (key === "vmap" && $("#colorSel").querySelector('option[value="mobile"]')) {
       state.colorBy = "mobile";
       $("#colorSel").value = "mobile";
@@ -363,11 +376,16 @@ async function basemapStyle(key, bldgSource) {
   $("#baseNote").textContent = "";
   try {
     if (def.style) {
-      const res = await fetch(def.vmap ? `${def.style}?preset=${encodeURIComponent(vmap.preset)}` : def.style);
+      const preset = vmap.preset;
+      const res = await fetch(def.vmap ? `${def.style}?preset=${encodeURIComponent(preset)}` : def.style);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       style = await res.json();
-      if (def.vmap && res.headers.get("X-VMAP-Source") === "repo") {
-        $("#baseNote").textContent = "Không tải được style live từ assets.vmaps.vn — đang dùng bản lưu trong repo (map-styles/streets-v1.style.json).";
+      if (def.vmap && preset === vmap.preset) {  // a slower answer for an earlier click is dropped anyway
+        vmap.light = style.light || null;
+        renderPresetNote();
+        if (res.headers.get("X-VMAP-Source") === "repo") {
+          $("#baseNote").textContent = `Không tải được style live từ assets.vmaps.vn — đang dùng bản lưu trong repo (map-styles/${vmapPreset().style}.style.json).`;
+        }
       }
       style.layers = style.layers.filter((l) => l["source-layer"] !== "building");
     } else if (def.raster) {
@@ -447,10 +465,12 @@ function colorExpression() {
     legend = values.map((v, i) => item(pal.cat[i], v)).join("") + ((state.stats[attr]?.values || []).length > values.length ? item(pal.neutral, "khác") : "");
   } else if (by === "mobile" && mobileBuilding()) {
     const b = mobileBuilding();
-    const p = vmapPreset($("#baseSel").value === "vmap" ? vmap.preset : "day");
     expr = b.color;
-    legend = item(b.color, `Building — ${p.label}${p.origin === "suggested" ? " (đề xuất)" : ""}`)
-      + `<div class="hint">${esc(b.color)}, độ mờ ${b.opacity}${p.origin === "mobile" ? " — giá trị của layer building-3d (streets-v1-3d-qa)" : ""}. Ánh sáng (light) đổi theo chế độ.</div>`;
+    const origin = b.origin === "env"
+      ? "đặt qua BDS_VMAP_BUILDING_COLOR / BDS_VMAP_BUILDING_OPACITY"
+      : "ước lượng từ ảnh chụp Tasco Map admin, style VMAP không công bố";
+    legend = item(b.color, "Building (như app Mobile)")
+      + `<div class="hint">${esc(b.color)}, độ mờ ${b.opacity} — ${origin}. Cùng một màu ở mọi chế độ; light của style tô sáng / tối các mặt.</div>`;
   } else {
     expr = pal.plain;
     legend = "";

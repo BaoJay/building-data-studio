@@ -1,20 +1,20 @@
-"""VMAP basemap (the style the mobile app uses) for the 3D preview, in four map-light presets.
+"""VMAP basemap (the styles the mobile app uses) for the 3D preview, one per light preset.
 
 assets.vmaps.vn sends no CORS headers, so the browser cannot load the style, sprite or
 glyphs from another origin. The server fetches them instead (style: live, falling back to
 the copy in map-styles/), points sprite / glyphs back at itself, and serves them same-origin.
 The vector tiles (tasco-maps.dnpwater.vn) do allow CORS and are loaded directly.
 
-Presets: "day" is the mobile style as published. Dawn / dusk / night do not exist in the
-mobile style yet; they are suggestions derived from it by regrading every paint colour by
-its role (ground, water, road, label…) in OKLab, plus a matching `light` block.
+Presets: VMAP publishes one streets-v2 style per light preset (listed under `styles` in
+CATALOG), each with its own colours, sprite and root `light`. A preset here is that style as
+published. Only the 3D building look is ours: no streets-v2 style has a fill-extrusion layer,
+because the app extrudes the PMTiles from this studio itself.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import re
 import ssl
@@ -24,13 +24,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 UPSTREAM = "https://assets.vmaps.vn/"
-STYLE_PATH = "styles/streets-v1/style.json"
-LOCAL_COPY = Path(__file__).resolve().parent.parent / "map-styles" / "streets-v1.style.json"
+CATALOG = "https://api-app.vmaps.vn//map-proxy/v2/map/layers"  # where VMAP lists its styles
+MAP_STYLES = Path(__file__).resolve().parent.parent / "map-styles"
 STYLE_TTL = 300.0
 OFFLINE_RETRY = 60.0
 ASSET_TTL = 24 * 3600.0
@@ -46,6 +47,10 @@ _ASSET_RE = re.compile(
 
 class UpstreamError(RuntimeError):
     pass
+
+
+class UpstreamUnreachable(UpstreamError):
+    """No answer at all (offline, DNS, timeout), as opposed to an HTTP error status."""
 
 
 class AssetNotAllowed(ValueError):
@@ -112,100 +117,67 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return lo if v < lo else hi if v > hi else v
 
 
-def _to_linear(c: float) -> float:
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+# ------------------------------------------------------------------ 3D building look
+
+# The 3D building look of the mobile app: one base colour for every preset, shaded by the
+# style's own `light`. INFERRED, NOT PUBLISHED: no VMAP style has a fill-extrusion layer, so
+# the value was measured from Tasco Map admin screenshots (2026-10-16). It replaces #cfcec9 /
+# 0.48 of the old streets-v1-3d-qa. When Mobile confirms the real value, change it here, or
+# for one run set BDS_VMAP_BUILDING_COLOR / BDS_VMAP_BUILDING_OPACITY.
+INFERRED_BUILDING = {"color": "#ddcca9", "opacity": 0.85}
+BUILDING_COLOR_ENV = "BDS_VMAP_BUILDING_COLOR"
+BUILDING_OPACITY_ENV = "BDS_VMAP_BUILDING_OPACITY"
 
 
-def _to_srgb(c: float) -> float:
-    c = _clamp(c)
-    return 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+def building_look(env: Mapping[str, str] = os.environ) -> dict[str, Any]:
+    """{color, opacity, origin}: the inferred look, with any environment override applied
+    (origin "env"). A bad value raises ValueError rather than silently drawing another colour."""
+    color_text = env.get(BUILDING_COLOR_ENV, "").strip()
+    opacity_text = env.get(BUILDING_OPACITY_ENV, "").strip()
+    color = parse_color(color_text or INFERRED_BUILDING["color"])
+    if color is None:
+        raise ValueError(f"{BUILDING_COLOR_ENV}={color_text!r} is not a colour (e.g. #ddcca9)")
+    try:
+        opacity = float(opacity_text) if opacity_text else INFERRED_BUILDING["opacity"]
+    except ValueError:
+        opacity = -1.0
+    if not 0.0 <= opacity <= 1.0:
+        raise ValueError(f"{BUILDING_OPACITY_ENV}={opacity_text!r} must be a number from 0 to 1")
+    return {
+        "color": format_color(color),
+        "opacity": opacity,
+        "origin": "env" if color_text or opacity_text else "inferred",
+    }
 
 
-def to_oklab(c: Rgba) -> tuple[float, float, float]:
-    r, g, b = (_to_linear(v) for v in c[:3])
-    lc = math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
-    mc = math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
-    sc = math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
-    return (
-        0.2104542553 * lc + 0.7936177850 * mc - 0.0040720468 * sc,
-        1.9779984951 * lc - 2.4285922050 * mc + 0.4505937099 * sc,
-        0.0259040371 * lc + 0.7827717662 * mc - 0.8086757660 * sc,
-    )
-
-
-def from_oklab(lab: tuple[float, float, float], alpha: float = 1.0) -> Rgba:
-    L, a, b = lab
-    lc = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
-    mc = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
-    sc = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
-    return (
-        _to_srgb(4.0767416621 * lc - 3.3077115913 * mc + 0.2309699292 * sc),
-        _to_srgb(-1.2684380046 * lc + 2.6097574011 * mc - 0.3413193965 * sc),
-        _to_srgb(-0.0040960863 * lc - 0.7034186147 * mc + 1.7076147010 * sc),
-        alpha,
-    )
-
-
-@dataclass(frozen=True)
-class Grade:
-    """Regrade one colour in OKLab: L' = l_add + l_mul * L (a negative l_mul inverts, for dark
-    mode), chroma scaled, then hue pulled toward `tint` by `tint_amount`. Alpha is kept."""
-
-    l_mul: float = 1.0
-    l_add: float = 0.0
-    chroma: float = 1.0
-    tint: str | None = None
-    tint_amount: float = 0.0
-
-    def apply(self, c: Rgba) -> Rgba:
-        L, a, b = to_oklab(c)
-        L = _clamp(self.l_add + self.l_mul * L)
-        a, b = a * self.chroma, b * self.chroma
-        if self.tint and self.tint_amount:
-            tint = parse_color(self.tint)
-            if tint is None:
-                raise ValueError(f"bad tint {self.tint!r}")
-            _, ta, tb = to_oklab(tint)
-            a += (ta - a) * self.tint_amount
-            b += (tb - b) * self.tint_amount
-        return from_oklab((L, a, b), c[3])
+MOBILE_BUILDING = building_look()  # read once, so a bad override stops the server at start
 
 
 # ------------------------------------------------------------------ presets
-
-ROLES = ("ground", "green", "water", "road", "casing", "rail", "boundary", "building", "text", "halo", "keep")
-
-# Building colour of the mobile 3D style (streets-v1-3d-qa, layer building-3d). The published
-# streets-v1 has no extrusion layer: the app extrudes the PMTiles from this studio itself.
-MOBILE_BUILDING = {"color": "#cfcec9", "opacity": 0.48}
-
-_ROSE = "#e8b0c4"
-_AMBER = "#f0a074"
-_NAVY = "#1f2a44"
 
 
 @dataclass(frozen=True)
 class Preset:
     id: str
     label: str
-    origin: str  # "mobile": as published; "suggested": not in the mobile style yet
-    dark: bool
+    style: str  # VMAP style id under styles/, as listed in CATALOG
+    dark: bool  # dark ground: the preview uses its dark colour set on it
     note: str
-    grades: dict[str, Grade] = field(default_factory=dict)
-    light: dict[str, Any] | None = None  # None = keep the style's own light
-    building_opacity: float = MOBILE_BUILDING["opacity"]
-    # Precomputed ground shadows (app/shadows.py), cast along this preset's light. None: no sun.
+    # Precomputed ground shadows (app/shadows.py), cast along the style's own `light`. The
+    # look is ours: VMAP publishes no shadows. None: no sun, no shadows.
     shadow: dict[str, Any] | None = None
+    origin: str = "mobile"  # "mobile": a style VMAP publishes, used as is
 
-    def grade(self, role: str) -> Grade | None:
-        return None if role == "keep" else self.grades.get(role)
+    @property
+    def style_path(self) -> str:
+        return f"styles/{self.style}/style.json"
+
+    @property
+    def local_copy(self) -> Path:
+        return MAP_STYLES / f"{self.style}.style.json"
 
     def building(self) -> dict[str, Any]:
-        color = MOBILE_BUILDING["color"]
-        grade = self.grade("building")
-        if grade:
-            color = format_color(grade.apply(parse_color(color)))  # type: ignore[arg-type]
-        return {"color": color, "opacity": self.building_opacity}
+        return dict(MOBILE_BUILDING)
 
 
 PRESETS: dict[str, Preset] = {
@@ -214,140 +186,54 @@ PRESETS: dict[str, Preset] = {
         Preset(
             id="dawn",
             label="Bình minh",
-            origin="suggested",
+            style="streets-v2-dawn",
             dark=False,
-            note="Nắng sớm hồng nhạt, mặt trời thấp ở phía đông.",
-            grades={
-                "ground": Grade(l_mul=0.97, tint=_ROSE, tint_amount=0.18),
-                "green": Grade(l_mul=0.95, chroma=0.85, tint=_ROSE, tint_amount=0.1),
-                "water": Grade(l_mul=0.95, tint="#98a9e6", tint_amount=0.35),
-                "road": Grade(l_mul=0.99, tint=_ROSE, tint_amount=0.15),
-                "casing": Grade(l_mul=0.97, tint=_ROSE, tint_amount=0.15),
-                "rail": Grade(l_mul=0.97, tint=_ROSE, tint_amount=0.1),
-                "boundary": Grade(tint=_ROSE, tint_amount=0.1),
-                "building": Grade(tint=_ROSE, tint_amount=0.15),
-                "text": Grade(tint="#5d4370", tint_amount=0.12),
-                "halo": Grade(tint=_ROSE, tint_amount=0.2),
-            },
-            light={"anchor": "map", "color": "#ffe0cc", "intensity": 0.3, "position": [1.15, 90, 50]},
+            note="Nền kem đào, nắng vàng cam.",
             shadow={"color": "#4b3f6b", "opacity": 0.22},
         ),
         Preset(
             id="day",
             label="Ban ngày",
-            origin="mobile",
+            style="streets-v2-day",
             dark=False,
-            note="Nguyên bản style streets-v1 app Mobile đang dùng.",
+            note="Nền sáng trung tính, nắng trắng.",
             shadow={"color": "#3a4150", "opacity": 0.24},
         ),
         Preset(
             id="dusk",
             label="Hoàng hôn",
-            origin="suggested",
-            dark=False,
-            note="Nắng chiều cam ấm, mặt trời thấp ở phía tây, nước ngả tím.",
-            grades={
-                "ground": Grade(l_mul=0.9, tint=_AMBER, tint_amount=0.24),
-                "green": Grade(l_mul=0.88, chroma=0.8, tint=_AMBER, tint_amount=0.15),
-                "water": Grade(l_mul=0.85, tint="#7d7fc8", tint_amount=0.4),
-                "road": Grade(l_mul=0.95, tint="#f5c39e", tint_amount=0.3),
-                "casing": Grade(l_mul=0.9, tint=_AMBER, tint_amount=0.2),
-                "rail": Grade(l_mul=0.9, tint=_AMBER, tint_amount=0.15),
-                "boundary": Grade(l_mul=0.95, tint=_AMBER, tint_amount=0.1),
-                "building": Grade(l_mul=0.95, tint=_AMBER, tint_amount=0.22),
-                "text": Grade(l_mul=0.95, tint="#5a2f2a", tint_amount=0.12),
-                "halo": Grade(l_mul=0.99, tint=_AMBER, tint_amount=0.25),
-            },
-            light={"anchor": "map", "color": "#ffc796", "intensity": 0.4, "position": [1.15, 270, 55]},
-            building_opacity=0.52,
-            shadow={"color": "#4e2f45", "opacity": 0.26},
+            style="streets-v2-dusk",
+            dark=True,
+            note="Nền tím xám, nắng cam rất thấp nên bóng dài.",
+            shadow={"color": "#2b1d2b", "opacity": 0.3},
         ),
         Preset(
             id="night",
             label="Ban đêm",
-            origin="suggested",
+            style="streets-v2-night",
             dark=True,
-            note="Nền xanh than; đường lớn sáng hơn đường nhỏ; chữ sáng trên viền tối.",
-            grades={
-                # Ground collapses to one dark navy; roads invert so the motorway (darkest
-                # grey by day) becomes the brightest line; labels invert, halos go dark.
-                "ground": Grade(l_mul=0.1, l_add=0.142, chroma=0.4, tint=_NAVY, tint_amount=0.35),
-                "green": Grade(l_mul=0.32, chroma=0.5, tint=_NAVY, tint_amount=0.2),
-                "water": Grade(l_mul=0.3, chroma=0.35, tint="#223f6b", tint_amount=0.6),
-                "road": Grade(l_mul=-0.45, l_add=0.81, chroma=0.6, tint=_NAVY, tint_amount=0.2),
-                "casing": Grade(l_mul=0.2, l_add=0.075, chroma=0.6, tint=_NAVY, tint_amount=0.3),
-                "rail": Grade(l_mul=-0.45, l_add=0.81, chroma=0.5),
-                "boundary": Grade(l_mul=-0.75, l_add=0.92, chroma=0.6),
-                "building": Grade(l_mul=0.58, chroma=0.6, tint=_NAVY, tint_amount=0.4),
-                "text": Grade(l_mul=-0.75, l_add=1.08, chroma=0.9),
-                "halo": Grade(l_mul=0.0, l_add=0.2, chroma=0.0, tint=_NAVY, tint_amount=0.6),
-            },
-            light={"anchor": "map", "color": "#c8d4f5", "intensity": 0.25, "position": [1.15, 210, 30]},
-            building_opacity=0.75,
+            note="Nền xanh than, ánh trăng xanh xám.",
+        ),
+        Preset(
+            id="dark",
+            label="Nền tối",
+            style="streets-v2-dark",
+            dark=True,
+            note="Biến thể giao diện tối của style, không gắn với giờ nào trong ngày.",
         ),
     )
 }
 DEFAULT_PRESET = "day"
 
 
-def layer_role(layer_id: str, prop: str) -> str:
-    """Which grade a paint colour gets. Name-based, so new layers of the same kind follow."""
-    lid = layer_id.lower()
-    if lid.startswith("road_shield") or prop.startswith("icon-"):
-        return "keep"  # text drawn on sprite shields, whose colours a style cannot change
-    if prop == "text-color":
-        return "text"
-    if prop == "text-halo-color":
-        return "halo"
-    if any(k in lid for k in ("water", "sea", "reef", "river", "ocean")):
-        return "water"
-    if "rail" in lid:
-        return "rail"
-    if lid.endswith("_casing"):
-        return "casing"
-    if lid.startswith(("road_", "tunnel_", "bridge_", "aeroway_runway", "aeroway_taxiway")):
-        return "road"
-    if "building" in lid:
-        return "building"
-    if any(k in lid for k in ("park", "wood", "grass", "pitch", "track", "cemetery", "wetland", "forest", "scrub")):
-        return "green"
-    if any(k in lid for k in ("boundary", "admin", "outline")):
-        return "boundary"
-    return "ground"
-
-
-def _recolor(value: Any, grade: Grade) -> Any:
-    if isinstance(value, str):
-        c = parse_color(value)
-        return format_color(grade.apply(c)) if c else value
-    if isinstance(value, list):
-        return [_recolor(v, grade) for v in value]
-    if isinstance(value, dict):
-        return {k: _recolor(v, grade) for k, v in value.items()}
-    return value
-
-
 def apply_preset(base: dict[str, Any], preset_id: str, asset_base: str | None = None) -> dict[str, Any]:
-    """New style dict for a preset. `base` is not modified (sources are shared, not copied)."""
+    """The preset's published style, with our 3D building look in its metadata and, for the
+    preview, sprite / glyphs pointed at the local proxy. `base` is not modified."""
     preset = PRESETS[preset_id]
-    layers = []
-    for layer in base.get("layers", []):
-        paint = layer.get("paint")
-        if paint:
-            new_paint = {}
-            for prop, value in paint.items():
-                grade = preset.grade(layer_role(layer["id"], prop)) if prop.endswith("-color") else None
-                new_paint[prop] = _recolor(value, grade) if grade else value
-            layer = {**layer, "paint": new_paint}
-        layers.append(layer)
-    style = {**base, "layers": layers}
-    style["name"] = f"{base.get('name', 'VMAP')} — {preset.label}"
-    if preset.light:
-        style["light"] = dict(preset.light)
+    style = {**base}
     style["metadata"] = {
         **(base.get("metadata") or {}),
         "vmap:light-preset": preset.id,
-        "vmap:light-preset-origin": preset.origin,
         # The published style has no 3D buildings; the app adds its own extrusion layer.
         "vmap:building-3d": preset.building(),
     }
@@ -374,16 +260,17 @@ def _rewrite_assets(style: dict[str, Any], asset_base: str) -> dict[str, Any]:
 def presets_info() -> dict[str, Any]:
     return {
         "default": DEFAULT_PRESET,
-        "upstream": UPSTREAM + STYLE_PATH,
+        "catalog": CATALOG,
         "presets": [
             {
                 "id": p.id,
                 "label": p.label,
                 "origin": p.origin,
+                "style": p.style,
+                "url": UPSTREAM + p.style_path,
                 "dark": p.dark,
                 "note": p.note,
                 "building": p.building(),
-                "light": p.light,
                 "shadow": p.shadow,
             }
             for p in PRESETS.values()
@@ -396,7 +283,7 @@ def presets_info() -> dict[str, Any]:
 _lock = threading.Lock()
 _cache: OrderedDict[str, tuple[float, bytes, str]] = OrderedDict()
 _built: dict[tuple[str, str, str | None], bytes] = {}
-_parsed: dict[str, dict[str, Any]] = {}
+_parsed: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _offline_until = 0.0
 
 
@@ -431,7 +318,7 @@ def _fetch(path: str, ttl: float) -> tuple[bytes, str]:
     except urllib.error.HTTPError as exc:
         raise UpstreamError(f"{url}: HTTP {exc.code}") from exc
     except (urllib.error.URLError, OSError) as exc:
-        raise UpstreamError(f"{url}: {getattr(exc, 'reason', exc)}") from exc
+        raise UpstreamUnreachable(f"{url}: {getattr(exc, 'reason', exc)}") from exc
     with _lock:
         _cache[path] = (now, body, ctype)
         _cache.move_to_end(path)
@@ -446,43 +333,47 @@ def fetch_asset(path: str) -> tuple[bytes, str]:
     return _fetch(path, ASSET_TTL)
 
 
-def base_style() -> tuple[str, dict[str, Any], str]:
-    """(digest, style, source): the live mobile style, or the repo copy when offline."""
+def base_style(preset_id: str) -> tuple[str, dict[str, Any], str]:
+    """(digest, style, source): the preset's live VMAP style, or its repo copy when offline."""
     global _offline_until
+    preset = PRESETS[preset_id]
     raw = None
     if time.monotonic() >= _offline_until:
         try:
-            raw, source = _fetch(STYLE_PATH, STYLE_TTL)[0], "live"
-        except UpstreamError:
+            raw, source = _fetch(preset.style_path, STYLE_TTL)[0], "live"
+        except UpstreamUnreachable:
             # Do not wait for the timeout again on every preset switch.
             _offline_until = time.monotonic() + OFFLINE_RETRY
+        except UpstreamError:
+            pass  # only this style is missing upstream: its repo copy, the others stay live
     if raw is None:
-        raw, source = LOCAL_COPY.read_bytes(), "repo"
+        raw, source = preset.local_copy.read_bytes(), "repo"
     digest = hashlib.sha1(raw).hexdigest()
     with _lock:
         style = _parsed.get(digest)
     if style is None:
         style = json.loads(raw)
         with _lock:
-            _parsed.clear()
             _parsed[digest] = style
+            while len(_parsed) > 2 * len(PRESETS):  # one per preset, plus a superseded copy each
+                _parsed.popitem(last=False)
     return digest, style, source
 
 
 def effective_light(preset_id: str) -> dict[str, Any] | None:
-    """The light a preset renders with: its own, or the mobile style's (day)."""
-    return PRESETS[preset_id].light or base_style()[1].get("light")
+    """The light a preset renders with: the root `light` of its own VMAP style."""
+    return base_style(preset_id)[1].get("light")
 
 
 def style_bytes(preset_id: str, asset_base: str | None) -> tuple[bytes, str]:
-    digest, base, source = base_style()
+    digest, base, source = base_style(preset_id)
     key = (digest, preset_id, asset_base)
     with _lock:
         body = _built.get(key)
     if body is None:
         body = json.dumps(apply_preset(base, preset_id, asset_base), ensure_ascii=False, separators=(",", ":")).encode()
         with _lock:
-            for k in [k for k in _built if k[0] != digest]:
+            for k in [k for k in _built if k[1] == preset_id and k[0] != digest]:
                 del _built[k]
             _built[key] = body
     return body, source

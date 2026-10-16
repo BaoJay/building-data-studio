@@ -1,33 +1,35 @@
-"""VMAP basemap presets: day is the mobile style untouched; the suggested presets only regrade colours."""
+"""VMAP basemap presets: each one is the style VMAP publishes for it, with its own light."""
 
 import json
+import time
 
 import pytest
 
-from app import vmap
+from app import shadows, vmap
+
+PRESET_IDS = ["dawn", "day", "dusk", "night", "dark"]
+
+# Root `light` of each published streets-v2 style, as seen on 2026-10-16 (repo copies).
+PUBLISHED_LIGHTS = {
+    "day": ("#ffffff", 0.2, [1.15, 180, 20]),
+    "dawn": ("#feca8b", 0.365, [1.15, 120, 50]),
+    "dusk": ("#fec286", 0.2, [1.15, 240, 80]),
+    "night": ("#3f4455", 0.275, [1.15, 270, 20]),
+    "dark": ("#b0b9c9", 0.22, [1.15, 210, 35]),
+}
 
 
-@pytest.fixture(scope="module")
-def base():
-    return json.loads(vmap.LOCAL_COPY.read_text())
+def _copy(preset):
+    return json.loads(vmap.PRESETS[preset].local_copy.read_text())
 
 
-def _layer(style, layer_id):
-    return next(layer for layer in style["layers"] if layer["id"] == layer_id)
+@pytest.fixture
+def offline(monkeypatch):
+    def unreachable(path, ttl):
+        raise vmap.UpstreamUnreachable("offline")
 
-
-def _lightness(value):
-    return vmap.to_oklab(vmap.parse_color(value))[0]
-
-
-def _colours(value):
-    if isinstance(value, str):
-        return [value] if vmap.parse_color(value) else []
-    if isinstance(value, list):
-        return [c for v in value for c in _colours(v)]
-    if isinstance(value, dict):
-        return [c for v in value.values() for c in _colours(v)]
-    return []
+    monkeypatch.setattr(vmap, "_fetch", unreachable)
+    monkeypatch.setattr(vmap, "_offline_until", 0.0)
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -48,83 +50,102 @@ def test_non_colours_are_left_alone(text):
     assert vmap.parse_color(text) is None
 
 
-def test_oklab_roundtrip():
-    for text in ("#f6f3e9", "#8fd6ea", "#7f8790", "#a5444b", "#000000", "#ffffff"):
-        c = vmap.parse_color(text)
-        assert vmap.format_color(vmap.from_oklab(vmap.to_oklab(c))) == text
+@pytest.mark.parametrize("preset", PRESET_IDS)
+def test_repo_copy_is_the_published_style_of_its_preset(preset):
+    p = vmap.PRESETS[preset]
+    assert p.style == f"streets-v2-{preset}"
+    assert p.origin == "mobile"
+    style = _copy(preset)
+    assert style["metadata"]["tasco:style-variant"] == preset
+    color, intensity, position = PUBLISHED_LIGHTS[preset]
+    assert style["light"] == {"anchor": "map", "color": color, "intensity": intensity, "position": position}
+    assert not any(layer["type"] == "fill-extrusion" for layer in style["layers"])
 
 
-def test_day_is_the_mobile_style(base):
-    day = vmap.apply_preset(base, "day")
-    assert day["layers"] == base["layers"]
-    assert day["sources"] is base["sources"]
-    assert day["light"] == base["light"]
-    assert day["sprite"] == base["sprite"] and day["glyphs"] == base["glyphs"]
-    assert day["metadata"]["vmap:light-preset-origin"] == "mobile"
-    assert day["metadata"]["vmap:building-3d"] == vmap.MOBILE_BUILDING
-
-
-@pytest.mark.parametrize("preset", ["dawn", "dusk", "night"])
-def test_suggested_presets_only_change_colours(base, preset):
+@pytest.mark.parametrize("preset", PRESET_IDS)
+def test_preset_is_the_style_as_published(preset):
+    base = _copy(preset)
+    before = json.dumps(base)
     style = vmap.apply_preset(base, preset)
-    assert style["light"] == vmap.PRESETS[preset].light
-    assert style["metadata"]["vmap:light-preset-origin"] == "suggested"
-    assert len(style["layers"]) == len(base["layers"])
-    changed = 0
-    for new, old in zip(style["layers"], base["layers"], strict=True):
-        assert {k: v for k, v in new.items() if k != "paint"} == {k: v for k, v in old.items() if k != "paint"}
-        for prop, value in (old.get("paint") or {}).items():
-            if not prop.endswith("-color"):
-                assert new["paint"][prop] == value
-                continue
-            after = _colours(new["paint"][prop])
-            assert len(after) == len(_colours(value))  # same expression shape, every colour still valid
-            changed += new["paint"][prop] != value
-    assert changed > 100
-    assert base["layers"][0]["paint"]["background-color"] == "#f6f3e9"  # input not mutated
+    assert style["layers"] is base["layers"] and style["sources"] is base["sources"]
+    assert style["light"] == base["light"]
+    assert style["sprite"] == base["sprite"] and style["glyphs"] == base["glyphs"]
+    assert style["metadata"]["vmap:light-preset"] == preset
+    assert style["metadata"]["vmap:building-3d"] == vmap.MOBILE_BUILDING
+    assert {k: v for k, v in style["metadata"].items() if not k.startswith("vmap:")} == base["metadata"]
+    assert json.dumps(base) == before  # input not mutated
 
 
-def test_night_is_dark_and_readable(base):
-    night = vmap.apply_preset(base, "night")
-    ground = _lightness(_layer(night, "background")["paint"]["background-color"])
-    assert ground < 0.3
-    # Road hierarchy flips: the motorway is the brightest line, every road is lighter than the ground.
-    motorway = _lightness(_layer(night, "road_motorway")["paint"]["line-color"])
-    minor = _lightness(_layer(night, "road_minor")["paint"]["line-color"])
-    assert motorway > minor > ground + 0.05
-    # Every label: light text on a dark halo.
-    for layer in night["layers"]:
-        paint = layer.get("paint") or {}
-        if "text-color" not in paint or layer["id"] == "road_shield":
-            continue
-        halo = max(_lightness(c) for c in _colours(paint["text-halo-color"]))
-        assert min(_lightness(c) for c in _colours(paint["text-color"])) > halo + 0.3, layer["id"]
+def test_building_look_is_inferred_and_configurable():
+    assert vmap.building_look({}) == {"color": "#ddcca9", "opacity": 0.85, "origin": "inferred"}
+    assert vmap.building_look({"BDS_VMAP_BUILDING_COLOR": "#CFCEC9"}) == {"color": "#cfcec9", "opacity": 0.85, "origin": "env"}
+    assert vmap.building_look({"BDS_VMAP_BUILDING_OPACITY": "0.5"})["opacity"] == 0.5
+    for env in ({"BDS_VMAP_BUILDING_COLOR": "beige"}, {"BDS_VMAP_BUILDING_OPACITY": "1.5"},
+                {"BDS_VMAP_BUILDING_OPACITY": "abc"}):
+        with pytest.raises(ValueError):
+            vmap.building_look(env)
+    # One look for every preset: the style's own light shades it.
+    assert {json.dumps(p.building()) for p in vmap.PRESETS.values()} == {json.dumps(vmap.MOBILE_BUILDING)}
 
 
-def test_shield_text_and_alpha_are_kept(base):
-    night = vmap.apply_preset(base, "night")
-    # Shield backgrounds are sprite images the style cannot recolour, so their text stays put.
-    assert _layer(night, "road_shield")["paint"] == _layer(base, "road_shield")["paint"]
-    assert vmap.parse_color(_layer(night, "park_outline")["paint"]["line-color"])[3] == pytest.approx(0.42, abs=0.002)
+def test_shadows_follow_each_style_light(offline):
+    for preset, (_, _, (_, azimuth, polar)) in PUBLISHED_LIGHTS.items():
+        sun = shadows.Sun.from_light(vmap.effective_light(preset))
+        assert (sun.azimuth, sun.altitude) == (azimuth, 90 - polar)
 
 
-def test_layer_roles():
-    assert vmap.layer_role("waterway_tunnel", "line-color") == "water"
-    assert vmap.layer_role("tunnel_motorway_casing", "line-color") == "casing"
-    assert vmap.layer_role("tunnel_major_rail", "line-color") == "rail"
-    assert vmap.layer_role("road_service_track", "line-color") == "road"
-    assert vmap.layer_role("landuse_track", "fill-color") == "green"
-    assert vmap.layer_role("park_outline", "line-color") == "green"
-    assert vmap.layer_role("countries_outline", "line-color") == "boundary"
-    assert vmap.layer_role("water_name_line", "text-color") == "text"
-    assert vmap.layer_role("place_city", "text-halo-color") == "halo"
-    assert vmap.layer_role("road_shield", "text-color") == "keep"
-    assert vmap.layer_role("background", "background-color") == "ground"
+def test_each_preset_fetches_its_own_style(monkeypatch):
+    fetched = []
+
+    def fake(path, ttl):
+        fetched.append(path)
+        preset = path.split("/")[1].removeprefix("streets-v2-")
+        return json.dumps({"version": 8, "sources": {}, "layers": [], "light": {"position": [1, 1, 1], "color": preset}}).encode(), "application/json"
+
+    monkeypatch.setattr(vmap, "_fetch", fake)
+    monkeypatch.setattr(vmap, "_offline_until", 0.0)
+    for preset in PRESET_IDS:
+        body, source = vmap.style_bytes(preset, None)
+        assert source == "live"
+        assert json.loads(body)["light"]["color"] == preset
+        assert vmap.effective_light(preset)["color"] == preset
+    assert set(fetched) == {f"styles/streets-v2-{p}/style.json" for p in PRESET_IDS}
 
 
-def test_assets_point_at_the_local_proxy_only_for_the_preview(base):
+def test_a_style_missing_upstream_falls_back_alone(monkeypatch):
+    live = json.dumps({"version": 8, "sources": {}, "layers": [], "light": {"color": "live"}}).encode()
+
+    def fake(path, ttl):
+        if "dawn" in path:
+            raise vmap.UpstreamError("HTTP 404")
+        return live, "application/json"
+
+    monkeypatch.setattr(vmap, "_fetch", fake)
+    monkeypatch.setattr(vmap, "_offline_until", 0.0)
+    assert vmap.style_bytes("dawn", None)[1] == "repo"
+    assert vmap.effective_light("dawn") == _copy("dawn")["light"]
+    assert vmap.style_bytes("day", None)[1] == "live"
+
+
+def test_unreachable_upstream_uses_the_repo_copies_for_a_while(monkeypatch, offline):
+    body, source = vmap.style_bytes("night", None)
+    assert source == "repo"
+    style = json.loads(body)
+    assert style["metadata"]["vmap:light-preset"] == "night"
+    assert style["layers"] == _copy("night")["layers"]
+    assert vmap._offline_until > time.monotonic()
+
+    def must_not_fetch(path, ttl):
+        raise AssertionError("fetched while backing off")
+
+    monkeypatch.setattr(vmap, "_fetch", must_not_fetch)
+    assert vmap.style_bytes("dusk", None)[1] == "repo"
+
+
+def test_assets_point_at_the_local_proxy_only_for_the_preview():
+    base = _copy("dusk")
     local = vmap.apply_preset(base, "dusk", "http://127.0.0.1:8765/api/vmap/assets/")
-    assert local["sprite"] == "http://127.0.0.1:8765/api/vmap/assets/styles/streets-v1-3d/sprite"
+    assert local["sprite"] == "http://127.0.0.1:8765/api/vmap/assets/styles/streets-v1-dusk/sprite"
     assert local["glyphs"] == "http://127.0.0.1:8765/api/vmap/assets/glyphs/{fontstack}/{range}.pbf"
     assert local["sources"]["openmaptiles"]["url"] == base["sources"]["openmaptiles"]["url"]  # tiles allow CORS
     exported = vmap.apply_preset(base, "dusk")
@@ -133,10 +154,10 @@ def test_assets_point_at_the_local_proxy_only_for_the_preview(base):
 
 @pytest.mark.parametrize("path, ok", [
     ("styles/streets-v1-3d/sprite.json", True),
-    ("styles/streets-v1-3d/sprite@2x.png", True),
+    ("styles/streets-v1-dusk/sprite@2x.png", True),
     ("glyphs/Roboto Medium/7680-7935.pbf", True),
     ("glyphs/Roboto Regular,Noto Sans Regular/0-255.pbf", True),
-    ("styles/streets-v1/style.json", False),
+    ("styles/streets-v2-day/style.json", False),
     ("styles/../secret/sprite.json", False),
     ("glyphs/../../etc/0-255.pbf", False),
     ("tiles/16/1/2.pbf", False),
@@ -151,21 +172,10 @@ def test_asset_whitelist(path, ok, monkeypatch):
             vmap.fetch_asset(path)
 
 
-def test_falls_back_to_the_repo_copy_when_offline(monkeypatch, base):
-    def offline(path, ttl):
-        raise vmap.UpstreamError("offline")
-
-    monkeypatch.setattr(vmap, "_fetch", offline)
-    monkeypatch.setattr(vmap, "_offline_until", 0.0)
-    body, source = vmap.style_bytes("night", None)
-    assert source == "repo"
-    style = json.loads(body)
-    assert style["metadata"]["vmap:light-preset"] == "night"
-    assert len(style["layers"]) == len(base["layers"])
-
-
-def test_presets_info_lists_the_four_in_order():
+def test_presets_info_lists_the_published_presets_in_order():
     info = vmap.presets_info()
-    assert [p["id"] for p in info["presets"]] == ["dawn", "day", "dusk", "night"]
+    assert [p["id"] for p in info["presets"]] == PRESET_IDS
     assert info["default"] == "day"
-    assert [p["origin"] for p in info["presets"]] == ["suggested", "mobile", "suggested", "suggested"]
+    assert {p["origin"] for p in info["presets"]} == {"mobile"}
+    assert info["presets"][0]["url"] == "https://assets.vmaps.vn/styles/streets-v2-dawn/style.json"
+    assert [p["id"] for p in info["presets"] if p["dark"]] == ["dusk", "night", "dark"]

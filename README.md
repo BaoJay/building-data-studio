@@ -133,22 +133,22 @@ Kéo file `.gpkg` vào QGIS, chuột phải layer → **Filter…**:
 
 Filter `has_parts != true` ẩn các outline đã được chia thành khối con, để không bị vẽ chồng. Cách làm này giống pipeline `vmap-buildings-to-pmtiles`.
 
-### Xem trên nền bản đồ của app Mobile (VMAP) với 4 chế độ ánh sáng
+### Xem trên nền bản đồ của app Mobile (VMAP) với 5 chế độ ánh sáng
 
-Trong trang xem 3D, ô **Bản đồ nền** có lựa chọn **VMAP streets-v1 (nền app Mobile)**: đúng style `https://assets.vmaps.vn/styles/streets-v1/style.json` mà app đang dùng. Khi chọn nền này:
+Trong trang xem 3D, ô **Bản đồ nền** có lựa chọn **VMAP streets-v2 (nền app Mobile)**. Khi chọn nền này:
 
-- Ô **Ánh sáng bản đồ** hiện 4 nút **Bình minh / Ban ngày / Hoàng hôn / Ban đêm**. *Ban ngày* là style Mobile nguyên bản; ba chế độ có dấu `*` là **màu đề xuất**, chưa có trong style Mobile.
-- Building tự chuyển sang cách tô **Như app Mobile**: màu và độ mờ của building cùng ánh sáng (`light`) đổi theo chế độ. Vẫn chọn lại được các cách tô khác (chiều cao, outlier…).
-- Nút **Tải style.json chế độ này** tải file style đầy đủ của chế độ đang chọn (giữ nguyên URL sprite / glyphs / tiles gốc) để gửi team Mobile.
-- `assets.vmaps.vn` không bật CORS nên server local tải hộ style, sprite và glyphs. Nếu không tải được style live, app dùng bản lưu trong `map-styles/streets-v1.style.json` và báo dưới ô chọn nền.
+- Ô **Ánh sáng bản đồ** hiện 5 nút **Bình minh / Ban ngày / Hoàng hôn / Ban đêm / Nền tối**. Mỗi nút là một style VMAP đang phát hành (`https://assets.vmaps.vn/styles/streets-v2-{dawn,day,dusk,night,dark}/style.json`), dùng nguyên bản: màu, sprite và khối `light` của chính style đó. Dòng ghi chú dưới các nút ghi tên style và `light` của nó.
+- Building tự chuyển sang cách tô **Như app Mobile**: một màu building cho mọi chế độ, `light` của style tô sáng / tối các mặt. Màu này (`#ddcca9`, độ mờ 0.85) là **ước lượng** từ ảnh chụp Tasco Map admin, vì không style VMAP nào có layer 3D. Đổi được trong `app/vmap.py` hoặc bằng biến môi trường `BDS_VMAP_BUILDING_COLOR` / `BDS_VMAP_BUILDING_OPACITY`. Vẫn chọn lại được các cách tô khác (chiều cao, outlier…).
+- Nút **Tải style.json chế độ này** tải style của chế độ đang chọn (giữ nguyên URL sprite / glyphs / tiles gốc, màu building 3D ở `metadata["vmap:building-3d"]`) để gửi team Mobile.
+- `assets.vmaps.vn` không bật CORS nên server local tải hộ style, sprite và glyphs. Nếu không tải được style live, app dùng bản lưu `map-styles/streets-v2-{chế độ}.style.json` và báo dưới ô chọn nền.
 
-Chi tiết các file style của Mobile, cách sinh màu và bảng màu 4 chế độ: [`map-styles/README.md`](map-styles/README.md).
+Chi tiết các file style của Mobile, bảng màu và `light` của từng chế độ: [`map-styles/README.md`](map-styles/README.md).
 
 ### Đổ bóng vẽ sẵn (thử nghiệm)
 
 MapLibre không vẽ được bóng building đổ xuống mặt đất. Ô **Đổ bóng (vẽ sẵn, thử nghiệm)** trong trang xem 3D tính sẵn bóng của từng building rồi vẽ thành một layer `fill` mờ, nằm dưới nhãn và dưới building:
 
-- Hướng và độ dài bóng lấy theo `light` của chế độ đang chọn: Bình minh nắng từ phía đông, Ban ngày từ phía tây nam, Hoàng hôn từ phía tây; Ban đêm không có bóng. Nền khác VMAP dùng nắng Ban ngày. Độ dài bóng = chiều cao / tan(góc cao mặt trời).
+- Hướng và độ dài bóng lấy theo `light` của style VMAP đang chọn: Bình minh nắng từ phía đông nam (cao 40°), Ban ngày từ phía nam (cao 70°, bóng ngắn), Hoàng hôn từ phía tây nam (cao 10°, bóng dài gần 6 lần chiều cao); Ban đêm và Nền tối không có bóng. Nền khác VMAP dùng nắng Ban ngày. Độ dài bóng = chiều cao / tan(góc cao mặt trời).
 - Bóng được tính cho vùng quanh khung nhìn (từ zoom 15, tối đa khoảng 5 km mỗi chiều), khoảng 4 giây cho 12 nghìn building. Dịch bản đồ ra ngoài vùng đã tính thì tự tính lại. Bật / tắt được, lựa chọn được nhớ trong trình duyệt.
 - Mỗi building được quét theo tia nắng từ đáy (`min_height`) tới đỉnh: footprint dời tới hai độ cao cộng một hình bình hành cho mỗi cạnh, nên footprint lõm (chữ L, chữ U, có sân trong) vẫn đúng. Toàn bộ bóng được gộp thành một hình (không bị đậm lên ở chỗ chồng nhau) và trừ đi footprint.
 - Nút **Tải layer bóng vùng này (GeoJSON)** để team Mobile thử trên app.
@@ -163,9 +163,9 @@ Trong tab **Convert**, nhóm PMTiles có ô **Thêm layer bóng `shadows`**. Khi
 | `buildings` | như trước (tile building cắt y như khi không bật bóng) | theo Min / Max zoom |
 | `shadows` | bóng đã gộp, mỗi feature có thuộc tính `preset` = `dawn` / `day` / `dusk` | từ zoom 15 (hoặc Min zoom nếu lớn hơn) tới Max zoom |
 
-Cách tạo: sau khi cắt tile building, app tính bóng cho cả lớp GeoPackage chuẩn hoá (chia lưới ô 0,01°, mỗi building đọc một lần, mảnh bóng cắt theo ô rồi gộp theo ô + chế độ bằng nhiều tiến trình song song), cắt tile layer `shadows` riêng rồi `tile-join` vào file building. Hướng nắng là của 3 chế độ trong `app/vmap.py` lúc chạy và được ghi vào `report.json` (`shadows.presets`). Ô **Chỉ đổ bóng building cao hơn (m)** bỏ bóng của building thấp (footprint của chúng vẫn được trừ khỏi bóng).
+Cách tạo: sau khi cắt tile building, app tính bóng cho cả lớp GeoPackage chuẩn hoá (chia lưới ô 0,01°, mỗi building đọc một lần, mảnh bóng cắt theo ô rồi gộp theo ô + chế độ bằng nhiều tiến trình song song), cắt tile layer `shadows` riêng rồi `tile-join` vào file building. Hướng nắng lấy từ `light` của 3 style VMAP có nắng (Bình minh, Ban ngày, Hoàng hôn) lúc chạy và được ghi vào `report.json` (`shadows.presets`). Ô **Chỉ đổ bóng building cao hơn (m)** bỏ bóng của building thấp (footprint của chúng vẫn được trừ khỏi bóng).
 
-Trên app, thêm một layer dùng chung source với building; khi người dùng đổi chế độ thì đổi `filter` và màu, ban đêm thì ẩn layer:
+Trên app, thêm một layer dùng chung source với building; khi người dùng đổi chế độ thì đổi `filter` và màu, Ban đêm và Nền tối thì ẩn layer:
 
 ```json
 {
@@ -175,13 +175,13 @@ Trên app, thêm một layer dùng chung source với building; khi người dù
   "source-layer": "shadows",
   "minzoom": 15,
   "filter": ["==", ["get", "preset"], "dusk"],
-  "paint": { "fill-color": "#4e2f45", "fill-opacity": 0.26, "fill-antialias": false }
+  "paint": { "fill-color": "#2b1d2b", "fill-opacity": 0.3, "fill-antialias": false }
 }
 ```
 
 Đặt layer này dưới các layer nhãn chữ và dưới layer building 3D. `fill-antialias: false` tránh đường viền mảnh ở mép các ô lưới. Màu / độ mờ của từng chế độ nằm trong bảng ở [`map-styles/README.md`](map-styles/README.md). Trang xem 3D tự nhận layer `shadows` có sẵn trong file và hiển thị đúng như vậy (không tính lại).
 
-Số đo trên `canonical_building_v2` (1.197.099 building, máy dev 15 nhân, 7 luồng gộp), ngoài 231 MB của tile building z13–17:
+Số đo trên `canonical_building_v2` (1.197.099 building, máy dev 15 nhân, 7 luồng gộp), ngoài 231 MB của tile building z13–17. Các số này đo với hướng nắng cũ (Hoàng hôn cao 35°). Style streets-v2-dusk đặt mặt trời ở 10° nên bóng Hoàng hôn dài gấp khoảng 4 lần, và layer `shadows` sẽ lớn hơn:
 
 | Đổ bóng | Building có bóng | Tính bóng | Cắt tile bóng + gộp | Layer `shadows` (z15–17) | PMTiles gộp |
 |---|---|---|---|---|---|
@@ -283,7 +283,7 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/diffcore.py` | Engine so sánh bằng DuckDB: ghép mảnh tile, khớp theo ID / vị trí, thay đổi, chất lượng, lưới |
 | `app/diffgate.py` | Release gate (ngưỡng Pass / Warn / Fail), so sánh schema, `diff_report.md` |
 | `app/jobs.py` | Hàng đợi job (chạy lần lượt từng job), huỷ job |
-| `app/vmap.py` | Nền VMAP cho trang xem 3D: proxy style / sprite / glyphs từ assets.vmaps.vn, 4 chế độ ánh sáng |
+| `app/vmap.py` | Nền VMAP cho trang xem 3D: proxy style / sprite / glyphs từ assets.vmaps.vn, 5 chế độ ánh sáng (mỗi chế độ một style streets-v2), màu building 3D ước lượng |
 | `app/shadows.py` | Đổ bóng vẽ sẵn: tính bóng building theo hướng nắng của từng chế độ, cho một vùng (trang xem 3D) hoặc cả GeoPackage (layer `shadows` của PMTiles) |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
 | `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; MapLibre + pmtiles.js (vendored) |

@@ -21,7 +21,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, pipeline, probe, shadows, tools, vmap
+from . import __version__, diff, landmark, pipeline, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -289,6 +289,47 @@ async def building_shadows(request: Request) -> Response:
     return Response(body, media_type="application/geo+json", headers=headers)
 
 
+async def building_footprint(request: Request) -> Response:
+    """Footprint centroid, size and height of one building of a registered PMTiles, read
+    around ?lon=&lat=: where the 3D preview anchors a landmark model (app/landmark.py)."""
+    q = request.query_params
+    path = registry.get(q.get("f", ""))
+    if path is None or not path.is_file():
+        return _error("File không tồn tại.", 404)
+    try:
+        id_field = shadows.check_field(q.get("idcol"), "id")
+        building_id = q.get("id", "").strip()
+        if not id_field or not building_id:
+            raise landmark.LandmarkError("Thiếu building_id.")
+        req = landmark.Lookup(
+            path=path,
+            layer=shadows.check_field(q.get("layer"), "layer") or "",
+            zoom=int(q["z"]) if q.get("z") and path.suffix.lower() == ".pmtiles" else None,
+            id_field=id_field,
+            building_id=building_id,
+            lon=_coord(q.get("lon")),
+            lat=_coord(q.get("lat")),
+            height=shadows.check_field(q.get("h"), "chiều cao"),
+            base=shadows.check_field(q.get("base"), "đáy"),
+            parent=shadows.check_field(q.get("parent"), "building cha"),
+        )
+        if not (-180 <= req.lon <= 180 and -85 <= req.lat <= 85):
+            raise landmark.LandmarkError("Toạ độ không hợp lệ.")
+        result = await _in_thread(landmark.lookup, req)
+    except ValueError as exc:  # LandmarkError, ShadowError, bad z / lon / lat
+        return _error(str(exc))
+    except tools.ToolMissingError as exc:
+        return _error(str(exc), 500)
+    return JSONResponse(result, headers=NO_CACHE)
+
+
+def _coord(value: str | None) -> float:
+    try:
+        return float(value or "")
+    except ValueError:
+        raise landmark.LandmarkError("Thiếu toạ độ lon / lat.") from None
+
+
 def open_in_file_manager(path: Path) -> None:
     """Finder on macOS, Explorer on Windows, xdg-open elsewhere."""
     if sys.platform == "darwin":
@@ -330,6 +371,7 @@ routes = [
     Route("/api/vmap/style.json", vmap_style),
     Route("/api/vmap/assets/{path:path}", vmap_asset),
     Route("/api/shadows", building_shadows),
+    Route("/api/building", building_footprint),
     Mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static"),
 ]
 

@@ -174,15 +174,15 @@ def test_real_sample(tmp_path: Path) -> None:
 def test_pmtiles_with_shadows_layer(plain_parquet: Path, tmp_path: Path, monkeypatch) -> None:
     from app import probe, vmap
 
-    def offline(path, ttl):  # the day sun comes from the mobile style: use the repo copy
-        raise vmap.UpstreamError("offline")
+    def offline(path, ttl):  # every sun comes from its mobile style: use the repo copies
+        raise vmap.UpstreamUnreachable("offline")
 
     monkeypatch.setattr(vmap, "_fetch", offline)
     monkeypatch.setattr(vmap, "_offline_until", 0.0)
     result = _run(_config(plain_parquet, tmp_path / "out", tiles={"shadows": True, "minzoom": 14, "maxzoom": 16}))
     sh = result["report"]["shadows"]
     assert set(sh["presets"]) == {"dawn", "day", "dusk"}
-    assert sh["presets"]["dusk"]["azimuth"] == 270
+    assert (sh["presets"]["dusk"]["azimuth"], sh["presets"]["dusk"]["altitude"]) == (240, 10)
     assert sh["casting"] == 5  # A is drawn by its part A1
     assert sh["features"] > 0 and (sh["minzoom"], sh["maxzoom"]) == (15, 16)
     assert any("shadow_tiles" == s["key"] and s["status"] == "done" for s in result["steps"])

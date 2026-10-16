@@ -92,7 +92,15 @@ def test_field_names_are_checked():
 
 def test_every_sunny_preset_has_a_shadow_look():
     assert {p for p, v in vmap.PRESETS.items() if v.shadow} == {"dawn", "day", "dusk"}
-    assert vmap.PRESETS["night"].shadow is None
+    assert vmap.PRESETS["night"].shadow is None and vmap.PRESETS["dark"].shadow is None
+
+
+def test_read_margin_grows_as_the_sun_sinks():
+    assert shadows.read_margin_m(shadows.Sun(180, 70)) == shadows.READ_MARGIN_M
+    # Dusk sun at 10°: a 150 m tower outside the area still reaches into it.
+    low = shadows.Sun(240, 10)
+    assert shadows.read_margin_m(low) == pytest.approx(shadows.READ_MARGIN_HEIGHT_M * low.length_factor)
+    assert shadows.read_margin_m(low) > 800
 
 
 @pytest.fixture
@@ -100,7 +108,7 @@ def run(tmp_path):
     """compute() over a GeoJSON of buildings in metres near (0, 0); sun from the west at 45°,
     so a building casts eastward exactly as far as it is tall."""
 
-    def _run(features):
+    def _run(features, sun=shadows.Sun(270, 45)):
         src = tmp_path / "b.geojson"
         src.write_text(json.dumps({"type": "FeatureCollection", "features": [
             {"type": "Feature", "properties": {"b": 0, "has_parts": False, **props},
@@ -108,7 +116,7 @@ def run(tmp_path):
             for rings, props in features
         ]}))
         req = shadows.Request(path=src, layer="b", zoom=None, bbox=(-0.001, -0.001, 0.001, 0.001),
-                              height="h", base="b", parts="has_parts", sun=shadows.Sun(270, 45))
+                              height="h", base="b", parts="has_parts", sun=sun)
         body, stats = shadows.compute(req)
         feats = json.loads(body)["features"]
         return (_area_m2(feats[0]["geometry"]) if feats else 0.0), stats
@@ -150,6 +158,15 @@ def test_overlapping_shadows_are_dissolved(run):
     b = [_ring((0, 2), (10, 2), (10, 8), (0, 8))]  # inside a, taller
     area, _ = run([(a, {"h": 10}), (b, {"h": 20})])
     assert area == pytest.approx(100 + 60, rel=0.01)  # one polygon, nothing counted twice
+
+
+@needs_gdal
+def test_low_sun_reaches_in_from_far_outside(run):
+    # A 120 m tower ~600 m west of the area (±111 m): a 10° sun from the west casts it 680 m
+    # east, into the area. A fixed 400 m read margin would not have read it at all.
+    tower = [_ring((-700, -5), (-690, -5), (-690, 5), (-700, 5))]
+    area, stats = run([(tower, {"h": 120})], sun=shadows.Sun(270, 10))
+    assert stats["buildings"] == 1 and area > 0
 
 
 @needs_gdal

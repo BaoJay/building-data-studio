@@ -42,7 +42,8 @@ from typing import Any, Callable, Iterable
 from . import tools
 
 MAX_SPAN_DEG = 0.05  # ~5 km: one request stays a few seconds at most
-READ_MARGIN_M = 400.0  # buildings just outside the area still cast into it
+READ_MARGIN_M = 400.0  # buildings just outside the area still cast into it…
+READ_MARGIN_HEIGHT_M = 150.0  # …up to this tall, however low the sun (dusk at 10° casts 5.7× the height)
 METERS_PER_DEG_LAT = 110_574.0
 METERS_PER_DEG_LON_EQ = 111_320.0
 TIMEOUT = 120
@@ -224,14 +225,20 @@ _UNION_SQL = (
 EMPTY = b'{"type":"FeatureCollection","features":[]}'
 
 
+def read_margin_m(sun: Sun) -> float:
+    """How far outside the area buildings are read: their shadows may reach into it."""
+    return max(READ_MARGIN_M, READ_MARGIN_HEIGHT_M * sun.length_factor)
+
+
 def compute(req: Request) -> tuple[bytes, dict[str, Any]]:
     """(GeoJSON bytes, stats) of the dissolved ground shadow over req.bbox."""
     t0 = time.monotonic()
     ogr2ogr = tools.require("ogr2ogr")
     w, s, e, n = req.bbox
     lat = (s + n) / 2
-    m_lat = READ_MARGIN_M / METERS_PER_DEG_LAT
-    m_lon = READ_MARGIN_M / (METERS_PER_DEG_LON_EQ * math.cos(math.radians(lat)))
+    margin = read_margin_m(req.sun)
+    m_lat = margin / METERS_PER_DEG_LAT
+    m_lon = margin / (METERS_PER_DEG_LON_EQ * math.cos(math.radians(lat)))
     fields = [f for f in (req.height, req.base, req.parts) if f]
     dlon, dlat = req.sun.offset_deg(lat)
     stats = {"buildings": 0, "pieces": 0}

@@ -227,7 +227,7 @@ async def vmap_style(request: Request) -> Response:
     body, source = await _in_thread(vmap.style_bytes, preset, asset_base)
     headers = {**NO_CACHE, "X-VMAP-Source": source}
     if download:
-        headers["Content-Disposition"] = f'attachment; filename="streets-v1-{preset}.style.json"'
+        headers["Content-Disposition"] = f'attachment; filename="{vmap.PRESETS[preset].style}.style.json"'
     return Response(body, media_type="application/json", headers=headers)
 
 

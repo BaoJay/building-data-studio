@@ -21,7 +21,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, landmark, pipeline, probe, shadows, tools, vmap
+from . import __version__, diff, landmark, landmark_library, pipeline, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ HOST = "127.0.0.1"
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 
 registry = FileRegistry()
+library = landmark_library.Library(landmark_library.default_dir())
 
 
 def execute(job: Job) -> None:
@@ -297,25 +298,7 @@ async def building_footprint(request: Request) -> Response:
     if path is None or not path.is_file():
         return _error("File không tồn tại.", 404)
     try:
-        id_field = shadows.check_field(q.get("idcol"), "id")
-        building_id = q.get("id", "").strip()
-        if not id_field or not building_id:
-            raise landmark.LandmarkError("Thiếu building_id.")
-        req = landmark.Lookup(
-            path=path,
-            layer=shadows.check_field(q.get("layer"), "layer") or "",
-            zoom=int(q["z"]) if q.get("z") and path.suffix.lower() == ".pmtiles" else None,
-            id_field=id_field,
-            building_id=building_id,
-            lon=_coord(q.get("lon")),
-            lat=_coord(q.get("lat")),
-            height=shadows.check_field(q.get("h"), "chiều cao"),
-            base=shadows.check_field(q.get("base"), "đáy"),
-            parent=shadows.check_field(q.get("parent"), "building cha"),
-        )
-        if not (-180 <= req.lon <= 180 and -85 <= req.lat <= 85):
-            raise landmark.LandmarkError("Toạ độ không hợp lệ.")
-        result = await _in_thread(landmark.lookup, req)
+        result = await _in_thread(landmark.lookup, _lookup_request(path, q))
     except ValueError as exc:  # LandmarkError, ShadowError, bad z / lon / lat
         return _error(str(exc))
     except tools.ToolMissingError as exc:
@@ -323,11 +306,182 @@ async def building_footprint(request: Request) -> Response:
     return JSONResponse(result, headers=NO_CACHE)
 
 
-def _coord(value: str | None) -> float:
+def _lookup_request(path: Path, q) -> landmark.Lookup:
+    """The building to read, from query parameters or a JSON body (same keys)."""
+    id_field = shadows.check_field(q.get("idcol"), "id")
+    building_id = str(q.get("id") or "").strip()
+    if not id_field or not building_id:
+        raise landmark.LandmarkError("Thiếu building_id.")
+    req = landmark.Lookup(
+        path=path,
+        layer=shadows.check_field(q.get("layer"), "layer") or "",
+        zoom=int(q["z"]) if q.get("z") is not None and q.get("z") != "" and path.suffix.lower() == ".pmtiles" else None,
+        id_field=id_field,
+        building_id=building_id,
+        lon=_coord(q.get("lon")),
+        lat=_coord(q.get("lat")),
+        height=shadows.check_field(q.get("h"), "chiều cao"),
+        base=shadows.check_field(q.get("base"), "đáy"),
+        parent=shadows.check_field(q.get("parent"), "building cha"),
+    )
+    if not (-180 <= req.lon <= 180 and -85 <= req.lat <= 85):
+        raise landmark.LandmarkError("Toạ độ không hợp lệ.")
+    return req
+
+
+def _coord(value: Any) -> float:
     try:
-        return float(value or "")
-    except ValueError:
+        return float(value)
+    except (TypeError, ValueError):
         raise landmark.LandmarkError("Thiếu toạ độ lon / lat.") from None
+
+
+# ------------------------------------------------------------------ landmark library
+
+MAX_GLB_BYTES = 1 << 30
+
+
+def _landmark_json(rec: dict[str, Any], status: int = 200) -> JSONResponse:
+    """A landmark plus the token that reveals its folder in the file manager."""
+    folder = library.root / rec["id"]
+    return JSONResponse({**rec, "folder_token": registry.register(folder)}, status_code=status, headers=NO_CACHE)
+
+
+def _library_error(exc: ValueError) -> JSONResponse:
+    return _error(str(exc), 404 if isinstance(exc, landmark_library.NotFound) else 400)
+
+
+async def landmarks_page(request: Request) -> Response:
+    return FileResponse(STATIC_DIR / "landmarks.html", headers=NO_CACHE)
+
+
+async def list_landmarks(request: Request) -> Response:
+    """Every landmark (with its footprint) and the PMTiles they were registered from."""
+    library.root.mkdir(parents=True, exist_ok=True)
+    items = await _in_thread(library.list)
+    sources = [{**s, "token": registry.register(Path(s["path"]))} for s in await _in_thread(library.sources)]
+    return JSONResponse({"dir": str(library.root), "dir_token": registry.register(library.root),
+                         "landmarks": items, "sources": sources}, headers=NO_CACHE)
+
+
+async def register_landmark(request: Request) -> Response:
+    """Add a building of a registered PMTiles to the library: its footprint is read once, here."""
+    body = await _json(request)
+    path = registry.get(str(body.get("f", "")))
+    if path is None or not path.is_file():
+        return _error("File PMTiles không tồn tại.", 404)
+    try:
+        req = _lookup_request(path, {k: v if v is None else str(v) for k, v in body.items()})
+        found = await _in_thread(landmark.lookup, req, True)
+        footprint = {k: found[k] for k in ("geometry", "centroid", "area_m2", "bbox", "size_m", "height", "base",
+                                           "matched", "pieces", "height_field")}
+        source = {"name": path.name, "path": str(path), "layer": req.layer, "id_field": req.id_field,
+                  "zoom": req.zoom, "parent_field": req.parent}
+        rec = await _in_thread(lambda: library.register(building_id=req.building_id, name=str(body.get("name") or ""),
+                                                        link=str(body.get("link") or ""), footprint=footprint, source=source))
+    except ValueError as exc:  # LandmarkError, LibraryError, ShadowError
+        return _error(str(exc))
+    except tools.ToolMissingError as exc:
+        return _error(str(exc), 500)
+    return _landmark_json(rec, 201)
+
+
+async def get_landmark(request: Request) -> Response:
+    try:
+        rec = await _in_thread(library.get, request.path_params["lid"])
+    except ValueError as exc:
+        return _library_error(exc)
+    return _landmark_json(rec)
+
+
+async def edit_landmark(request: Request) -> Response:
+    body = await _json(request)
+    try:
+        rec = await _in_thread(lambda: library.update(request.path_params["lid"], name=body.get("name"), link=body.get("link")))
+    except ValueError as exc:
+        return _library_error(exc)
+    return _landmark_json(rec)
+
+
+async def delete_landmark(request: Request) -> Response:
+    """Moves the landmark folder to <library>/_trash/ — nothing is erased."""
+    try:
+        dest = await _in_thread(library.trash, request.path_params["lid"])
+    except ValueError as exc:
+        return _library_error(exc)
+    return JSONResponse({"ok": True, "moved_to": str(dest)})
+
+
+async def upload_landmark_version(request: Request) -> Response:
+    """Stream a .glb into the landmark folder and keep it as the next version."""
+    lid = request.path_params["lid"]
+    raw_name = Path(request.query_params.get("name", "")).name
+    if Path(raw_name).suffix.lower() != ".glb":
+        return _error("Chỉ nhận file .glb (glTF binary).")
+    try:
+        folder = library.folder(lid)
+    except ValueError as exc:
+        return _library_error(exc)
+    tmp = folder / f".upload-{secrets.token_hex(4)}.glb"
+    try:
+        size = 0
+        with tmp.open("wb") as fh:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_GLB_BYTES:
+                    return _error(f"File lớn hơn {MAX_GLB_BYTES >> 20} MB.")
+                fh.write(chunk)
+        rec = await _in_thread(lambda: library.add_version(lid, tmp, original_name=raw_name,
+                                                           note=request.query_params.get("note", "")))
+    except ValueError as exc:  # LibraryError, GlbError
+        return _library_error(exc)
+    except OSError as exc:
+        return _error(f"Không ghi được file GLB: {exc}", 500)
+    finally:
+        tmp.unlink(missing_ok=True)
+    log.info("Landmark %s: new version from %s (%d bytes)", lid, raw_name, size)
+    return _landmark_json(rec, 201)
+
+
+async def landmark_glb(request: Request) -> Response:
+    try:
+        path, version = await _in_thread(library.glb_path, request.path_params["lid"], request.path_params["n"])
+    except ValueError as exc:
+        return _library_error(exc)
+    if request.query_params.get("download"):
+        return FileResponse(path, filename=version["original_name"], media_type="model/gltf-binary")
+    # Versions never change once written: the browser may keep them.
+    return FileResponse(path, media_type="model/gltf-binary", headers={"Cache-Control": "max-age=31536000, immutable"})
+
+
+async def set_landmark_placement(request: Request) -> Response:
+    body = await _json(request)
+    try:
+        rec = await _in_thread(library.set_placement, request.path_params["lid"], request.path_params["n"], body)
+    except ValueError as exc:
+        return _library_error(exc)
+    return _landmark_json(rec)
+
+
+async def use_landmark_version(request: Request) -> Response:
+    body = await _json(request)
+    version = body.get("version")
+    if version is not None and (isinstance(version, bool) or not isinstance(version, int)):
+        return _error("Sai số version.")
+    try:
+        rec = await _in_thread(library.use, request.path_params["lid"], version, str(body.get("note") or ""))
+    except ValueError as exc:
+        return _library_error(exc)
+    return _landmark_json(rec)
+
+
+async def landmarks_manifest(request: Request) -> Response:
+    """The version in use of every landmark with its placement (?download=1 saves it)."""
+    data = await _in_thread(library.manifest)
+    headers = dict(NO_CACHE)
+    if request.query_params.get("download"):
+        headers["Content-Disposition"] = 'attachment; filename="landmarks-manifest.json"'
+    return JSONResponse(data, headers=headers)
 
 
 def open_in_file_manager(path: Path) -> None:
@@ -372,6 +526,17 @@ routes = [
     Route("/api/vmap/assets/{path:path}", vmap_asset),
     Route("/api/shadows", building_shadows),
     Route("/api/building", building_footprint),
+    Route("/landmarks", landmarks_page),
+    Route("/api/landmarks", list_landmarks, methods=["GET"]),
+    Route("/api/landmarks", register_landmark, methods=["POST"]),
+    Route("/api/landmarks/manifest.json", landmarks_manifest),
+    Route("/api/landmarks/{lid}", get_landmark, methods=["GET"]),
+    Route("/api/landmarks/{lid}", edit_landmark, methods=["PATCH"]),
+    Route("/api/landmarks/{lid}", delete_landmark, methods=["DELETE"]),
+    Route("/api/landmarks/{lid}/versions", upload_landmark_version, methods=["PUT", "POST"]),
+    Route("/api/landmarks/{lid}/versions/{n:int}/glb", landmark_glb, methods=["GET", "HEAD"]),
+    Route("/api/landmarks/{lid}/versions/{n:int}/placement", set_landmark_placement, methods=["PUT"]),
+    Route("/api/landmarks/{lid}/use", use_landmark_version, methods=["POST"]),
     Mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static"),
 ]
 

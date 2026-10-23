@@ -1,6 +1,6 @@
 // Building Data Studio — UI logic (vanilla JS, no build step).
 
-import { $, $$, api, esc, fmtBytes, fmtDur, fmtInt, fmtNum, hbars, loadJSON, previewUrl, reveal, saveJSON, section, toast, uploadFile } from "./util.js";
+import { $, $$, api, esc, fmtBytes, fmtDur, fmtInt, fmtNum, hbars, landmarksUrl, loadJSON, previewUrl, reveal, saveJSON, section, toast, uploadFile } from "./util.js";
 import { initDiff, renderDiffReport, setDiffHealth } from "./diff.js";
 
 const GENERATED_HEIGHT = ["h_m", "h_src", "h_outlier"];
@@ -197,6 +197,7 @@ function renderFileInfo(p) {
       ${alerts}
       <div class="out-actions">
         <a class="btn primary" href="${previewUrl(p.token, { name: p.name })}" target="_blank" rel="noopener">Xem bản đồ 3D</a>
+        <a class="btn" href="${landmarksUrl(p.token, p.name)}" target="_blank" rel="noopener">Landmark 3D</a>
         <button class="btn" type="button" data-reveal="${esc(p.token)}">Hiện trong Finder</button>
       </div>`;
     return;
@@ -614,6 +615,7 @@ function renderOutputs(job) {
   $("#outActions").innerHTML = job.output_dir_token ? `
     <button class="btn" type="button" data-reveal="${esc(job.output_dir_token)}">Mở thư mục output</button>
     ${pm && job.status === "done" ? `<a class="btn primary" href="${map}" target="_blank" rel="noopener">${job.kind === "diff" ? "Xem bản đồ diff" : "Xem bản đồ 3D"}</a>` : ""}
+    ${pm && job.status === "done" && job.kind !== "diff" ? `<a class="btn" href="${landmarksUrl(pm.token, pm.name)}" target="_blank" rel="noopener">Landmark 3D</a>` : ""}
     <span class="hint mono">${esc(job.output_dir || "")}</span>` : "";
 }
 

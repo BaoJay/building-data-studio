@@ -9,6 +9,8 @@ Có giao diện kéo thả, nút tải file và nút mở thư mục output. App
 
 Tab **So sánh 2 file** so sánh bản production (A) với bản sắp release (B) và đưa ra kết luận **Pass / Warn / Fail** trước khi release (xem [mục 9](#9-so-sánh-2-file-trước-release)).
 
+Trang **Landmark 3D** lưu file GLB của từng building theo `building_id` và footprint, cùng các version đã dùng. Mỗi version có hướng và toạ độ neo riêng (xem [Thư viện landmark](#thư-viện-landmark-landmarks)).
+
 ```
 input (.parquet / .gpkg / .fgb / .geojson)
   └─ ogr2ogr + SQL ──► GeoPackage chuẩn hoá (EPSG:4326, h_m, h_src, h_outlier)
@@ -199,6 +201,7 @@ Mục **Landmark 3D (GLB)** ở cuối panel trang xem 3D đặt một file `.gl
 - Chọn file `.glb`. File chỉ được đọc trong trình duyệt, không upload. Click building trên bản đồ, bấm **Lấy building đang chọn**, rồi **Đặt lên building**. Server đọc footprint của `building_id` đó trong PMTiles ở zoom lớn nhất, ghép các mảnh tile lại, và neo mô hình ở tâm footprint, trên mặt đất. Với building chia khối con, server tìm theo id của chính building trước, không thấy mới tìm theo `parent_building_id`.
 - Chỉnh được **Hướng**, **Tỉ lệ** và **Điểm neo**. Hướng tính bằng độ, theo chiều kim đồng hồ nhìn từ trên xuống: ở hướng 0, trục +X của GLB chỉ hướng đông và mặt trước (+Z) quay về hướng nam. Điểm neo là gốc GLB hoặc tâm đáy hộp bao. Dòng **Chiều cao** so chiều cao mô hình (đã nhân tỉ lệ) với chiều cao của building, và cảnh báo khi lệch quá cả 2 m lẫn 5%.
 - Extrusion của building đó và các khối con của nó bị ẩn bằng filter theo id. Bóng vẽ sẵn của building vẫn giữ.
+- Nếu building đang chọn đã có trong [thư viện landmark](#thư-viện-landmark-landmarks), panel hiện version đang dùng và nút **Xem vN từ thư viện**. Nút này tải file GLB của version đó, cùng hướng, tỉ lệ, điểm neo và toạ độ neo đã lưu.
 - Mô hình được tô sáng bằng đúng công thức fill-extrusion của MapLibre, với `light` của style đang hiển thị. App đọc `light` qua `map.getLight()` và đọc lại mỗi khi style đổi, nên khi chuyển chế độ ánh sáng, landmark đổi sáng cùng lúc với các building xung quanh. Texture emissive (ví dụ cửa sổ sáng đèn) chỉ bật với style ban đêm, tức khi `metadata["tasco:light-preset"]` là `"night"`.
 - Để QA, ô **So sánh** hiện extrusion gốc của building ngay bên cạnh landmark (đục, màu so sánh). Ô **Tô landmark một màu** thay texture bằng chính màu đó: khi ấy mái, và các mặt tường quay cùng hướng, của landmark và extrusion phải sáng tối như nhau. Panel còn ghi màu mong đợi của mái và tường 4 hướng, cùng các uniform ánh sáng để đối chiếu khi port.
 
@@ -207,6 +210,23 @@ Công thức, shader và ghi chú cho Mobile (Android / iOS) nằm chung trong [
 - Mọi phép tính làm trên giá trị sRGB thô (0..1), như màu viết trong style: không đổi sang linear, không tone mapping. Texture phải upload dạng RGBA8 thường, không dùng sRGB texture.
 - Vector light dài bằng `radial` (1,15), không chuẩn hoá. Tính theo hướng đông-bắc-lên với pháp tuyến hướng ra ngoài, nó là `r·(sin a·sin p, cos a·sin p, cos p)`: mặt tường quay về phía phương vị `a` sáng nhất. Trong code MapLibre có hai chỗ ngược dấu triệt tiêu nhau: phương vị cộng 90° trong hệ toạ độ tile, và pháp tuyến tường hướng vào trong.
 - Ở chế độ Ban đêm (`light` màu `#3f4455`), MapLibre kẹp gần như mọi mặt về mức sàn `0,3 × (1 − màu light)`. Building nào cũng thành một màu tối, texture của landmark cũng vậy; chỉ emissive làm landmark khác đi.
+
+### Thư viện landmark (`/landmarks`)
+
+Trang **Landmark 3D** lưu các file GLB của từng building và các version đã dùng. Mở trang bằng tab **Landmark 3D ↗** trên trang chính, nút **Landmark 3D** cạnh **Xem bản đồ 3D** của một file PMTiles, hoặc link **Mở thư viện landmark** trong trang xem 3D. Trang chia 3 cột: danh sách landmark, bản đồ và chi tiết landmark đang chọn.
+
+- **Đăng ký**: chọn PMTiles ở ô **Bản đồ**, rồi click một building. Building đã đăng ký có màu vàng. Nhập tên và **ID liên kết**, là một id tuỳ ý để tìm building ở hệ thống khác, ví dụ canonical id của MapOps hoặc `way/695966191`. Mỗi `building_id` chỉ đăng ký được một lần. Nếu click vào một khối con, app hỏi đăng ký cho cả building cha hay chỉ khối đó. Khi đăng ký, server đọc footprint (polygon đã ghép các mảnh tile, diện tích, tâm, chiều cao) và lưu cùng landmark. Vì vậy sau này mở thư viện không cần file PMTiles đó nữa.
+- **Version**: mỗi lần **Upload version mới** là một version. File cũ giữ nguyên, không bị ghi đè. Server đọc GLB và ghi lại số mesh, số tam giác, hộp bao, sha256 và các kiểu nén mà bản đồ không đọc được (Draco, meshopt, KTX2). Nếu file trùng byte với một version cũ, app báo **Trùng file với vN**.
+- **Placement của từng version**:
+  - **Hướng**: thanh trượt 0–360°, ô nhập số và nút **Xoay 180°**. Hướng dùng cùng quy ước với trang xem 3D.
+  - **Tỉ lệ** và **Điểm neo trên mô hình** (gốc GLB hoặc tâm đáy hộp bao).
+  - **Toạ độ neo (lon, lat)**: chỗ điểm neo đứng trên mặt đất. Có thể nhập số, bấm **Chọn trên bản đồ**, kéo điểm ◆ trên bản đồ, hoặc bấm **Về tâm footprint**.
+
+  Mô hình trên bản đồ đổi ngay khi bạn chỉnh, và được tô sáng như trang xem 3D. Panel ghi khoảng cách từ toạ độ neo tới tâm footprint, và so chiều cao mô hình với chiều cao building. Bấm **Lưu placement** để lưu. Version đầu tiên đặt ở tâm footprint, hướng 0. Version sau bắt đầu với placement của version đang dùng.
+- **Đang dùng**: bấm **Dùng** ở một version (kèm ghi chú nếu cần) để chọn version đó, hoặc **Bỏ dùng** để không dùng version nào. Mỗi lần đổi được ghi vào **Lịch sử**, cùng các lần đăng ký, upload, lưu placement và sửa tên. Bảng version ghi trạng thái **đang dùng**, **đã dùng đến ngày…** hoặc **chưa dùng**.
+- **Tải manifest** tải `landmarks-manifest.json`. File này liệt kê version đang dùng của mọi landmark, kèm đường dẫn file, sha256 và placement, để gửi team Mobile hoặc đối chiếu với MapOps.
+
+Dữ liệu nằm trong thư mục `landmarks/` cạnh `output/`. Thư mục này không commit vào git. Đổi chỗ lưu bằng biến môi trường `BDS_LANDMARK_DIR`, ví dụ trỏ tới một thư mục Google Drive dùng chung với team. Mỗi landmark là một thư mục `landmarks/<id>/`, gồm `landmark.json` và `v1.glb`, `v2.glb`… **Xoá landmark** chỉ chuyển thư mục đó vào `landmarks/_trash/`, không xoá file nào.
 
 ## 9. So sánh 2 file trước release
 
@@ -302,6 +322,8 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/vmap.py` | Nền VMAP cho trang xem 3D: proxy style / sprite / glyphs từ assets.vmaps.vn, 5 chế độ ánh sáng (mỗi chế độ một style streets-v2), màu building 3D ước lượng |
 | `app/shadows.py` | Đổ bóng vẽ sẵn: tính bóng building theo hướng nắng của từng chế độ, cho một vùng (trang xem 3D) hoặc cả GeoPackage (layer `shadows` của PMTiles) |
 | `app/landmark.py` | Neo landmark trong trang xem 3D: footprint của một `building_id` trong PMTiles (ghép mảnh tile, tâm, diện tích, chiều cao) |
+| `app/landmark_library.py` | Thư viện landmark: version GLB, placement của từng version, version đang dùng và lịch sử (thư mục `landmarks/`) |
+| `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
-| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; `landmark.js` (xem GLB trên bản đồ) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, three.js chỉ tải khi mở mục Landmark) |
+| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; `basemap.js` (bản đồ nền và chế độ ánh sáng, dùng chung); `landmark-model.js` (vẽ GLB trên bản đồ), `landmark.js` (mục Landmark của trang xem 3D), `landmarks.js` (trang thư viện landmark) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, trang xem 3D chỉ tải three.js khi mở mục Landmark) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe) |

@@ -9,3 +9,4 @@ uploads/
 *.pmtiles
 *.fgb
 .DS_Store
+landmarks/

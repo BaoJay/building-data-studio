@@ -1,4 +1,5 @@
-"""Where a landmark model sits: the footprint of one building_id, for the 3D preview.
+"""Where a landmark model sits: the footprint of one building_id, for the 3D preview and the
+landmark library (app/landmark_library.py).
 
 A landmark (GLB / LMK3) replaces the extrusion of one building and is anchored at the
 centroid of its footprint, on the ground. The preview reads the footprint from the PMTiles
@@ -99,8 +100,39 @@ def footprint(polygons: list[list[list[list[float]]]], lon0: float, lat0: float)
     }
 
 
-def lookup(req: Lookup) -> dict[str, Any]:
-    """Footprint, height and base of one building, read around (req.lon, req.lat)."""
+_OUTLINE_SQL = (
+    "SELECT ST_Union(CASE WHEN ST_IsValid(geometry) THEN geometry ELSE MakeValid(geometry) END) AS geometry FROM pieces"
+)
+
+
+def outline(polygons: list[list[list[list[float]]]]) -> dict[str, Any]:
+    """The footprint as one GeoJSON geometry: the tile pieces of a building dissolved back together.
+
+    If GDAL cannot dissolve them, the pieces themselves (a MultiPolygon) still cover the footprint.
+    """
+    if len(polygons) == 1:
+        return {"type": "Polygon", "coordinates": polygons[0]}
+    pieces_geom = {"type": "MultiPolygon", "coordinates": polygons}
+    ogr2ogr = tools.require("ogr2ogr")
+    with tempfile.TemporaryDirectory(prefix="bds-landmark-") as tmp:
+        pieces = Path(tmp) / "pieces.geojsonl"
+        pieces.write_text("".join(
+            json.dumps({"type": "Feature", "properties": {}, "geometry": {"type": "Polygon", "coordinates": p}}) + "\n"
+            for p in polygons))
+        proc = tools.run_capture([ogr2ogr, "-f", "GeoJSON", "/vsistdout/", str(pieces), "-dialect", "SQLite",
+                                  "-sql", _OUTLINE_SQL, "-lco", "COORDINATE_PRECISION=7"], timeout=shadows.TIMEOUT)
+    try:
+        geom = json.loads(proc.stdout)["features"][0]["geometry"] if proc.returncode == 0 else None
+    except (ValueError, LookupError, TypeError):
+        geom = None
+    return geom if geom and geom.get("type") in ("Polygon", "MultiPolygon") else pieces_geom
+
+
+def lookup(req: Lookup, with_outline: bool = False) -> dict[str, Any]:
+    """Footprint, height and base of one building, read around (req.lon, req.lat).
+
+    with_outline adds the footprint itself ("geometry"), for the landmark library.
+    """
     ogr2ogr = tools.require("ogr2ogr")
     dlat = SEARCH_M / shadows.METERS_PER_DEG_LAT
     dlon = SEARCH_M / (shadows.METERS_PER_DEG_LON_EQ * math.cos(math.radians(req.lat)))
@@ -136,7 +168,7 @@ def lookup(req: Lookup) -> dict[str, Any]:
     result = footprint(polygons, req.lon, req.lat)
     heights = [h for f in feats if (h := shadows._number((f.get("properties") or {}).get(req.height))) is not None] if req.height else []
     bases = [b for f in feats if (b := shadows._number((f.get("properties") or {}).get(req.base))) is not None] if req.base else []
-    return {
+    out = {
         "id": req.building_id,
         "matched": matched,  # "id": the building itself; "parent": the union of its parts
         "pieces": len(polygons),
@@ -145,3 +177,6 @@ def lookup(req: Lookup) -> dict[str, Any]:
         "base": max(min(bases), 0.0) if bases else 0.0,
         "height_field": req.height,
     }
+    if with_outline:
+        out["geometry"] = outline(polygons)
+    return out

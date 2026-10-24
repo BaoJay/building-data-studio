@@ -43,6 +43,23 @@ Hoặc double-click file **`Building Data Studio.command`** trong Finder. Trình
 
 Server chỉ lắng nghe trên `127.0.0.1`, máy khác trong mạng không truy cập được.
 
+### Demo nhanh: 3D building Hà Nội, không cần file
+
+1. Chạy `./run.sh`. Lần đầu, terminal báo `Chưa có base Hà Nội: đang tạo…`. Thẻ **Base Hà Nội** ở đầu trang chính hiện từng bước. Đợi khoảng 3–5 phút, cần internet.
+2. Khi thẻ hiện số building (vd *212.373 building + 1.517 khối con*), bấm **Xem bản đồ 3D**, hoặc mở thẳng http://127.0.0.1:8765/preview. Bản đồ mở ở Hồ Gươm, zoom 15,5.
+   - Click một building để xem thuộc tính: `building_id` (id OSM, vd `way/1327061631`), `name`, `h_m`, `h_src`.
+   - Ô **Bản đồ nền** chọn VMAP để xem như app Mobile, rồi đổi 5 chế độ ánh sáng.
+   - Mục **Landmark 3D (GLB)** ở cuối panel đặt thử một file `.glb` lên building đang chọn.
+3. Bấm **Landmark 3D** ở thẻ Base, hoặc mở http://127.0.0.1:8765/landmarks. Ô **Building từ PMTiles** đã chọn sẵn *Hà Nội · OSM buildings*. Để thêm một landmark:
+   1. Click building trên bản đồ.
+   2. Nhập tên và **ID liên kết** (nên dùng chính id OSM, vd `way/1327061631`), rồi bấm **Đăng ký landmark**.
+   3. Bấm **Upload version mới**, chọn file `.glb`.
+   4. Chỉnh hướng, tỉ lệ và toạ độ neo, rồi bấm **Lưu placement** và **Dùng**.
+4. Quay lại trang xem 3D, chọn building đó: panel Landmark hiện version đang dùng và nút **Xem vN từ thư viện**.
+5. Cần xem dữ liệu trên QGIS thì bấm **Tải GeoPackage** ở thẻ Base, hoặc **Mở thư mục** để mở `base/hanoi/<lần tạo>/`.
+
+Base chỉ tạo một lần. Từ lần chạy sau, app mở base có sẵn ngay, không cần mạng (trừ bản đồ nền). Muốn lấy OSM mới hơn thì bấm **Cập nhật** ở thẻ Base. Chi tiết về dữ liệu và các tuỳ chọn: [Base Hà Nội](#base-hà-nội-building-osm-toàn-thành-phố).
+
 ## 3. Cách dùng
 
 ### Base Hà Nội (building OSM toàn thành phố)
@@ -345,6 +362,10 @@ Thời gian chạy trên máy dev: canonical v1 (369 nghìn) ↔ v2 (1,2 triệu
 | “Không tìm thấy cột geometry” | File Parquet thường: chọn cột WKB/WKT ở *Nguồn dữ liệu* |
 | Job lỗi giữa chừng | Mở **Log chi tiết**. File trung gian được giữ trong `_work/` của thư mục output |
 | Cổng 8765 đang bận | `./run.sh --port 9000` |
+| Thẻ Base báo lỗi `Không tải được extension DuckDB` | Máy không vào được extensions.duckdb.org: `.venv/bin/pip install duckdb-extension-spatial duckdb-extension-httpfs` (cùng version với `duckdb`), rồi bấm **Tạo base** |
+| Thẻ Base báo lỗi `Không đọc được danh sách release Overture` / lỗi HTTP khi tải building | Kiểm tra internet / VPN (app đọc `overturemaps-us-west-2.s3.amazonaws.com`), rồi bấm **Tạo base**. Có thể đặt cố định `BDS_OVERTURE_RELEASE=2026-10-21.0` |
+| Trang 3D báo “Chưa có base Hà Nội” | Base chưa tạo, hoặc đã bị xoá khỏi `base/hanoi/`: bấm **Tạo base** ở trang chính |
+| Không muốn app tự tạo base khi khởi động | `./run.sh --no-base` hoặc `BDS_BASE_AUTOBUILD=0` |
 
 ## 12. Phát triển
 

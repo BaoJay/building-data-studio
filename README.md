@@ -11,6 +11,8 @@ Tab **So sánh 2 file** so sánh bản production (A) với bản sắp release 
 
 Trang **Landmark 3D** lưu file GLB của từng building theo `building_id` và footprint, cùng các version đã dùng. Mỗi version có hướng và toạ độ neo riêng (xem [Thư viện landmark](#thư-viện-landmark-landmarks)).
 
+**Base Hà Nội**: building OpenStreetMap của toàn thành phố, app tự tạo một lần. Trang xem 3D và trang Landmark 3D mở thẳng base này, không cần upload hay convert file (xem [Base Hà Nội](#base-hà-nội-building-osm-toàn-thành-phố)).
+
 ```
 input (.parquet / .gpkg / .fgb / .geojson)
   └─ ogr2ogr + SQL ──► GeoPackage chuẩn hoá (EPSG:4326, h_m, h_src, h_outlier)
@@ -42,6 +44,51 @@ Hoặc double-click file **`Building Data Studio.command`** trong Finder. Trình
 Server chỉ lắng nghe trên `127.0.0.1`, máy khác trong mạng không truy cập được.
 
 ## 3. Cách dùng
+
+### Base Hà Nội (building OSM toàn thành phố)
+
+Lần đầu chạy `./run.sh`, app tự tạo **base Hà Nội**: mọi building OpenStreetMap trong ranh giới Thành phố Hà Nội, khoảng 3–5 phút, cần internet. Thẻ **Base Hà Nội** ở đầu trang chính hiện tiến trình. Khi xong:
+
+- **Xem bản đồ 3D** (`/preview`) và **Landmark 3D** (`/landmarks`) mở cùng một file PMTiles của base, tại Hồ Gươm. Trang Landmark đăng ký building ngay trên base, nên landmark và trang xem 3D luôn dùng cùng `building_id` và cùng footprint. Vẫn mở được file `.pmtiles` khác như trước.
+- **Tải GeoPackage** tải `hanoi_osm_buildings.gpkg` để xem trên QGIS. File có layer `buildings` (đã qua pipeline convert: `h_m`, `h_src`, `h_outlier`, `has_parts`, `is_part`) và layer `boundary` (ranh giới thành phố).
+- **Cập nhật** tạo lại từ release Overture mới nhất. Base cũ vẫn được dùng cho tới khi bản mới chạy xong.
+
+Nguồn dữ liệu là [Overture Maps](https://docs.overturemaps.org/) (theme `buildings` và `divisions`), đọc trực tiếp từ bucket S3 công khai bằng DuckDB. Overture phát hành lại OSM mỗi tháng với schema cố định, và ghi nguồn geometry của từng feature. App **chỉ giữ feature có geometry từ OpenStreetMap**: footprint Google Open Buildings / Microsoft ML Buildings mà Overture thêm vào đều bị bỏ.
+
+```
+Overture (S3, GeoParquet) ─ DuckDB ─┬─ divisions: ranh giới VN-HN ─────────────────────► layer boundary
+                                    └─ buildings + building_part, nguồn OSM, trong ranh giới
+                                         └─ pipeline convert ──► hanoi_osm_buildings.gpkg + .pmtiles (z12–16)
+```
+
+| Cột | Ý nghĩa |
+|---|---|
+| `building_id` | id OSM: `way/123` hoặc `relation/456` (mở được tại `openstreetmap.org/way/123`) |
+| `parent_building_id` | với khối con (`building:part`): id OSM của building chứa nó |
+| `name`, `class`, `subtype` | tên, loại building (`apartments`, `school`…). Khối con lấy `class` của building cha |
+| `height`, `num_floors` | chiều cao (m) và số tầng từ tag OSM. `h_m` lấy `height`, rồi `num_floors × 3,5 m`, rồi 4 m |
+| `min_height`, `min_floor` | đáy khối (m) / tầng bắt đầu. `min_height` trống thì tính `min_floor × 3,5 m` |
+| `roof_*`, `facade_*` | mái và mặt ngoài (hình dạng, màu, vật liệu) từ tag OSM |
+| `osm_version`, `osm_timestamp`, `overture_id` | phiên bản và thời điểm sửa cuối của way / relation trên OSM, GERS id của Overture |
+
+Building ngầm (`is_underground`) bị bỏ. Một building được giữ khi chạm ranh giới; một khối con được giữ khi building cha của nó được giữ.
+
+Số liệu lần tạo đầu (Overture `2026-10-21.0`, ảnh chụp OSM ngày 2026-09-12): **212.373 building + 1.517 khối con** trên 3.354 km². Chỉ **5,4%** có chiều cao thật (`height` hoặc số tầng), còn lại dùng 4 m mặc định. GeoPackage nặng 81 MB, PMTiles 20 MB. Để so sánh, Overture có tổng cộng khoảng 4,2 triệu building trong khung bao Hà Nội; phần lớn là footprint Google / Microsoft nhận diện bằng AI.
+
+Dữ liệu nằm trong `base/hanoi/` cạnh `output/` và không commit vào git. Mỗi lần tạo là một thư mục mới; `base/hanoi/base.json` trỏ tới bản đang dùng. Các tuỳ chọn:
+
+| Cách | Tác dụng |
+|---|---|
+| `./run.sh --no-base` hoặc `BDS_BASE_AUTOBUILD=0` | Không tự tạo base khi khởi động (vẫn bấm **Tạo base** được) |
+| `BDS_BASE_DIR=/đường/dẫn` | Đổi chỗ lưu base, ví dụ thư mục dùng chung với team |
+| `BDS_OVERTURE_RELEASE=2026-10-21.0` | Dùng một release Overture cố định thay vì bản mới nhất |
+| `.venv/bin/python -m app.osmbase hanoi [--release …]` | Tạo base từ terminal, không cần mở app |
+
+Lần đầu, DuckDB tự tải extension `spatial` và `httpfs` từ extensions.duckdb.org. Nếu máy không vào được địa chỉ đó, cài bằng pip: `.venv/bin/pip install duckdb-extension-spatial duckdb-extension-httpfs`. Hai gói này phải cùng version với `duckdb`.
+
+Dữ liệu OSM theo giấy phép ODbL. PMTiles của base ghi sẵn attribution `© OpenStreetMap contributors (ODbL) · Overture Maps <release>`; giữ dòng này khi đưa base lên app.
+
+### Convert một file
 
 1. **Chọn file**: kéo thả file vào ô, hoặc dán đường dẫn rồi bấm **Mở**. Với file lớn nên dán đường dẫn, vì kéo thả sẽ copy file vào thư mục `uploads/`.
 2. App đọc file và hiển thị: số feature, cột geometry, CRS, extent, danh sách cột kèm cảnh báo (nếu có).
@@ -324,6 +371,7 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/landmark.py` | Neo landmark trong trang xem 3D: footprint của một `building_id` trong PMTiles (ghép mảnh tile, tâm, diện tích, chiều cao) |
 | `app/landmark_library.py` | Thư viện landmark: version GLB, placement của từng version, version đang dùng và lịch sử (thư mục `landmarks/`) |
 | `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |
+| `app/osmbase.py` | Base Hà Nội: ranh giới và building OSM từ Overture (DuckDB), chạy qua pipeline convert, ghi `base/hanoi/base.json` |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
 | `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff; `basemap.js` (bản đồ nền và chế độ ánh sáng, dùng chung); `landmark-model.js` (vẽ GLB trên bản đồ), `landmark.js` (mục Landmark của trang xem 3D), `landmarks.js` (trang thư viện landmark) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, trang xem 3D chỉ tải three.js khi mở mục Landmark) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe) |

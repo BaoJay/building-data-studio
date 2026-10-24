@@ -20,6 +20,18 @@
   </header>
 
   <main class="layout">
+    <section class="card base-card" id="baseCard" aria-live="polite">
+      <h2>Base Hà Nội <span class="hint">building OpenStreetMap toàn thành phố</span></h2>
+      <div class="base-body">
+        <div class="base-info" id="baseInfo"><div class="hint">Đang đọc…</div></div>
+        <div class="btn-row" id="baseActions"></div>
+      </div>
+      <div class="base-progress" id="baseProgress" hidden>
+        <div class="hint" id="baseStep"></div>
+        <div class="progress"><span id="baseBar"></span></div>
+      </div>
+    </section>
+
     <nav class="tabs" role="tablist" aria-label="Chức năng">
       <button class="tab" role="tab" type="button" data-tab-btn="convert" aria-selected="true">Convert</button>
       <button class="tab" role="tab" type="button" data-tab-btn="diff" aria-selected="false">So sánh 2 file (trước release)</button>

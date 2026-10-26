@@ -1,5 +1,5 @@
-"""Base dataset: the OpenStreetMap buildings of a whole city, ready in the 3D preview and the
-landmark library without uploading or converting a file.
+"""Base dataset: the OpenStreetMap buildings of a whole city, ready in the 3D preview (and for
+registering landmarks on) without uploading or converting a file.
 
     Overture Maps release (public S3 bucket, GeoParquet)
       ├─ divisions / division_area ──► city boundary (one polygon)

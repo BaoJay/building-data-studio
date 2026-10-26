@@ -1,6 +1,6 @@
 // Building Data Studio — UI logic (vanilla JS, no build step).
 
-import { $, $$, api, esc, fmtBytes, fmtDur, fmtInt, fmtNum, hbars, landmarksUrl, loadJSON, previewUrl, reveal, saveJSON, section, toast, uploadFile } from "./util.js";
+import { $, $$, api, esc, fmtBytes, fmtDur, fmtInt, fmtNum, hbars, loadJSON, previewUrl, reveal, saveJSON, section, toast, uploadFile } from "./util.js";
 import { initDiff, renderDiffReport, setDiffHealth } from "./diff.js";
 
 const GENERATED_HEIGHT = ["h_m", "h_src", "h_outlier"];
@@ -71,7 +71,7 @@ async function init() {
 
 // ------------------------------------------------------------------ base (Hà Nội, OSM)
 // The OSM buildings of the whole city, built once from Overture (app/osmbase.py). The 3D preview
-// and the landmark library open on it when no file is given.
+// (and its landmark drawer) opens on it when no file is given.
 const base = { timer: null, status: null };
 const isActive = (job) => Boolean(job && ["queued", "running"].includes(job.status));
 
@@ -96,7 +96,7 @@ function renderBase(st) {
     info = `<div class="base-count">${fmtInt(b.counts.buildings)} building + ${fmtInt(b.counts.parts)} khối con</div>
       <div class="hint">OSM ngày ${esc(b.osm_snapshot || "?")} qua Overture ${esc(b.release)} · ${esc(b.boundary?.name || st.label)} (${fmtNum(b.boundary?.area_km2, 0)} km²)${h == null ? "" : ` · có chiều cao thật ${fmtNum(h, 1)}%`} · tạo lúc ${esc(new Date(b.built_at).toLocaleString("vi-VN"))}</div>`;
   } else if (active) {
-    info = `<div class="hint">Đang tạo base lần đầu từ OpenStreetMap (qua Overture Maps), khoảng 3–5 phút. Xong là trang 3D và trang Landmark tự mở base này.</div>`;
+    info = `<div class="hint">Đang tạo base lần đầu từ OpenStreetMap (qua Overture Maps), khoảng 3–5 phút. Xong là trang xem 3D tự mở base này, cùng các landmark đăng ký trên nó.</div>`;
   } else {
     info = `<div class="hint">Chưa có base. Bấm <b>Tạo base</b> để tải building OSM của toàn thành phố từ Overture Maps (cần internet, khoảng 3–5 phút).</div>`;
   }
@@ -107,8 +107,7 @@ function renderBase(st) {
 
   const buttons = [];
   if (b) {
-    buttons.push(`<a class="btn primary" href="/preview" target="_blank" rel="noopener">Xem bản đồ 3D</a>`,
-      `<a class="btn" href="/landmarks" target="_blank" rel="noopener">Landmark 3D</a>`,
+    buttons.push(`<a class="btn primary" href="/preview" target="_blank" rel="noopener" title="Building LoD1 và các landmark 3D đang dùng">Xem bản đồ 3D</a>`,
       `<a class="btn" href="/api/files/${encodeURIComponent(b.gpkg_token)}?download=1" title="${esc(b.gpkg)}">Tải GeoPackage</a>`,
       `<button class="btn" type="button" data-base="folder">Mở thư mục</button>`);
   }
@@ -279,7 +278,6 @@ function renderFileInfo(p) {
       ${alerts}
       <div class="out-actions">
         <a class="btn primary" href="${previewUrl(p.token, { name: p.name })}" target="_blank" rel="noopener">Xem bản đồ 3D</a>
-        <a class="btn" href="${landmarksUrl(p.token, p.name)}" target="_blank" rel="noopener">Landmark 3D</a>
         <button class="btn" type="button" data-reveal="${esc(p.token)}">Hiện trong Finder</button>
       </div>`;
     return;
@@ -697,7 +695,6 @@ function renderOutputs(job) {
   $("#outActions").innerHTML = job.output_dir_token ? `
     <button class="btn" type="button" data-reveal="${esc(job.output_dir_token)}">Mở thư mục output</button>
     ${pm && job.status === "done" ? `<a class="btn primary" href="${map}" target="_blank" rel="noopener">${job.kind === "diff" ? "Xem bản đồ diff" : "Xem bản đồ 3D"}</a>` : ""}
-    ${pm && job.status === "done" && job.kind !== "diff" ? `<a class="btn" href="${landmarksUrl(pm.token, pm.name)}" target="_blank" rel="noopener">Landmark 3D</a>` : ""}
     <span class="hint mono">${esc(job.output_dir || "")}</span>` : "";
 }
 

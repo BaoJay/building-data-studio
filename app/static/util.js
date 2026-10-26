@@ -46,9 +46,6 @@ export const previewUrl = (token, params = {}) => {
   return `/preview?${q}`;
 };
 
-// The landmark library, showing the buildings of this PMTiles.
-export const landmarksUrl = (token, name) => `/landmarks?${new URLSearchParams({ f: token, name: name || "" })}`;
-
 export function section(title, hint, body) {
   return `<div class="report-section"><h3>${esc(title)} ${hint ? `<span class="hint">${esc(hint)}</span>` : ""}</h3>${body}</div>`;
 }

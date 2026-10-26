@@ -406,10 +406,6 @@ def _library_error(exc: ValueError) -> JSONResponse:
     return _error(str(exc), 404 if isinstance(exc, landmark_library.NotFound) else 400)
 
 
-async def landmarks_page(request: Request) -> Response:
-    return FileResponse(STATIC_DIR / "landmarks.html", headers=NO_CACHE)
-
-
 def _source_file(token: str) -> Path | None:
     """The PMTiles behind a file token, or None when the token is unknown or its file is gone."""
     path = registry.get(token)
@@ -434,7 +430,7 @@ async def list_landmarks(request: Request) -> Response:
             item["source_token"] = tokens.get(path)
     base = (await _in_thread(base_status)).get("base")
     if base:
-        # The base comes first: new landmarks are registered on the same buildings as the 3D preview.
+        # The base comes first: the 3D preview opens it when no file is given.
         token = base["pmtiles_token"]
         sources = [{"token": token, "name": base["name"], "layer": "buildings", "id_field": "building_id",
                     "base": True, "view": base["view"]}, *(s for s in sources if s["token"] != token)]
@@ -620,7 +616,6 @@ routes = [
     Route("/api/vmap/assets/{path:path}", vmap_asset),
     Route("/api/shadows", building_shadows),
     Route("/api/building", building_footprint),
-    Route("/landmarks", landmarks_page),
     Route("/api/landmarks", list_landmarks, methods=["GET"]),
     Route("/api/landmarks", register_landmark, methods=["POST"]),
     Route("/api/landmarks/manifest.json", landmarks_manifest),

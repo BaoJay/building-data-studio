@@ -238,3 +238,22 @@ def test_library_crud_through_the_api(app_state):
     assert status == 200 and "_trash" in json.loads(body)["moved_to"]
     status, _ = get_json(f"/api/landmarks/{lid}")
     assert status == 404
+
+
+# ------------------------------------------------------------------ /landmarks is gone
+
+
+def test_the_landmark_page_is_gone(app_state):
+    for path in ("/landmarks", "/landmarks/"):
+        status, _, _ = call("GET", path)
+        assert status == 404, path
+    status, _, _ = call("GET", "/static/landmarks.html")
+    assert status == 404
+
+
+def test_the_frontend_only_links_to_the_preview():
+    static = Path(server.STATIC_DIR)
+    for path in [*static.glob("*.js"), *static.glob("*.html")]:
+        text = path.read_text("utf-8")
+        for needle in ('"/landmarks', "`/landmarks", "'/landmarks", "landmarksUrl", "landmarks.js"):
+            assert needle not in text, f"{path.name}: {needle}"

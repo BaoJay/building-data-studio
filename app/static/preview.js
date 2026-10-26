@@ -685,4 +685,65 @@ function onDiffClick(map, e) {
   });
 }
 
+// ------------------------------------------------------------------ panel width
+// The grip on the panel's right edge drags its width (remembered per browser); double-click
+// or Home resets it, arrow keys nudge it.
+const PANEL_W = { def: 300, min: 260, max: 900, step: 20 };
+
+function bindPanelResize() {
+  const panel = $("#panel");
+  const grip = $("#panelGrip");
+  const clamp = (w) => Math.round(Math.min(Math.max(w, PANEL_W.min), Math.min(PANEL_W.max, innerWidth - 80)));
+  const place = () => {
+    const r = panel.getBoundingClientRect();
+    grip.style.left = `${r.right}px`;
+    grip.style.top = `${r.top + r.height / 2}px`;
+  };
+  const setWidth = (w, save) => {
+    const v = clamp(w);
+    panel.style.setProperty("--panel-w", `${v}px`);
+    grip.setAttribute("aria-valuenow", String(v));
+    if (save) remember("panelWidth", String(v));
+    place();
+  };
+  grip.setAttribute("aria-valuemin", String(PANEL_W.min));
+  grip.setAttribute("aria-valuemax", String(PANEL_W.max));
+  setWidth(Number(recall("panelWidth")) || PANEL_W.def, false);
+  new ResizeObserver(place).observe(panel);
+  addEventListener("resize", () => setWidth(panel.getBoundingClientRect().width, false));
+
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = panel.getBoundingClientRect().width;
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("dragging");
+    document.body.classList.add("resizing-panel");
+    const move = (ev) => setWidth(startW + ev.clientX - startX, false);
+    const end = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", end);
+      grip.removeEventListener("pointercancel", end);
+      grip.classList.remove("dragging");
+      document.body.classList.remove("resizing-panel");
+      setWidth(panel.getBoundingClientRect().width, true);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  });
+  grip.addEventListener("dblclick", () => setWidth(PANEL_W.def, true));
+  grip.addEventListener("keydown", (e) => {
+    const w = panel.getBoundingClientRect().width;
+    const step = e.shiftKey ? PANEL_W.step * 3 : PANEL_W.step;
+    if (e.key === "ArrowRight") setWidth(w + step, true);
+    else if (e.key === "ArrowLeft") setWidth(w - step, true);
+    else if (e.key === "Home") setWidth(PANEL_W.def, true);
+    else return;
+    e.preventDefault();
+  });
+}
+
+bindPanelResize();
 main();

@@ -403,11 +403,26 @@ td.up { color: var(--bad); }
 
 /* ---------- map preview page ---------- */
 .panel {
-  position: absolute; top: var(--space-3); left: var(--space-3); z-index: 5; width: 300px; max-height: calc(100% - 24px); overflow: auto;
+  position: absolute; top: var(--space-3); left: var(--space-3); z-index: 5; width: var(--panel-w, 300px); max-height: calc(100% - 24px); overflow: auto;
   background: var(--surface); border: 1px solid var(--line-strong);
   outline: 1px solid var(--line); outline-offset: calc(-1px - var(--rule-gap));
   box-shadow: var(--shadow-float); padding: 14px var(--space-4); display: grid; gap: var(--space-3);
 }
+/* Drag handle on the panel's right edge (a sibling, so it stays put while the panel scrolls). */
+.panel-grip {
+  position: absolute; z-index: 6; width: 14px; height: 44px; transform: translate(-50%, -50%);
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 7px;
+  box-shadow: var(--shadow-float); cursor: ew-resize; touch-action: none;
+  display: grid; place-items: center;
+}
+.panel-grip::before {
+  content: ""; width: 3px; height: 17px; color: var(--muted);
+  background: radial-gradient(circle, currentColor 1.5px, transparent 1.6px) center / 3px 7px repeat-y;
+}
+.panel-grip:hover, .panel-grip.dragging { background: var(--surface-2); }
+.panel-grip:hover::before, .panel-grip.dragging::before { color: var(--ink); }
+.panel-grip:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+body.resizing-panel { cursor: ew-resize; user-select: none; }
 .panel h1 { font: 600 17px/24px var(--font-serif); margin: 0; overflow-wrap: anywhere; }
 .panel .meta { font-size: 12px; color: var(--muted); }
 .panel .head { display: flex; justify-content: space-between; align-items: start; gap: var(--space-2); }
@@ -590,4 +605,5 @@ input[type="range"] { accent-color: var(--accent); width: 100%; margin: 0; }
   .finding { grid-template-columns: 1fr; gap: var(--space-1); }
   .finding .badge { justify-self: start; }
   .panel { width: auto; right: var(--space-3); max-height: 45%; }
+  .panel-grip { display: none; }
 }

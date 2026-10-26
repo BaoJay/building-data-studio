@@ -39,14 +39,18 @@ library = landmark_library.Library(landmark_library.default_dir())
 BASE_DIR = osmbase.default_dir()
 
 
+# Job kinds the client may submit, and how the worker runs every kind.
+CONFIG_PARSERS = {"convert": pipeline.parse_config, "diff": diff.parse_config}
+RUNNERS = {
+    "convert": lambda job: pipeline.execute(job, registry),
+    "diff": lambda job: diff.execute(job, registry),
+    "base": lambda job: osmbase.execute(job, registry, BASE_DIR),
+}
+
+
 def execute(job: Job) -> None:
-    """Run a job of either kind on the worker thread."""
-    if job.kind == "diff":
-        diff.execute(job, registry)
-    elif job.kind == "base":
-        osmbase.execute(job, registry, BASE_DIR)
-    else:
-        pipeline.execute(job, registry)
+    """Run a job of any kind on the worker thread."""
+    RUNNERS.get(job.kind, RUNNERS["convert"])(job)
 
 
 jobs = JobManager(execute=execute)
@@ -162,10 +166,10 @@ async def probe_file(request: Request) -> Response:
 async def create_job(request: Request) -> Response:
     body = await _json(request)
     kind = body.get("kind") or "convert"
-    if kind not in ("convert", "diff"):
+    if kind not in CONFIG_PARSERS:
         return _error(f"Loại job không hợp lệ: {kind}")
     try:
-        cfg = diff.parse_config(body) if kind == "diff" else pipeline.parse_config(body)
+        cfg = CONFIG_PARSERS[kind](body)
     except pipeline.ConfigError as exc:
         return _error(str(exc))
     job = jobs.submit(body, name=cfg.out_name, kind=kind)

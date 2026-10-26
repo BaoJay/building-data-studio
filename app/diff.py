@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -25,7 +24,7 @@ from . import __version__, probe, tools
 from .diffcore import MERCATOR_HALF_WORLD, MVT_EXTENT, CompareSpec, DiffEngine, DiffError, SideSpec
 from .diffgate import DEFAULT_IGNORE_COLS, GateError, Thresholds, compare_schema, evaluate, parse_thresholds, render_markdown
 from .jobs import FileRegistry, Job, Step
-from .pipeline import DEFAULT_OUTPUT_DIR, WGS84, ConfigError, StagedPipeline, build_height_rule, safe_name
+from .pipeline import DEFAULT_OUTPUT_DIR, WGS84, ConfigError, StagedPipeline, build_height_rule, run_job, safe_name
 from .probe import ProbeError
 from .probe import quote_ident as q
 from .sqlbuild import sql_str
@@ -240,7 +239,6 @@ class DiffPipeline(StagedPipeline):
         self.mode = cfg.mode
         self.key_a: str | None = None
         self.key_b: str | None = None
-        self.con: duckdb.DuckDBPyConnection | None = None
         self.engine: DiffEngine | None = None
         self.result: dict[str, Any] = {}
         self.written: dict[str, dict[str, Any]] = {}
@@ -268,11 +266,6 @@ class DiffPipeline(StagedPipeline):
             steps.append(Step("tiles", "Tạo PMTiles cho bản đồ diff"))
         steps.append(Step("finalize", "Ghi báo cáo & dọn file tạm"))
         return steps
-
-    def cleanup(self) -> None:
-        if self.con is not None:
-            self.con.close()
-            self.con = None
 
     # ---------------------------------------------------------------- stages
     def _step_probe(self, step: Step) -> None:
@@ -406,9 +399,8 @@ class DiffPipeline(StagedPipeline):
         spec = CompareSpec(a=a, b=b, mode=self.mode, ignore_cols=ignore, height_tol_m=cfg.thresholds.height_tol_m,
                            geom_area_pct=cfg.thresholds.geom_area_pct, geom_shift_m=cfg.thresholds.geom_shift_m,
                            grid_deg=cfg.grid_deg)
-        self.con = duckdb.connect(str(self.work / "diff.duckdb"))
+        self._use_duckdb(duckdb.connect(str(self.work / "diff.duckdb")))
         self.con.execute(f"SET temp_directory = {sql_str(str(self.work / 'duckdb_tmp'))}")
-        self.job.runner.add_cancel_hook(self._interrupt)
 
         def progress(value: float, label: str) -> None:
             step.progress = value
@@ -446,11 +438,6 @@ class DiffPipeline(StagedPipeline):
         for f in gate["findings"]:
             if f["level"] != "info":
                 self.job.add_log(f"  {f['level'].upper()}: {f['title']} — {f['detail']}")
-
-    def _interrupt(self) -> None:
-        con = self.con
-        if con is not None:
-            con.interrupt()
 
     def _side_meta(self, s: str) -> dict[str, Any]:
         info, inp = self.info[s], getattr(self.cfg, s)
@@ -534,26 +521,9 @@ class DiffPipeline(StagedPipeline):
             "thresholds": asdict(self.cfg.thresholds),
         }
         self.cleanup()
-        report_json = self.out_dir / "diff_report.json"
-        report_md = self.out_dir / "diff_report.md"
-        report_json.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-        report_md.write_text(render_markdown(report), encoding="utf-8")
-        self._add_output("report_md", "Báo cáo diff (Markdown)", report_md, "report")
-        self._add_output("report_json", "Báo cáo diff (JSON)", report_json, "report")
-        if self.cfg.keep_temp:
-            self.job.add_log(f"Giữ file tạm trong {self.work}")
-        else:
-            shutil.rmtree(self.work, ignore_errors=True)
+        self._write_report(report, render_markdown(report), "diff_report", "Báo cáo diff", self.cfg.keep_temp)
 
 
 def execute(job: Job, registry: FileRegistry) -> None:
     """Entry point used by the JobManager worker thread."""
-    try:
-        cfg = parse_config(job.config)
-    except ConfigError as exc:
-        with job.lock:
-            job.status = "failed"
-            job.error = str(exc)
-            job.ended = time.time()
-        return
-    DiffPipeline(job, registry, cfg).run()
+    run_job(job, lambda: DiffPipeline(job, registry, parse_config(job.config)))

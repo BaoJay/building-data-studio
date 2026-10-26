@@ -41,7 +41,7 @@ ANCHORS = ("origin", "bbox")
 MAX_SCALE = 1000.0
 MAX_TEXT = 500
 _ID_RE = re.compile(r"[^A-Za-z0-9._-]+")
-RESERVED_IDS = {"manifest.json"}  # taken by an API route
+RESERVED_IDS = {"manifest.json", "render"}  # taken by an API route
 
 
 class LibraryError(ValueError):
@@ -145,7 +145,45 @@ def summary(rec: dict[str, Any]) -> dict[str, Any]:
         "area_m2": fp["area_m2"],
         "height": fp["height"],
         "geometry": fp["geometry"],
+        "source_name": (rec.get("source") or {}).get("name") or "",
         "updated_at": rec["updated_at"],
+    }
+
+
+def same_file(recorded: Any, path: Path) -> bool:
+    """Whether the PMTiles a landmark was registered from (source.path) is this file. Both sides
+    are resolved, so a symlink or a relative path to the same file still matches."""
+    if not recorded:
+        return False
+    try:
+        return Path(str(recorded)).expanduser().resolve() == path.resolve()
+    except (OSError, RuntimeError):  # unreadable path, symlink loop
+        return False
+
+
+def render_item(rec: dict[str, Any]) -> dict[str, Any]:
+    """What the 3D preview needs to draw a landmark over its building: the version in use, or the
+    newest version while none is in use (`in_use` tells which)."""
+    fp, src = rec["footprint"], rec.get("source") or {}
+    v = Library._version(rec, rec["in_use"]) if rec["in_use"] is not None else rec["versions"][-1]
+    return {
+        "id": rec["id"],
+        "building_id": rec["building_id"],
+        "name": rec["name"],
+        "geometry": fp["geometry"],
+        "centroid": fp["centroid"],
+        "bbox": fp["bbox"],
+        "height": fp["height"],
+        "layer": src.get("layer"),
+        "id_field": src.get("id_field"),
+        "parent_field": src.get("parent_field"),
+        "version": v["version"],
+        "in_use": rec["in_use"],
+        "original_name": v["original_name"],
+        "sha256": v["sha256"],
+        "size": v["size"],
+        "model": v["model"],
+        "placement": v["placement"],
     }
 
 
@@ -210,6 +248,24 @@ class Library:
             if src.get("path") and src["path"] not in seen and Path(src["path"]).is_file():
                 seen[src["path"]] = src
         return list(seen.values())
+
+    def render(self, path: Path) -> list[dict[str, Any]]:
+        """The landmarks registered from this PMTiles that have a GLB, by name: the version in use
+        is drawn, else the newest version (the manifest keeps the versions in use only)."""
+        recs = [r for r in self._records()
+                if r["versions"] and same_file((r.get("source") or {}).get("path"), path)]
+        recs.sort(key=lambda r: (r["name"] or r["building_id"]).casefold())
+        return [render_item(r) for r in recs]
+
+    def released(self, path: Path) -> list[dict[str, Any]]:
+        """The landmarks registered from this PMTiles with a version in use (records): those
+        cast their ground shadow from the GLB (app/landmark_shadow.py)."""
+        return [r for r in self._records()
+                if r["in_use"] is not None and same_file((r.get("source") or {}).get("path"), path)]
+
+    def source_paths(self) -> dict[str, str]:
+        """Landmark id -> the PMTiles it was registered from."""
+        return {r["id"]: (r.get("source") or {}).get("path") or "" for r in self._records()}
 
     def manifest(self) -> dict[str, Any]:
         """The version in use of every landmark, with its placement: the file to hand over."""

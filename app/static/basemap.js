@@ -1,6 +1,6 @@
-// Basemaps, the VMAP light presets and the map colours, shared by the 3D preview (preview.js) and
-// the landmark library (landmarks.js). Both pages carry the same controls: #baseSel, #vmapControls,
-// #presetSeg, #presetNote, #presetDownload and #baseNote.
+// Basemaps, the VMAP light presets and the map colours of the 3D preview (preview.js, its 3D and
+// diff modes). The page carries the controls: #baseSel, #vmapControls, #presetSeg, #presetNote,
+// #presetDownload and #baseNote.
 
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);

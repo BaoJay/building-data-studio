@@ -12,6 +12,7 @@ import threading
 import webbrowser
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import uvicorn
 from starlette.applications import Starlette
@@ -21,7 +22,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, landmark, landmark_library, osmbase, pipeline, probe, shadows, tools, vmap
+from . import __version__, diff, glb, landmark, landmark_library, landmark_shadow, osmbase, pipeline, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -318,15 +319,19 @@ async def building_shadows(request: Request) -> Response:
         if not light:
             raise shadows.ShadowError("Style không có khối light để lấy hướng nắng.")
         zoom = int(q["z"]) if q.get("z") and path.suffix.lower() == ".pmtiles" else None
+        layer = shadows.check_field(q.get("layer"), "layer") or ""
+        # Released landmarks of this file cast from their GLB instead of their LoD1 box.
+        landmarks, fallbacks = await _in_thread(landmark_shadow.released, library, path, preset)
         req = shadows.Request(
             path=path,
-            layer=shadows.check_field(q.get("layer"), "layer") or "",
+            layer=layer,
             zoom=zoom,
             bbox=shadows.parse_bbox(q.get("bbox", "")),
             height=height,
             base=shadows.check_field(q.get("base"), "đáy"),
             parts=shadows.check_field(q.get("parts"), "has_parts"),
             sun=shadows.Sun.from_light(light),
+            landmarks=tuple(lm for lm in landmarks if lm.layer in ("", layer)),
         )
         body, stats = await _in_thread(shadows.cached_compute, req)
     except ValueError as exc:  # ShadowError, bad z
@@ -339,7 +344,10 @@ async def building_shadows(request: Request) -> Response:
         "X-Shadow-Ms": str(stats["ms"]),
         "X-Sun-Azimuth": f"{req.sun.azimuth:g}",
         "X-Sun-Altitude": f"{req.sun.altitude:g}",
+        "X-Shadow-Landmarks": str(stats["landmarks"]),
     }
+    if fallbacks:  # landmarks that keep their LoD1 shadow, and why (UTF-8, percent-encoded)
+        headers["X-Shadow-Landmark-Errors"] = quote(" · ".join(fallbacks)[:2000])
     if q.get("download"):
         headers["Content-Disposition"] = f'attachment; filename="shadows-{preset}.geojson"'
     return Response(body, media_type="application/geo+json", headers=headers)
@@ -406,23 +414,51 @@ def _library_error(exc: ValueError) -> JSONResponse:
     return _error(str(exc), 404 if isinstance(exc, landmark_library.NotFound) else 400)
 
 
-async def landmarks_page(request: Request) -> Response:
-    return FileResponse(STATIC_DIR / "landmarks.html", headers=NO_CACHE)
+def _source_file(token: str) -> Path | None:
+    """The PMTiles behind a file token, or None when the token is unknown or its file is gone."""
+    path = registry.get(token)
+    return path if path is not None and path.is_file() else None
 
 
 async def list_landmarks(request: Request) -> Response:
-    """Every landmark (with its footprint) and the PMTiles they were registered from."""
+    """Every landmark (with its footprint) and the PMTiles they were registered from.
+
+    With ?f=<token>, each landmark also says whether it was registered from that PMTiles
+    (`same_source`) and, when its own PMTiles still exists, the token that opens it."""
     library.root.mkdir(parents=True, exist_ok=True)
     items = await _in_thread(library.list)
     sources = [{**s, "token": registry.register(Path(s["path"]))} for s in await _in_thread(library.sources)]
+    if request.query_params.get("f") is not None:
+        current = _source_file(request.query_params["f"])
+        paths = await _in_thread(library.source_paths)
+        tokens = {s["path"]: s["token"] for s in sources}
+        for item in items:
+            path = paths.get(item["id"], "")
+            item["same_source"] = current is not None and landmark_library.same_file(path, current)
+            item["source_token"] = tokens.get(path)
     base = (await _in_thread(base_status)).get("base")
     if base:
-        # The base comes first: new landmarks are registered on the same buildings as the 3D preview.
+        # The base comes first: the 3D preview opens it when no file is given.
         token = base["pmtiles_token"]
         sources = [{"token": token, "name": base["name"], "layer": "buildings", "id_field": "building_id",
                     "base": True, "view": base["view"]}, *(s for s in sources if s["token"] != token)]
     return JSONResponse({"dir": str(library.root), "dir_token": registry.register(library.root),
                          "landmarks": items, "sources": sources}, headers=NO_CACHE)
+
+
+async def render_landmarks(request: Request) -> Response:
+    """The landmarks of one PMTiles (?f=<token>) that have a GLB, for the 3D preview: footprint,
+    the version to draw (in use, else the newest), placement, model box and GLB URL. Landmarks
+    registered from another file are left out: the token is resolved to its path and compared
+    with each source.path."""
+    path = _source_file(request.query_params.get("f", ""))
+    if path is None:
+        return _error("File PMTiles không tồn tại.", 404)
+    items = await _in_thread(library.render, path)
+    for item in items:
+        item["glb"] = f"/api/landmarks/{item['id']}/versions/{item['version']}/glb"
+    return JSONResponse({"source": {"name": path.name, "token": request.query_params["f"]}, "landmarks": items},
+                        headers=NO_CACHE)
 
 
 async def register_landmark(request: Request) -> Response:
@@ -515,6 +551,29 @@ async def landmark_glb(request: Request) -> Response:
     return FileResponse(path, media_type="model/gltf-binary", headers={"Cache-Control": "max-age=31536000, immutable"})
 
 
+async def landmark_shadow_file(request: Request) -> Response:
+    """The ground shadow one version casts under a preset with sun (?preset=, default day), as
+    GeoJSON: computed from the GLB on first use (app/landmark_shadow.py)."""
+    preset = request.query_params.get("preset") or vmap.DEFAULT_PRESET
+    if preset not in vmap.PRESETS:
+        return _error(f"Không có preset {preset}.")
+    if vmap.PRESETS[preset].shadow is None:
+        return _error("Chế độ này không có nắng nên không đổ bóng.", 404)
+    lid, n = request.path_params["lid"], request.path_params["n"]
+
+    def cast() -> Path:
+        rec = library._read(lid)
+        return landmark_shadow.for_version(library.folder(lid), rec, library._version(rec, n), preset)
+
+    try:
+        path = await _in_thread(cast)
+    except (landmark_library.LibraryError, glb.GlbError, shadows.ShadowError) as exc:
+        return _library_error(exc)
+    except tools.ToolMissingError as exc:
+        return _error(str(exc), 500)
+    return FileResponse(path, media_type="application/geo+json", headers=NO_CACHE)
+
+
 async def set_landmark_placement(request: Request) -> Response:
     body = await _json(request)
     try:
@@ -537,8 +596,9 @@ async def use_landmark_version(request: Request) -> Response:
 
 
 async def landmarks_manifest(request: Request) -> Response:
-    """The version in use of every landmark with its placement (?download=1 saves it)."""
-    data = await _in_thread(library.manifest)
+    """The version in use of every landmark with its placement and its ground shadow per preset
+    with sun (?download=1 saves it)."""
+    data = await _in_thread(lambda: landmark_shadow.add_to_manifest(library, library.manifest()))
     headers = dict(NO_CACHE)
     if request.query_params.get("download"):
         headers["Content-Disposition"] = 'attachment; filename="landmarks-manifest.json"'
@@ -589,15 +649,16 @@ routes = [
     Route("/api/vmap/assets/{path:path}", vmap_asset),
     Route("/api/shadows", building_shadows),
     Route("/api/building", building_footprint),
-    Route("/landmarks", landmarks_page),
     Route("/api/landmarks", list_landmarks, methods=["GET"]),
     Route("/api/landmarks", register_landmark, methods=["POST"]),
     Route("/api/landmarks/manifest.json", landmarks_manifest),
+    Route("/api/landmarks/render", render_landmarks, methods=["GET"]),
     Route("/api/landmarks/{lid}", get_landmark, methods=["GET"]),
     Route("/api/landmarks/{lid}", edit_landmark, methods=["PATCH"]),
     Route("/api/landmarks/{lid}", delete_landmark, methods=["DELETE"]),
     Route("/api/landmarks/{lid}/versions", upload_landmark_version, methods=["PUT", "POST"]),
     Route("/api/landmarks/{lid}/versions/{n:int}/glb", landmark_glb, methods=["GET", "HEAD"]),
+    Route("/api/landmarks/{lid}/versions/{n:int}/shadow", landmark_shadow_file, methods=["GET"]),
     Route("/api/landmarks/{lid}/versions/{n:int}/placement", set_landmark_placement, methods=["PUT"]),
     Route("/api/landmarks/{lid}/use", use_landmark_version, methods=["POST"]),
     Mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static"),

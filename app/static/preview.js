@@ -1,5 +1,8 @@
-// PMTiles 3D preview — MapLibre fill-extrusion, same styling approach as the mobile app.
+// PMTiles 3D preview — MapLibre fill-extrusion, same styling approach as the mobile app — and the
+// landmark workspace: every landmark of this PMTiles drawn over its building, the library
+// in the drawer on the right (landmark-workspace.js, not loaded in diff mode).
 /* global maplibregl, pmtiles */
+import { extrusionFilter, matchBuildings } from "/static/landmark-store.js";
 import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, recall, remember, vmap, vmapPreset } from "/static/basemap.js";
 
 const $ = (s) => document.querySelector(s);
@@ -11,14 +14,14 @@ const params = new URLSearchParams(location.search);
 let token = params.get("f");  // no f: the base of the city (see main)
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
 const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
-// Landmark check (landmark.js, loaded on demand): the building whose extrusion a GLB replaces,
-// and where the user last clicked (the server looks for the building around it).
-const landmark = { module: null, loading: false, hidden: null, clicked: null };
+// The landmark workspace (landmark-workspace.js), once loaded.
+const landmark = { ws: null, failed: false };
 
 // ------------------------------------------------------------------ shadows (prototype)
 // Ground shadows precomputed on the server (app/shadows.py) for the area around the view,
 // cast along the sun of the light preset (day sun on the other basemaps). Drawn as one
-// dissolved fill under the labels and the buildings.
+// dissolved fill under the labels and the buildings. A landmark with a version in use casts from
+// its GLB mesh instead of its LoD1 box (app/landmark_shadow.py); night and dark cast none.
 const SHADOW_MINZOOM = 15;
 // A convert output with shadows carries them as this layer (one set per preset, `preset` field).
 const SHADOW_LAYER = "shadows";
@@ -63,9 +66,10 @@ async function updateShadows(map) {
   if (why) {
     shadow.seq++;
     note(why.trim());
-    if (map.getLayer("bldg-shadow")) map.setLayoutProperty("bldg-shadow", "visibility", "none");
+    ["bldg-shadow", "lmk-shadow"].forEach((id) => { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none"); });
     return;
   }
+  const released = landmark.ws ? landmark.ws.released() : [];
   if (state.bakedShadows) {
     // Shadows shipped in the PMTiles: the same layer + filter the mobile app would use.
     if (!map.getLayer("bldg-shadow")) {
@@ -76,13 +80,18 @@ async function updateShadows(map) {
     map.setPaintProperty("bldg-shadow", "fill-color", look.color);
     map.setPaintProperty("bldg-shadow", "fill-opacity", look.opacity);
     map.setLayoutProperty("bldg-shadow", "visibility", "visible");
-    note(`Bóng có sẵn trong file (layer ${SHADOW_LAYER}, z${state.bakedShadows.minzoom ?? "?"}–${state.bakedShadows.maxzoom ?? "?"}), lọc theo preset = "${shadowPresetId()}" như trên app.`);
+    note(`Bóng có sẵn trong file (layer ${SHADOW_LAYER}, z${state.bakedShadows.minzoom ?? "?"}–${state.bakedShadows.maxzoom ?? "?"}), lọc theo preset = "${shadowPresetId()}" như trên app.`
+      + (released.length ? ` ${released.length} landmark đổ bóng theo GLB đè lên, bóng hộp LoD1 của chúng trong file vẫn nằm dưới.` : ""));
+    showLandmarkShadows(map, look, released);
     return;
   }
 
   const params = new URLSearchParams({ f: token, layer: state.layer, z: String(state.maxzoom), h: state.heightAttr, preset: shadowPresetId() });
   if (state.baseAttr) params.set("base", state.baseAttr);
   if (!$("#hideParentsWrap").hidden && $("#hideParents").checked) params.set("parts", "has_parts");
+  // Not read by the server (it finds the released landmarks itself): a release or a placement
+  // saved changes the key, so the shadows are asked for again.
+  if (landmark.ws) params.set("lm", landmark.ws.shadowRev());
   const key = params.toString();
   const [w, s, e, n] = viewBbox(map, 0, 0.6);
   const have = shadow.key === key && shadow.bbox && shadow.bbox[0] <= w && shadow.bbox[1] <= s && shadow.bbox[2] >= e && shadow.bbox[3] >= n;
@@ -105,10 +114,14 @@ async function updateShadows(map) {
     if (seq !== shadow.seq) return;
     const az = Number(res.headers.get("X-Sun-Azimuth"));
     const alt = Number(res.headers.get("X-Sun-Altitude"));
+    const lms = Number(res.headers.get("X-Shadow-Landmarks") || 0);
+    const lmErrors = res.headers.get("X-Shadow-Landmark-Errors");
     Object.assign(shadow, {
       key, bbox, data,
       info: `Nắng từ hướng ${COMPASS[Math.round(az / 45) % 8]}, cao ${alt}° → bóng dài ${(1 / Math.tan((alt * Math.PI) / 180)).toFixed(2)}× chiều cao. `
-        + `${Number(res.headers.get("X-Shadow-Buildings")).toLocaleString("vi-VN")} building, ${res.headers.get("X-Shadow-Ms")} ms. Kéo ra ngoài vùng này sẽ tự tính lại.`,
+        + `${Number(res.headers.get("X-Shadow-Buildings")).toLocaleString("vi-VN")} building, ${res.headers.get("X-Shadow-Ms")} ms`
+        + `${lms ? ` · ${lms} landmark đổ bóng theo GLB` : ""}. Kéo ra ngoài vùng này sẽ tự tính lại.`
+        + `${lmErrors ? ` Giữ bóng LoD1: ${decodeURIComponent(lmErrors)}` : ""}`,
       download: `/api/shadows?${params}&download=1`,
     });
   }
@@ -116,6 +129,32 @@ async function updateShadows(map) {
   note(shadow.info);
   $("#shadowDownload").href = shadow.download;
   $("#shadowDownloadRow").hidden = false;
+}
+
+// Baked shadows: the GLB shadow of each released landmark drawn over the file's own layer, with
+// the same look. (On the fly, the server dissolves them into the area instead.)
+const lmkShadow = { key: null, seq: 0 };
+async function showLandmarkShadows(map, look, released) {
+  const preset = shadowPresetId();
+  const key = `${preset}|${landmark.ws?.shadowRev() ?? ""}`;
+  if (lmkShadow.key !== key || !map.getSource("lmk-shadow")) {  // a style switch drops the source
+    const seq = ++lmkShadow.seq;
+    const files = await Promise.all(released.map((l) => fetch(`/api/landmarks/${encodeURIComponent(l.id)}/versions/${l.version}/shadow?preset=${preset}`)
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+    if (seq !== lmkShadow.seq) return;
+    const data = { type: "FeatureCollection", features: files.flatMap((f) => f?.features || []) };
+    if (map.getSource("lmk-shadow")) map.getSource("lmk-shadow").setData(data);
+    else map.addSource("lmk-shadow", { type: "geojson", data });
+    lmkShadow.key = key;
+  }
+  if (!map.getLayer("lmk-shadow") && map.getSource("lmk-shadow")) {
+    const before = map.getStyle().layers.find((l) => l.type === "symbol" && l.layout?.["text-field"])?.id;
+    map.addLayer({ id: "lmk-shadow", type: "fill", source: "lmk-shadow", paint: { "fill-antialias": false } }, before);
+  }
+  if (!map.getLayer("lmk-shadow")) return;
+  map.setPaintProperty("lmk-shadow", "fill-color", look.color);
+  map.setPaintProperty("lmk-shadow", "fill-opacity", look.opacity);
+  map.setLayoutProperty("lmk-shadow", "visibility", "visible");
 }
 
 function showShadow(map, look) {
@@ -137,8 +176,8 @@ function showShadow(map, look) {
   map.setLayoutProperty("bldg-shadow", "visibility", "visible");
 }
 
-// The OSM buildings of the city built by app/osmbase.py, shown when no file is given: the same
-// buildings the landmark library opens on.
+// The OSM buildings of the city built by app/osmbase.py, shown when no file is given: the
+// buildings new landmarks are registered on by default.
 async function loadBase() {
   const st = await fetch("/api/base").then((r) => r.json()).catch(() => null);
   if (st?.base) return st.base;
@@ -181,6 +220,7 @@ async function main() {
   state.bakedShadows = (meta.vector_layers || []).find((l) => l.id === SHADOW_LAYER && "preset" in (l.fields || {})) || null;
   const layers = (meta.vector_layers || []).map((l) => l.id).filter((id) => !(state.bakedShadows && id === SHADOW_LAYER));
   const name = params.get("name") || base?.name || meta.name || "PMTiles";
+  state.name = name;
   document.title = `${name} — 3D`;
   $("#title").textContent = name;
   $("#meta").textContent = `z${header.minZoom}–${header.maxZoom} · ${layers.length} layer${state.bakedShadows ? " + layer bóng" : ""}${meta.generator ? ` · ${meta.generator}` : ""}`;
@@ -215,8 +255,8 @@ async function main() {
 
   map.on("load", () => {
     selectLayer(map, meta, layers[0]);
-    focusSelected(map, hasCenter ? center : null);
-    syncLandmarkUI(map);
+    updateZoomUI(map);
+    openWorkspace(map);
   });
   map.on("zoom", () => updateZoomUI(map));
   map.on("moveend", () => updateZoomUI(map));
@@ -228,7 +268,7 @@ async function main() {
 
   // Picking the mobile basemap also switches the buildings to the mobile look. A switch made
   // before the first "load" leaves the building layers to selectLayer (no layer chosen yet).
-  bindBasemapControls(map, () => bldgSource, () => { if (!state.layer) return; addBuildingLayers(map); applyStyle(map); landmark.module?.ensureLayers(); }, (key) => {
+  bindBasemapControls(map, () => bldgSource, () => { if (!state.layer) return; addBuildingLayers(map); applyStyle(map); landmark.ws?.ensureLayers(); }, (key) => {
     if (key === "vmap" && $("#colorSel").querySelector('option[value="mobile"]')) {
       state.colorBy = "mobile";
       $("#colorSel").value = "mobile";
@@ -244,58 +284,75 @@ async function main() {
   $("#colorSel").addEventListener("change", (e) => { state.colorBy = e.target.value; applyStyle(map); });
   $("#threeD").addEventListener("change", () => applyStyle(map));
   $("#hideParents").addEventListener("change", () => applyStyle(map));
-  $("#collapseBtn").addEventListener("click", () => {
-    const p = $("#panel");
-    p.classList.toggle("collapsed");
-    $("#collapseBtn").textContent = p.classList.contains("collapsed") ? "Mở" : "Thu gọn";
-  });
-  $("#lmkControls").addEventListener("toggle", () => { if ($("#lmkControls").open) openLandmark(map); });
+  $("#collapseBtn").addEventListener("click", () => setPanelCollapsed(!$("#panel").classList.contains("collapsed")));
+  bindDrawer(map);
 }
 
-// ------------------------------------------------------------------ landmark (GLB) check
-// The section loads landmark.js (and three.js) the first time it is opened.
-async function openLandmark(map) {
-  if (landmark.module || landmark.loading) return;
-  landmark.loading = true;
-  $("#lmkStatus").textContent = "Đang tải three.js…";
+// ------------------------------------------------------------------ landmark workspace
+// Loads landmark-workspace.js (and three.js) once the building layers are up.
+async function openWorkspace(map) {
   try {
-    const mod = await import("/static/landmark.js");
-    landmark.module = mod.init({
+    const mod = await import("/static/landmark-workspace.js");
+    landmark.ws = mod.create({
       map,
       token,
+      params,
       state,
-      ready: () => Boolean(state.layer && state.idCol),
-      selectedId: () => state.selected,
-      lookAt: (id) => (id === state.selected && landmark.clicked) || map.getCenter(),
-      setHidden: (id) => { landmark.hidden = id; applyStyle(map); },
+      name: () => state.name,
+      threeD: () => $("#threeD").checked,
+      palette: () => palette(mapTheme()),
       buildingFilter: (id) => ["all", partsFilter() || true, matchBuilding(id)],
       referenceColor: () => (state.colorBy === "mobile" && mobileBuilding() ? mobileBuilding().color : palette(mapTheme()).plain),
-      libraryUrl: (id) => {
-        const q = new URLSearchParams({ f: token, name: params.get("name") || document.title.replace(/ — 3D$/, "") });
-        if (state.idCol) q.set("idcol", state.idCol);
-        if (id) {
-          // Where to look for it: the library reads its footprint around this point.
-          const c = (id === state.selected && landmark.clicked) || map.getCenter();
-          q.set("id", id);
-          q.set("lon", c.lng.toFixed(7));
-          q.set("lat", c.lat.toFixed(7));
-        }
-        return `/landmarks?${q}`;
+      select: (id) => {
+        if (id === state.selected) return;
+        state.selected = id;
+        applyStyle(map);
+      },
+      syncExtrusions: () => syncExtrusions(map),
+      syncShadows: () => { if (state.layer) syncShadows(map); },
+      restyle: () => { if (state.layer) applyStyle(map); },
+      openDrawer: () => setDrawer(map, true),
+      previewUrl: (f, name, lm) => {
+        const q = new URLSearchParams();
+        if (f) q.set("f", f);
+        if (name) q.set("name", name);
+        if (lm) q.set("lm", lm);
+        return `/preview${q.size ? `?${q}` : ""}`;
       },
     });
-    $("#lmkStatus").textContent = "";
+    window.lmWorkspace = landmark.ws;
+    await landmark.ws.start();
   } catch (err) {
-    $("#lmkStatus").textContent = `Không tải được phần xem landmark: ${err.message}`;
-  } finally {
-    landmark.loading = false;
+    landmark.failed = true;
+    $("#lmBody").innerHTML = `<div class="alert bad"><span class="icon">!</span><div>Không tải được phần landmark: ${esc(err.message)}</div></div>`;
   }
 }
 
-function syncLandmarkUI(map) {
-  $("#lmkControls").hidden = !state.idCol;
-  $("#lmkIdLabel").textContent = state.idCol || "building_id";
-  if (landmark.module) landmark.module.syncButtons();
-  else if ($("#lmkControls").open) openLandmark(map);
+// The drawer on the right: open or closed (remembered per browser), the map takes the room left.
+// Closed by default on phones, where it is a bottom sheet over the map.
+function bindDrawer(map) {
+  const wanted = params.has("lm") || params.has("id");
+  const saved = recall("drawer");
+  const phone = window.matchMedia("(max-width: 640px)").matches;
+  setDrawer(map, wanted || (saved ? saved === "1" : !phone), false);
+  $("#drawerOpen").addEventListener("click", () => setDrawer(map, true));
+  $("#drawerClose").addEventListener("click", () => setDrawer(map, false));
+}
+
+function setDrawer(map, open, save = true) {
+  if ($("#lmDrawer").hidden !== open) return;
+  $("#lmDrawer").hidden = !open;
+  $("#drawerOpen").hidden = open;
+  $("#drawerOpen").setAttribute("aria-expanded", String(open));
+  if (save) remember("drawer", open ? "1" : "0");
+  // On a phone the panel folds away while the sheet is open, so some map stays to work on.
+  if (open && window.matchMedia("(max-width: 640px)").matches) setPanelCollapsed(true);
+  map.resize();
+}
+
+function setPanelCollapsed(collapsed) {
+  $("#panel").classList.toggle("collapsed", collapsed);
+  $("#collapseBtn").textContent = collapsed ? "Mở" : "Thu gọn";
 }
 
 // The building itself, or one of its parts.
@@ -341,6 +398,7 @@ function selectLayer(map, meta, layerId) {
 
   addBuildingLayers(map);
   applyStyle(map);
+  landmark.ws?.layerChanged();
 }
 
 function addBuildingLayers(map) {
@@ -386,6 +444,12 @@ function colorExpression() {
     expr = pal.plain;
     legend = "";
   }
+  const pending = landmark.ws && state.idCol ? landmark.ws.pending() : [];
+  if (pending.length) {
+    // Landmarks without a GLB yet keep their extrusion: coloured apart, to be found and clicked.
+    expr = ["case", matchBuildings(pending, state.idCol, state.parentAttr), pal.accent, expr];
+    legend += item(pal.accent, "Landmark chưa có GLB (click để upload)");
+  }
   if (state.selected && state.idCol) {
     // Also light up the parts of a multi-part building (its outline may be hidden).
     expr = ["case", matchBuilding(state.selected), pal.highlight, expr];
@@ -395,6 +459,14 @@ function colorExpression() {
 
 function item(color, label) {
   return `<div class="item"><span class="sw" style="background:${color}"></span>${esc(label)}</div>`;
+}
+
+// The LoD1 extrusions: outlines with parts hidden (has_parts), and the buildings a landmark model
+// stands on (parts included) left out once its GLB has loaded.
+function syncExtrusions(map) {
+  if (!map.getLayer("bldg-3d")) return;
+  const hidden = landmark.ws ? landmark.ws.hidden() : [];
+  map.setFilter("bldg-3d", extrusionFilter({ parts: partsFilter(), hidden, idCol: state.idCol, parentAttr: state.parentAttr }));
 }
 
 function applyStyle(map) {
@@ -415,48 +487,41 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-2d", "fill-color", expr);
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
-  // A placed landmark replaces the extrusion of its building (parts included). Its ground
-  // shadow (bldg-shadow) stays.
-  const replaced = landmark.hidden && state.idCol ? ["!", matchBuilding(landmark.hidden)] : null;
-  map.setFilter("bldg-3d", replaced && filter ? ["all", filter, replaced] : replaced || filter);
-  landmark.module?.syncReference();
+  // A landmark model replaces the extrusion of its building (parts included). With a version
+  // in use its ground shadow is cast from the GLB, else it keeps its LoD1 box's (syncShadows).
+  syncExtrusions(map);
   map.setLayoutProperty("bldg-3d", "visibility", threeD ? "visible" : "none");
   map.setLayoutProperty("bldg-2d", "visibility", threeD ? "none" : "visible");
   map.setLayoutProperty("bldg-line", "visibility", threeD ? "none" : "visible");
   if (!threeD && map.getPitch() > 0) map.easeTo({ pitch: 0 });
   if (threeD && map.getPitch() < 20) map.easeTo({ pitch: 55 });
+  landmark.ws?.styleChanged();
   syncShadows(map);
 }
 
+// A landmark (its model or footprint) opens in the drawer; a building opens there with its
+// attributes (a popup until the workspace is loaded, or when it could not be).
 function onClick(map, e) {
+  if (landmark.ws?.onClick(e)) return;
   const feats = map.queryRenderedFeatures(e.point, { layers: ["bldg-3d", "bldg-2d"].filter((id) => map.getLayoutProperty(id, "visibility") !== "none") });
   if (!feats.length) return;
-  const f = feats[0];
-  landmark.clicked = e.lngLat;
-  if (state.idCol && f.properties[state.idCol] != null) {
-    state.selected = String(f.properties[state.idCol]);
-    applyStyle(map);
-    landmark.module?.syncButtons();
+  const props = feats[0].properties;
+  const id = state.idCol && props[state.idCol] != null ? String(props[state.idCol]) : null;
+  if (landmark.ws && id) {
+    const parent = state.parentAttr && props[state.parentAttr] != null && String(props[state.parentAttr]) !== id ? String(props[state.parentAttr]) : null;
+    landmark.ws.onBuilding({ id, parent, lngLat: e.lngLat, props });
+    return;
   }
-  showPopup(map, e.lngLat, f.properties);
+  if (id) {
+    state.selected = id;
+    applyStyle(map);
+  }
+  showPopup(map, e.lngLat, props);
 }
 
 function showPopup(map, lngLat, props) {
   const rows = Object.entries(props).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("");
   new maplibregl.Popup({ maxWidth: "380px" }).setLngLat(lngLat).setHTML(`<table class="props">${rows}</table>`).addTo(map);
-}
-
-function focusSelected(map, center) {
-  updateZoomUI(map);
-  if (!center || !state.selected || !state.idCol) return;
-  // Once tiles around the target are loaded, open the popup of the requested building.
-  map.once("idle", () => {
-    const feats = map.querySourceFeatures("bldg", {
-      sourceLayer: state.layer,
-      filter: ["==", ["to-string", ["get", state.idCol]], state.selected],
-    });
-    if (feats.length) showPopup(map, center, feats[0].properties);
-  });
 }
 
 function updateZoomUI(map) {
@@ -495,7 +560,6 @@ async function mainDiff(url, header, meta) {
   $("#meta").textContent = `Bản đồ diff A → B · building từ zoom ${header.minZoom}`;
   $("#colorField").hidden = true;
   $("#shadowControls").hidden = true;
-  $("#lmkControls").hidden = true;
   $("#diffControls").hidden = false;
   $("#threeD").checked = false;
   $("#panelHint").textContent = "Click building hoặc ô lưới để xem chi tiết. Lưới mờ dần khi phóng to. Bản đồ nền cần internet.";

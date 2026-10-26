@@ -5,6 +5,9 @@ cannot decode (three.js there runs without Draco / meshopt / KTX2 decoders). The
 three.js computes for the preview (Box3.setFromObject): each primitive's POSITION min / max
 (dequantised when normalised), its 8 corners through the node's world matrix, and the
 axis-aligned box of the lot. glTF units are metres, +Y up.
+
+triangles() reads the geometry itself (positions and indices of the BIN chunk), for the ground
+shadow a landmark casts (app/landmark_shadow.py).
 """
 
 from __future__ import annotations
@@ -13,10 +16,11 @@ import json
 import math
 import struct
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 MAGIC = b"glTF"
 JSON_CHUNK = 0x4E4F534A
+BIN_CHUNK = 0x004E4942
 TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN = 4, 5, 6
 # Extensions whose data the preview cannot decode: the model would not show.
 UNREADABLE = {
@@ -34,8 +38,8 @@ class GlbError(ValueError):
     pass
 
 
-def read_json(path: Path) -> dict[str, Any]:
-    """The glTF JSON of a .glb (its first chunk)."""
+def read_glb(path: Path, with_bin: bool = False) -> tuple[dict[str, Any], bytes]:
+    """The glTF JSON of a .glb (its first chunk) and, with `with_bin`, its BIN chunk (b"" if none)."""
     with path.open("rb") as fh:
         header = fh.read(12)
         if len(header) < 12 or header[:4] != MAGIC:
@@ -52,13 +56,27 @@ def read_json(path: Path) -> dict[str, Any]:
         data = fh.read(size)
         if len(data) < size:
             raise GlbError("File GLB bị cắt cụt.")
+        binary = b""
+        if with_bin:
+            chunk = fh.read(8)
+            if len(chunk) == 8:
+                size, kind = struct.unpack("<II", chunk)
+                if kind == BIN_CHUNK:
+                    binary = fh.read(size)
+                    if len(binary) < size:
+                        raise GlbError("File GLB bị cắt cụt.")
     try:
         gltf = json.loads(data)
     except ValueError as exc:
         raise GlbError(f"Không đọc được JSON trong GLB: {exc}") from None
     if not isinstance(gltf, dict):
         raise GlbError("JSON trong GLB không phải một object glTF.")
-    return gltf
+    return gltf, binary
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    """The glTF JSON of a .glb (its first chunk)."""
+    return read_glb(path)[0]
 
 
 def node_matrix(node: dict[str, Any]) -> list[float]:
@@ -116,19 +134,24 @@ def _triangles(primitive: dict[str, Any], accessors: list[dict[str, Any]]) -> in
     return 0  # points / lines
 
 
+def _roots(gltf: dict[str, Any]) -> list[int]:
+    """Root nodes of the default scene (every parentless node when there is no scene)."""
+    nodes = gltf.get("nodes") or []
+    scenes = gltf.get("scenes") or []
+    if scenes:
+        index = gltf.get("scene", 0)
+        return (scenes[index] if isinstance(index, int) and 0 <= index < len(scenes) else scenes[0]).get("nodes") or []
+    children = {c for n in nodes for c in n.get("children") or []}
+    return [i for i in range(len(nodes)) if i not in children]
+
+
 def inspect(path: Path) -> dict[str, Any]:
     """Counts, box and unreadable extensions of the default scene of a .glb."""
     gltf = read_json(path)
     nodes = gltf.get("nodes") or []
     meshes = gltf.get("meshes") or []
     accessors = gltf.get("accessors") or []
-    scenes = gltf.get("scenes") or []
-    if scenes:
-        index = gltf.get("scene", 0)
-        roots = (scenes[index] if isinstance(index, int) and 0 <= index < len(scenes) else scenes[0]).get("nodes") or []
-    else:
-        children = {c for n in nodes for c in n.get("children") or []}
-        roots = [i for i in range(len(nodes)) if i not in children]
+    roots = _roots(gltf)
 
     lo = [math.inf] * 3
     hi = [-math.inf] * 3
@@ -171,3 +194,99 @@ def inspect(path: Path) -> dict[str, Any]:
         "unreadable": sorted({label for ext, label in UNREADABLE.items() if ext in used}),
         "generator": str((gltf.get("asset") or {}).get("generator") or ""),
     }
+
+
+# ------------------------------------------------------------------ triangles
+
+# struct code and size of each accessor.componentType
+COMPONENTS = {5120: ("b", 1), 5121: ("B", 1), 5122: ("h", 2), 5123: ("H", 2), 5125: ("I", 4), 5126: ("f", 4)}
+
+
+def _accessor(gltf: dict[str, Any], binary: bytes, index: Any, width: int) -> list[tuple[float, ...]]:
+    """The values of an accessor read from the BIN chunk: `width` components each, dequantised
+    when normalised."""
+    accessors = gltf.get("accessors") or []
+    if not isinstance(index, int) or not 0 <= index < len(accessors):
+        raise GlbError("Accessor không tồn tại.")
+    acc = accessors[index]
+    if "sparse" in acc:
+        raise GlbError("GLB dùng sparse accessor: chưa đọc được hình học để đổ bóng.")
+    code, size = COMPONENTS.get(acc.get("componentType"), (None, 0))
+    count = int(acc.get("count", 0))
+    if code is None:
+        raise GlbError("Kiểu dữ liệu accessor không hợp lệ.")
+    if "bufferView" not in acc:
+        return [(0.0,) * width] * count  # glTF: no bufferView means all zeros
+    views = gltf.get("bufferViews") or []
+    view = views[acc["bufferView"]] if isinstance(acc["bufferView"], int) and 0 <= acc["bufferView"] < len(views) else None
+    if view is None or view.get("buffer", 0) != 0:
+        raise GlbError("bufferView không trỏ vào BIN chunk của GLB.")
+    start = int(view.get("byteOffset", 0)) + int(acc.get("byteOffset", 0))
+    stride = int(view.get("byteStride") or size * width)
+    end = start + stride * (count - 1) + size * width if count else start
+    if end > len(binary) or end > int(view.get("byteOffset", 0)) + int(view.get("byteLength", 0)):
+        raise GlbError("Accessor vượt ra ngoài dữ liệu của GLB.")
+    fmt = struct.Struct(f"<{width}{code}")
+    values = [fmt.unpack_from(binary, start + i * stride) for i in range(count)]
+    top = NORMALIZED_MAX.get(acc.get("componentType")) if acc.get("normalized") else None
+    if top:
+        values = [tuple(max(v / top, -1.0) for v in row) for row in values]
+    return values
+
+
+def _faces(mode: int, indices: list[int]) -> Iterator[tuple[int, int, int]]:
+    if mode == TRIANGLES:
+        for i in range(0, len(indices) - 2, 3):
+            yield indices[i], indices[i + 1], indices[i + 2]
+    elif mode == TRIANGLE_STRIP:
+        for i in range(len(indices) - 2):
+            a, b, c = indices[i:i + 3]
+            yield (a, b, c) if i % 2 == 0 else (b, a, c)
+    elif mode == TRIANGLE_FAN:
+        for i in range(1, len(indices) - 1):
+            yield indices[0], indices[i], indices[i + 1]
+
+
+Point = tuple[float, float, float]
+
+
+def triangles(path: Path) -> Iterator[tuple[Point, Point, Point]]:
+    """Every triangle of the default scene of a .glb, its vertices in the glTF root frame
+    (node matrices applied, metres, +Y up): what the 3D preview draws. Raises GlbError when the
+    geometry cannot be read (Draco / meshopt, sparse accessors, broken buffers)."""
+    gltf, binary = read_glb(path, with_bin=True)
+    used = set(gltf.get("extensionsUsed") or []) | set(gltf.get("extensionsRequired") or [])
+    packed = sorted({label for ext, label in UNREADABLE.items() if ext in used and label != "KTX2 / Basis"})
+    if packed:
+        raise GlbError(f"GLB nén {', '.join(packed)}: chưa đọc được hình học để đổ bóng.")
+    nodes = gltf.get("nodes") or []
+    meshes = gltf.get("meshes") or []
+    seen: set[int] = set()
+
+    def walk(i: int, parent: list[float]) -> Iterator[tuple[Point, Point, Point]]:
+        if not isinstance(i, int) or not 0 <= i < len(nodes) or i in seen:
+            return
+        seen.add(i)
+        node = nodes[i]
+        world = multiply(parent, node_matrix(node))
+        mesh = node.get("mesh")
+        if isinstance(mesh, int) and 0 <= mesh < len(meshes):
+            for prim in meshes[mesh].get("primitives") or []:
+                mode = prim.get("mode", TRIANGLES)
+                pos = (prim.get("attributes") or {}).get("POSITION")
+                if mode not in (TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN) or pos is None:
+                    continue  # points / lines cast no shadow
+                points = [transform(world, p) for p in _accessor(gltf, binary, pos, 3)]
+                if "indices" in prim:
+                    indices = [int(v[0]) for v in _accessor(gltf, binary, prim["indices"], 1)]
+                else:
+                    indices = list(range(len(points)))
+                for a, b, c in _faces(mode, indices):
+                    if max(a, b, c) < len(points):
+                        yield points[a], points[b], points[c]
+        for child in node.get("children") or []:
+            yield from walk(child, world)
+        seen.discard(i)
+
+    for root in _roots(gltf):
+        yield from walk(root, IDENTITY)

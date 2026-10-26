@@ -6,7 +6,7 @@
 /* global maplibregl, pmtiles */
 import { $, api, esc, fmtBytes, fmtInt, fmtNum, reveal, toast } from "/static/util.js";
 import { basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, reloadBasemap } from "/static/basemap.js";
-import { LandmarkLayer } from "/static/landmark-model.js";
+import { LandmarkLayer, disposeModel, parseModel } from "/static/landmark-model.js";
 
 const HEIGHT_ATTRS = ["h_m", "height_m", "height", "render_height"];
 const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
@@ -37,6 +37,7 @@ const state = {
 };
 let map;
 let glb;  // LandmarkLayer
+let model = null;  // the GLB of the version shown, parsed
 let marker;  // the anchor of the version shown, draggable
 let loadChain = Promise.resolve();
 const protocol = new pmtiles.Protocol();
@@ -175,7 +176,7 @@ function applyStyle() {
   const pal = palette(mapTheme());
   const sel = ["==", ["get", "id"], state.rec?.id ?? ""];
   // The landmark whose model stands on the map: its building is not drawn under it.
-  const shown = state.rec && glb.model && state.draft ? state.rec : null;
+  const shown = state.rec && model && state.draft ? state.rec : null;
   map.setPaintProperty("lm-fp-fill", "fill-color", ["case", sel, pal.accent, pal.ochre]);
   map.setPaintProperty("lm-fp-line", "line-color", ["case", sel, pal.highlight, pal.ochre]);
   map.setPaintProperty("lm-fp-line", "line-width", ["case", sel, 2.5, 1.2]);
@@ -304,7 +305,7 @@ function closeDetail() {
 function clearModel() {
   stopPicking();
   Object.assign(state, { preview: null, draft: null, loadNote: "" });
-  glb.clear();
+  clearGlb();
   syncMarker();
 }
 
@@ -314,7 +315,7 @@ function showVersion(n) {
   const v = version(n);
   Object.assign(state, { preview: v ? n : null, draft: v ? { ...v.placement } : null, loadNote: v ? `Đang tải v${n}…` : "" });
   stopPicking();
-  if (!v) glb.clear();
+  if (!v) clearGlb();
   syncMarker();
   renderDetail();
   applyStyle();
@@ -327,11 +328,13 @@ function showVersion(n) {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
       const buf = await res.arrayBuffer();
       if (state.rec?.id !== lid || state.preview !== n) return;
-      await glb.load(buf, v.original_name);
-      glb.setPlacement(state.draft);
+      const parsed = await parseModel(buf, v.original_name);
+      clearGlb();
+      model = parsed;
+      glb.update();
       state.loadNote = "";
     } catch (err) {
-      glb.clear();
+      clearGlb();
       state.loadNote = err.message;
     }
     syncMarker();
@@ -353,8 +356,14 @@ function isDirty() {
 function setDraft(patch) {
   if (!state.draft) return;
   state.draft = { ...state.draft, ...patch };
-  glb.setPlacement(glb.model ? state.draft : null);
+  map.triggerRepaint();
   syncMarker();
+}
+
+function clearGlb() {
+  disposeModel(model);
+  model = null;
+  map?.triggerRepaint();
 }
 
 function syncMarker() {
@@ -729,7 +738,7 @@ async function savePlacement() {
   }
   state.rec = rec;
   state.draft = { ...version(n).placement };
-  glb.setPlacement(glb.model ? state.draft : null);
+  map.triggerRepaint();
   syncMarker();
   toast(`Đã lưu placement v${n}.`);
   renderDetail();
@@ -876,7 +885,10 @@ async function main() {
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
   map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
   window.map = map;
-  glb = new LandmarkLayer(map, { before: () => (map.getLayer("bldg-3d") ? "bldg-3d" : "lm-fp-line") });
+  glb = new LandmarkLayer(map, {
+    before: () => (map.getLayer("bldg-3d") ? "bldg-3d" : "lm-fp-line"),
+    models: () => (model && state.draft ? [{ model, placement: state.draft }] : []),
+  });
 
   map.on("load", () => {
     addLayers();

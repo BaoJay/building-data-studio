@@ -477,19 +477,34 @@ body.resizing-panel { cursor: ew-resize; user-select: none; }
 #diffControls { display: grid; gap: var(--space-3); }
 .legend label.item { cursor: pointer; }
 .legend .n { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink-2); }
-/* Landmark 3D (GLB) trong trang xem 3D */
+/* ---------- workspace 3D (/preview): bản đồ | drawer landmark ---------- */
+body.ws-page { display: flex; }
+.ws-map { position: relative; flex: 1 1 auto; min-width: 0; height: 100%; }
+.drawer {
+  flex: none; width: 440px; max-width: 48vw; height: 100%; z-index: 7;
+  display: grid; grid-template-rows: auto minmax(0, 1fr);
+  background: var(--surface); border-left: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
+}
+.drawer[hidden] { display: none; }
+.drawer-head { display: flex; align-items: baseline; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
+.drawer-head h2 { margin: 0; font: 600 18px/24px var(--font-serif); }
+.drawer-head .btn { margin-left: auto; }
+.drawer-body { min-height: 0; overflow: auto; padding: var(--space-4); display: grid; gap: var(--space-5); align-content: start; }
+.drawer-open { position: absolute; top: 10px; right: 52px; z-index: 6; box-shadow: var(--shadow-float); }
+.lm-items button.lm-other .nm { color: var(--ink-2); font-weight: 500; }
+
+/* Landmark: QA ánh sáng trong drawer */
 details.lmk { border-top: 1px solid var(--line); padding-top: var(--space-2); }
 .lmk-body { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
 details.lmk > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 details.lmk input[type="file"] { font-size: 12.5px; max-width: 100%; }
 .lmk-info { display: grid; gap: var(--space-1); }
-.lmk-status.warn, .lmk-info .warn { color: var(--warn-ink); }
+.lmk-info .warn { color: var(--warn-ink); }
 .lmk-swatches { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
 .lmk-sw { display: inline-flex; align-items: center; gap: 4px; }
 .lmk-sw i { width: 12px; height: 12px; flex: none; border: 1px solid var(--line); }
 details.lmk-uniforms summary { cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
 details.lmk-uniforms pre { margin: var(--space-1) 0 0; font: 11.5px/1.45 var(--font-mono); white-space: pre-wrap; color: var(--ink-2); }
-.lmk-lib { display: grid; gap: var(--space-1); }
 
 /* ---------- thư viện landmark (/landmarks): danh sách | bản đồ | chi tiết ---------- */
 body.lm-page { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
@@ -550,9 +565,9 @@ body.lm-page { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 
 .lm-title-row { display: flex; align-items: start; justify-content: space-between; gap: var(--space-2); }
 .lm-title { margin: 0; font: 600 21px/28px var(--font-serif); overflow-wrap: anywhere; }
 .lm-title.mono { font: 500 16px/24px var(--font-mono); }
-.lm-detail input[type="file"] { font-size: 12.5px; max-width: 100%; }
-.lm-detail input[type="radio"] { accent-color: var(--accent); margin: 0 8px 0 0; vertical-align: -2px; }
-.lm-detail .kv { font-size: 13px; }
+.lm-detail input[type="file"], .drawer-body input[type="file"] { font-size: 12.5px; max-width: 100%; }
+.lm-detail input[type="radio"], .drawer-body input[type="radio"] { accent-color: var(--accent); margin: 0 8px 0 0; vertical-align: -2px; }
+.lm-detail .kv, .drawer-body .kv { font-size: 13px; }
 .lm-versions td { vertical-align: top; }
 .lm-versions td.lm-wrap { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 .lm-versions td.lm-wrap { width: 100%; }
@@ -606,4 +621,12 @@ input[type="range"] { accent-color: var(--accent); width: 100%; margin: 0; }
   .finding .badge { justify-self: start; }
   .panel { width: auto; right: var(--space-3); max-height: 45%; }
   .panel-grip { display: none; }
+  /* drawer landmark: bottom sheet, the map stays under it */
+  body.ws-page { display: block; }
+  .ws-map { position: absolute; inset: 0; height: auto; }
+  .drawer {
+    position: absolute; left: 0; right: 0; bottom: 0; width: auto; max-width: none; height: auto; max-height: 50%;
+    border-left: 0; border-top: 1px solid var(--line-strong);
+  }
+  .drawer-open { top: auto; bottom: 72px; right: var(--space-3); }
 }

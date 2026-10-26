@@ -410,11 +410,28 @@ async def landmarks_page(request: Request) -> Response:
     return FileResponse(STATIC_DIR / "landmarks.html", headers=NO_CACHE)
 
 
+def _source_file(token: str) -> Path | None:
+    """The PMTiles behind a file token, or None when the token is unknown or its file is gone."""
+    path = registry.get(token)
+    return path if path is not None and path.is_file() else None
+
+
 async def list_landmarks(request: Request) -> Response:
-    """Every landmark (with its footprint) and the PMTiles they were registered from."""
+    """Every landmark (with its footprint) and the PMTiles they were registered from.
+
+    With ?f=<token>, each landmark also says whether it was registered from that PMTiles
+    (`same_source`) and, when its own PMTiles still exists, the token that opens it."""
     library.root.mkdir(parents=True, exist_ok=True)
     items = await _in_thread(library.list)
     sources = [{**s, "token": registry.register(Path(s["path"]))} for s in await _in_thread(library.sources)]
+    if request.query_params.get("f") is not None:
+        current = _source_file(request.query_params["f"])
+        paths = await _in_thread(library.source_paths)
+        tokens = {s["path"]: s["token"] for s in sources}
+        for item in items:
+            path = paths.get(item["id"], "")
+            item["same_source"] = current is not None and landmark_library.same_file(path, current)
+            item["source_token"] = tokens.get(path)
     base = (await _in_thread(base_status)).get("base")
     if base:
         # The base comes first: new landmarks are registered on the same buildings as the 3D preview.
@@ -423,6 +440,20 @@ async def list_landmarks(request: Request) -> Response:
                     "base": True, "view": base["view"]}, *(s for s in sources if s["token"] != token)]
     return JSONResponse({"dir": str(library.root), "dir_token": registry.register(library.root),
                          "landmarks": items, "sources": sources}, headers=NO_CACHE)
+
+
+async def render_landmarks(request: Request) -> Response:
+    """The landmarks of one PMTiles (?f=<token>) with a version in use, for the 3D preview:
+    footprint, version, placement, model box and GLB URL. Landmarks registered from another
+    file are left out: the token is resolved to its path and compared with each source.path."""
+    path = _source_file(request.query_params.get("f", ""))
+    if path is None:
+        return _error("File PMTiles không tồn tại.", 404)
+    items = await _in_thread(library.render, path)
+    for item in items:
+        item["glb"] = f"/api/landmarks/{item['id']}/versions/{item['version']}/glb"
+    return JSONResponse({"source": {"name": path.name, "token": request.query_params["f"]}, "landmarks": items},
+                        headers=NO_CACHE)
 
 
 async def register_landmark(request: Request) -> Response:
@@ -593,6 +624,7 @@ routes = [
     Route("/api/landmarks", list_landmarks, methods=["GET"]),
     Route("/api/landmarks", register_landmark, methods=["POST"]),
     Route("/api/landmarks/manifest.json", landmarks_manifest),
+    Route("/api/landmarks/render", render_landmarks, methods=["GET"]),
     Route("/api/landmarks/{lid}", get_landmark, methods=["GET"]),
     Route("/api/landmarks/{lid}", edit_landmark, methods=["PATCH"]),
     Route("/api/landmarks/{lid}", delete_landmark, methods=["DELETE"]),

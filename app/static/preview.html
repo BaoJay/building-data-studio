@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/tokens.css">
   <link rel="stylesheet" href="/static/app.css">
   <style>
-    /* Riêng trang bản đồ; panel, chú giải, popup, ghi chú zoom nằm trong app.css. */
+    /* Riêng trang bản đồ; panel, drawer landmark, chú giải, popup, ghi chú zoom nằm trong app.css. */
     html, body { height: 100%; }
     body { overflow: hidden; }
     #map { position: absolute; inset: 0; background: var(--map-ground); }
@@ -21,13 +21,15 @@
     }
   </style>
 </head>
-<body>
+<body class="ws-page">
+  <div class="ws-map" id="mapWrap">
   <div id="map"></div>
   <aside class="panel" id="panel">
     <div class="head">
       <div><h1 id="title">Đang tải…</h1><div class="meta" id="meta"></div></div>
       <button class="btn small collapse-btn" id="collapseBtn" type="button">Thu gọn</button>
     </div>
+    <label class="field" id="srcField" hidden><span>Building từ PMTiles</span><select id="srcSel"></select></label>
     <label class="field" id="layerField" hidden><span>Layer</span><select id="layerSel"></select></label>
     <label class="field" id="colorField"><span>Tô màu theo</span><select id="colorSel"></select></label>
     <div class="legend" id="legend"></div>
@@ -69,41 +71,21 @@
       <div class="btn-row"><a class="btn small" id="presetDownload" href="#" download>Tải style.json chế độ này</a></div>
     </div>
     <div class="hint" id="baseNote" style="color:var(--warn-ink)"></div>
-    <details class="lmk" id="lmkControls" hidden>
-      <summary>Landmark 3D (GLB)</summary>
-      <div class="lmk-body">
-      <div class="hint">Đặt một file <code>.glb</code> lên một building và xem nó dưới <code>light</code> của từng chế độ ánh sáng, như extrusion xung quanh. Công thức: <code>app/static/landmark-light.js</code>.</div>
-      <div class="hint lmk-lib" id="lmkLib"></div>
-      <label class="field"><span>File .glb (chỉ đọc trong trình duyệt, không upload)</span><input type="file" id="lmkFile" accept=".glb,model/gltf-binary"></label>
-      <label class="field"><span id="lmkIdLabel">building_id</span><input type="text" id="lmkId" spellcheck="false" autocomplete="off" placeholder="Click building trên bản đồ rồi bấm “Lấy building đang chọn”"></label>
-      <div class="btn-row">
-        <button class="btn small" type="button" id="lmkPick">Lấy building đang chọn</button>
-        <button class="btn small primary" type="button" id="lmkPlace">Đặt lên building</button>
-        <button class="btn small danger" type="button" id="lmkRemove">Gỡ</button>
-      </div>
-      <div class="row3">
-        <label class="field"><span>Hướng (°)</span><input type="number" id="lmkHeading" value="0" step="1"></label>
-        <label class="field"><span>Tỉ lệ</span><input type="number" id="lmkScale" value="1" step="0.01" min="0"></label>
-        <label class="field"><span>Điểm neo</span>
-          <select id="lmkAnchor" title="Điểm của mô hình đặt vào tâm footprint, trên mặt đất">
-            <option value="origin">Gốc GLB</option>
-            <option value="bbox">Tâm đáy hộp bao</option>
-          </select>
-        </label>
-      </div>
-      <div class="hint">Hướng: độ, theo chiều kim đồng hồ nhìn từ trên xuống. Hướng 0: trục +X của GLB chỉ hướng đông, mặt trước (+Z) quay về hướng nam.</div>
-      <div class="hint lmk-status" id="lmkStatus"></div>
-      <div class="hint lmk-info" id="lmkInfo"></div>
-      <label class="check"><input type="checkbox" id="lmkCompare"> So sánh: hiện extrusion gốc của building bên cạnh (đục, màu so sánh)</label>
-      <label class="check"><input type="checkbox" id="lmkFlat"> Tô landmark một màu (màu so sánh) để so mái / tường với extrusion</label>
-      <details class="lmk-uniforms"><summary>Uniform ánh sáng (để đối chiếu khi port)</summary><pre id="lmkUniforms"></pre></details>
-      </div>
-    </details>
-    <div class="hint" id="panelHint">Click building để xem thuộc tính. Chuột phải (hoặc Ctrl) + kéo để xoay / nghiêng. Bản đồ nền cần internet.</div>
+    <div class="hint" id="panelHint">Click building để xem thuộc tính và landmark ở drawer bên phải. Chuột phải (hoặc Ctrl) + kéo để xoay / nghiêng. Bản đồ nền cần internet.</div>
   </aside>
   <div class="panel-grip" id="panelGrip" role="separator" aria-orientation="vertical" aria-controls="panel" aria-label="Kéo để đổi độ rộng panel" title="Kéo để đổi độ rộng · nhấp đúp để về mặc định" tabindex="0"></div>
   <div class="zoomnote" id="zoomNote" hidden></div>
+  <div class="zoomnote" id="pickNote" hidden>Click lên bản đồ để đặt toạ độ neo · Esc để huỷ</div>
   <div class="zbadge" id="zBadge"></div>
+  <button class="btn small drawer-open" id="drawerOpen" type="button" hidden aria-controls="lmDrawer" aria-expanded="false">Landmark</button>
+  </div>
+  <aside class="drawer" id="lmDrawer" hidden aria-label="Landmark">
+    <div class="drawer-head">
+      <h2>Landmark</h2><span class="hint" id="lmCount"></span>
+      <button class="btn small" id="drawerClose" type="button" aria-controls="lmDrawer" title="Đóng drawer để mở rộng bản đồ">Đóng</button>
+    </div>
+    <div class="drawer-body" id="lmBody" aria-live="polite"><div class="hint">Đang tải thư viện landmark…</div></div>
+  </aside>
 
   <script type="importmap">{ "imports": { "three": "/static/vendor/three/build/three.module.js" } }</script>
   <script src="/static/vendor/maplibre-gl.js"></script>

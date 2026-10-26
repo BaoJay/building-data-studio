@@ -1,10 +1,12 @@
-// A .glb landmark drawn in a MapLibre custom layer, lit by the style's own `light` exactly like the
-// fill-extrusions around it (the formula and shaders are in landmark-light.js). Shared by the 3D
-// preview (landmark.js) and the landmark library page (landmarks.js).
+// .glb landmarks drawn in one MapLibre custom layer, lit by the style's own `light` exactly like
+// the fill-extrusions around them (the formula and shaders are in landmark-light.js). Used by the
+// 3D preview (landmark-workspace.js), which draws every landmark in use on the PMTiles it shows.
 //
-// Placement: the model point `anchor` ("origin": the GLB origin, "bbox": the bottom centre of its
-// box) stands on the ground at lon / lat, turned `heading` degrees clockwise seen from above (at 0,
-// GLB +X points east and the front, +Z, faces south) and scaled by `scale`.
+// Each model is parsed once (parseModel) into its own scene, with its own uniforms, and drawn with
+// its own placement: the model point `anchor` ("origin": the GLB origin, "bbox": the bottom centre
+// of its box) stands on the ground at lon / lat, turned `heading` degrees clockwise seen from above
+// (at 0, GLB +X points east and the front, +Z, faces south) and scaled by `scale`. Every model
+// reads the same light; heading, scale, anchor and height are their own.
 /* global maplibregl */
 import * as THREE from "three";
 import { GLTFLoader } from "/static/vendor/three/examples/jsm/loaders/GLTFLoader.js";
@@ -12,109 +14,127 @@ import * as LL from "/static/landmark-light.js";
 
 export { LL };
 
+// ------------------------------------------------------------------ models
+
+// Parse a .glb into a model ready to draw. Throws with a readable message.
+export async function parseModel(buffer, name) {
+  let gltf;
+  try {
+    gltf = await new GLTFLoader().parseAsync(buffer, "");
+  } catch (err) {
+    const msg = String(err?.message || err);
+    const hint = /draco|meshopt|ktx2|basisu/i.test(msg) ? " File dùng nén Draco / meshopt / KTX2 — xuất lại GLB không nén để xem thử." : "";
+    throw new Error(`Không đọc được ${name}: ${msg}.${hint}`);
+  }
+  const root = gltf.scene;
+  root.updateMatrixWorld(true);
+  const shared = sharedUniforms();
+  const materials = new Map();
+  const textures = new Set();
+  let meshes = 0;
+  let triangles = 0;
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    meshes++;
+    if (!obj.geometry.attributes.normal) {
+      // glTF: no normals means flat shading.
+      obj.geometry = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry;
+      obj.geometry.computeVertexNormals();
+    }
+    triangles += Math.floor((obj.geometry.index ? obj.geometry.index.count : obj.geometry.attributes.position.count) / 3);
+    const vertexColors = Boolean(obj.geometry.attributes.color);
+    const convert = (m) => {
+      const key = `${m.uuid}:${vertexColors}`;
+      if (!materials.has(key)) materials.set(key, landmarkMaterial(m, shared, vertexColors, textures));
+      return materials.get(key);
+    };
+    obj.material = Array.isArray(obj.material) ? obj.material.map(convert) : convert(obj.material);
+    obj.frustumCulled = false;  // the camera is MapLibre's matrix, three cannot cull with it
+  });
+  if (!meshes) throw new Error(`${name} không có mesh nào.`);
+  const scene = new THREE.Scene();
+  scene.add(root);
+  const bounds = new THREE.Box3().setFromObject(root);
+  return { root, scene, shared, bounds, name, materials: [...materials.values()], textures: [...textures], meshes, triangles };
+}
+
+export function disposeModel(model) {
+  if (!model) return;
+  model.scene.remove(model.root);
+  model.root.traverse((obj) => { if (obj.isMesh) obj.geometry.dispose(); });
+  model.materials.forEach((m) => m.dispose());
+  model.textures.forEach((t) => t.dispose());
+}
+
+// The model point that goes on the ground, in model coordinates.
+export function anchorPoint(model, placement) {
+  const b = model.bounds;
+  if (placement?.anchor === "bbox") return new THREE.Vector3((b.min.x + b.max.x) / 2, b.min.y, (b.min.z + b.max.z) / 2);
+  return new THREE.Vector3(0, 0, 0);
+}
+
+// Height of the model above its anchor point, scaled.
+export function modelHeight(model, placement) {
+  return (model.bounds.max.y - anchorPoint(model, placement).y) * (placement?.scale ?? 1);
+}
+
+// Footprint of the model box, scaled: [x, z] in metres.
+export function modelSize(model, placement) {
+  const size = new THREE.Vector3();
+  model.bounds.getSize(size);
+  const scale = placement?.scale ?? 1;
+  return [size.x * scale, size.z * scale];
+}
+
+// Model frame -> ENU metres around the anchor -> Mercator, multiplied into MapLibre's matrix.
+// three's camera has no view transform, so this is the only placement.
+function placementMatrix(model, placement) {
+  const { lon, lat, heading, scale } = placement;
+  const a = anchorPoint(model, placement);
+  const merc = maplibregl.MercatorCoordinate.fromLngLat([lon, lat], 0);
+  const m = merc.meterInMercatorCoordinateUnits();
+  return new THREE.Matrix4()
+    .makeTranslation(merc.x, merc.y, merc.z)
+    .multiply(new THREE.Matrix4().makeScale(m, -m, m))                   // ENU metres -> Mercator (y south)
+    .multiply(new THREE.Matrix4().makeRotationZ((-heading * Math.PI) / 180))  // heading: clockwise seen from above
+    .multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))            // glTF Y-up -> Z-up
+    .multiply(new THREE.Matrix4().makeScale(scale, scale, scale))
+    .multiply(new THREE.Matrix4().makeTranslation(-a.x, -a.y, -a.z));
+}
+
+// ------------------------------------------------------------------ layer
+
 export class LandmarkLayer {
   // opts: id, before() (the layer to draw under, so translucent buildings in front blend over the
-  // model; the model waits until it exists; null: on top), visible(), referenceColor() and flat()
-  // (one-colour QA look), onLight() (the light changed).
+  // models; the layer waits until it exists; null: on top), models() (the models to draw: [{ model,
+  // placement, flat }], flat: one-colour QA look), visible(), referenceColor(), onLight() (the
+  // light changed).
   constructor(map, opts = {}) {
     this.map = map;
     this.opts = {
-      id: "landmark",
+      id: "landmarks",
       before: () => "bldg-3d",
+      models: () => [],
       visible: () => true,
       referenceColor: () => "#ffffff",
-      flat: () => false,
       onLight: () => {},
       ...opts,
     };
-    this.model = null;  // { root, bounds, name, materials, textures, meshes, triangles }
-    this.placement = null;  // { lon, lat, heading, scale, anchor }
     this.light = LL.resolveLight(styleLight(map));
     this.night = false;  // read again on style.load
     try { this.night = LL.isNightStyle(map.getStyle()?.metadata); } catch { /* style not loaded yet */ }
-    this.shared = sharedUniforms();
-    this.scene = new THREE.Scene();
     this.camera = new THREE.Camera();
     this.renderer = null;
     this.layer = { id: this.opts.id, type: "custom", renderingMode: "3d", onAdd: (m, gl) => this.onAdd(gl), render: (gl, args) => this.render(gl, args) };
-    // Light: re-read on every style change, so a preset switch relights the model at once.
+    // Light: re-read on every style change, so a preset switch relights every model at once.
     map.on("styledata", () => this.readLight());
     map.on("style.load", () => this.readNight());
   }
 
-  // ---------------------------------------------------------------- model
-
-  // Parse a .glb and make it the model shown. Throws with a readable message.
-  async load(buffer, name) {
-    let gltf;
-    try {
-      gltf = await new GLTFLoader().parseAsync(buffer, "");
-    } catch (err) {
-      const msg = String(err?.message || err);
-      const hint = /draco|meshopt|ktx2|basisu/i.test(msg) ? " File dùng nén Draco / meshopt / KTX2 — xuất lại GLB không nén để xem thử." : "";
-      throw new Error(`Không đọc được ${name}: ${msg}.${hint}`);
-    }
-    const root = gltf.scene;
-    root.updateMatrixWorld(true);
-    const materials = new Map();
-    const textures = new Set();
-    let meshes = 0;
-    let triangles = 0;
-    root.traverse((obj) => {
-      if (!obj.isMesh) return;
-      meshes++;
-      if (!obj.geometry.attributes.normal) {
-        // glTF: no normals means flat shading.
-        obj.geometry = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry;
-        obj.geometry.computeVertexNormals();
-      }
-      triangles += Math.floor((obj.geometry.index ? obj.geometry.index.count : obj.geometry.attributes.position.count) / 3);
-      const vertexColors = Boolean(obj.geometry.attributes.color);
-      const convert = (m) => {
-        const key = `${m.uuid}:${vertexColors}`;
-        if (!materials.has(key)) materials.set(key, landmarkMaterial(m, this.shared, vertexColors, textures));
-        return materials.get(key);
-      };
-      obj.material = Array.isArray(obj.material) ? obj.material.map(convert) : convert(obj.material);
-      obj.frustumCulled = false;  // the camera is MapLibre's matrix, three cannot cull with it
-    });
-    if (!meshes) throw new Error(`${name} không có mesh nào.`);
-    this.disposeModel();
-    const bounds = new THREE.Box3().setFromObject(root);
-    this.model = { root, bounds, name, materials: [...materials.values()], textures: [...textures], meshes, triangles };
-    this.scene.add(root);
-    this.update();
-    return this.model;
-  }
-
-  disposeModel() {
-    if (!this.model) return;
-    this.scene.remove(this.model.root);
-    this.model.root.traverse((obj) => { if (obj.isMesh) obj.geometry.dispose(); });
-    this.model.materials.forEach((m) => m.dispose());
-    this.model.textures.forEach((t) => t.dispose());
-    this.model = null;
-  }
-
-  // Remove the model and the layer.
-  clear() {
-    this.disposeModel();
-    this.placement = null;
-    if (this.map.getLayer(this.opts.id)) this.map.removeLayer(this.opts.id);
-    this.map.triggerRepaint();
-  }
-
-  // ---------------------------------------------------------------- placement
-
-  setPlacement(placement) {
-    this.placement = placement ? { ...placement } : null;
-    this.update();
-  }
-
   // Call after every (re)build of the style's own layers: a basemap or preset switch replaces
-  // the whole style, custom layers included.
+  // the whole style, custom layers included. The models stay parsed.
   ensureLayer() {
-    if (!this.model || !this.placement || this.map.getLayer(this.opts.id)) return;
+    if (this.map.getLayer(this.opts.id)) return;
     const before = this.opts.before();
     if (before && !this.map.getLayer(before)) return;  // style still loading: called again once it is
     this.map.addLayer(this.layer, before || undefined);
@@ -123,42 +143,6 @@ export class LandmarkLayer {
   update() {
     this.ensureLayer();
     this.map.triggerRepaint();
-  }
-
-  // The model point that goes on the ground, in model coordinates.
-  anchorModel() {
-    const b = this.model.bounds;
-    if (this.placement?.anchor === "bbox") return new THREE.Vector3((b.min.x + b.max.x) / 2, b.min.y, (b.min.z + b.max.z) / 2);
-    return new THREE.Vector3(0, 0, 0);
-  }
-
-  // Height of the model above its anchor point, scaled.
-  modelHeight() {
-    return (this.model.bounds.max.y - this.anchorModel().y) * (this.placement?.scale ?? 1);
-  }
-
-  // Footprint of the model box, scaled: [x, z] in metres.
-  modelSize() {
-    const size = new THREE.Vector3();
-    this.model.bounds.getSize(size);
-    const scale = this.placement?.scale ?? 1;
-    return [size.x * scale, size.z * scale];
-  }
-
-  // Model frame -> ENU metres around the anchor -> Mercator, multiplied into MapLibre's matrix.
-  // three's camera has no view transform, so this is the only placement.
-  matrix() {
-    const { lon, lat, heading, scale } = this.placement;
-    const a = this.anchorModel();
-    const merc = maplibregl.MercatorCoordinate.fromLngLat([lon, lat], 0);
-    const m = merc.meterInMercatorCoordinateUnits();
-    return new THREE.Matrix4()
-      .makeTranslation(merc.x, merc.y, merc.z)
-      .multiply(new THREE.Matrix4().makeScale(m, -m, m))                   // ENU metres -> Mercator (y south)
-      .multiply(new THREE.Matrix4().makeRotationZ((-heading * Math.PI) / 180))  // heading: clockwise seen from above
-      .multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))            // glTF Y-up -> Z-up
-      .multiply(new THREE.Matrix4().makeScale(scale, scale, scale))
-      .multiply(new THREE.Matrix4().makeTranslation(-a.x, -a.y, -a.z));
   }
 
   // ---------------------------------------------------------------- light
@@ -177,26 +161,25 @@ export class LandmarkLayer {
     this.map.triggerRepaint();
   }
 
-  // The uniforms of the current light, heading and map bearing (also for readouts).
-  uniforms() {
-    return LL.landmarkUniforms(this.light, { heading: this.placement?.heading ?? 0, bearing: this.map.getBearing(), night: this.night });
+  // The uniforms of the current light for a heading and the map bearing (also for readouts).
+  uniforms(heading = 0) {
+    return LL.landmarkUniforms(this.light, { heading, bearing: this.map.getBearing(), night: this.night });
   }
 
-  setUniforms() {
-    const u = this.uniforms();
-    const s = this.shared;
+  setUniforms(model, placement, flat) {
+    const u = this.uniforms(placement.heading);
+    const s = model.shared;
     s.u_lightpos.value.fromArray(u.u_lightpos);
     s.u_lightcolor.value.fromArray(u.u_lightcolor);
     s.u_lightintensity.value = u.u_lightintensity;
     s.u_north.value.fromArray(u.u_north);
     s.u_emissive_on.value = u.u_emissive_on;
     s.u_vertical_gradient.value = this.map.getLayer("bldg-3d") && this.map.getPaintProperty("bldg-3d", "fill-extrusion-vertical-gradient") === false ? 0 : 1;
-    const a = this.anchorModel();
-    s.u_ground.value = a.y;
-    s.u_top.value = this.model.bounds.max.y;
-    s.u_height_m.value = this.modelHeight();
+    s.u_ground.value = anchorPoint(model, placement).y;
+    s.u_top.value = model.bounds.max.y;
+    s.u_height_m.value = modelHeight(model, placement);
     const ref = LL.parseColor(this.opts.referenceColor()) || [1, 1, 1, 1];
-    s.u_override.value.set(ref[0], ref[1], ref[2], this.opts.flat() ? 1 : 0);
+    s.u_override.value.set(ref[0], ref[1], ref[2], flat ? 1 : 0);
   }
 
   // ---------------------------------------------------------------- custom layer
@@ -211,12 +194,17 @@ export class LandmarkLayer {
   }
 
   render(gl, args) {
-    if (!this.model || !this.placement || !this.opts.visible()) return;
-    this.setUniforms();
-    this.camera.projectionMatrix = new THREE.Matrix4().fromArray(args.defaultProjectionData.mainMatrix).multiply(this.matrix());
+    if (!this.opts.visible()) return;
+    const models = this.opts.models();
+    if (!models.length) return;
+    const main = new THREE.Matrix4().fromArray(args.defaultProjectionData.mainMatrix);
     this.renderer.resetState();
     this.renderer.setViewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    this.renderer.render(this.scene, this.camera);
+    for (const { model, placement, flat } of models) {
+      this.setUniforms(model, placement, flat);
+      this.camera.projectionMatrix = main.clone().multiply(placementMatrix(model, placement));
+      this.renderer.render(model.scene, this.camera);
+    }
   }
 }
 

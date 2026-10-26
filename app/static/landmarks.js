@@ -62,7 +62,8 @@ const version = (n) => state.rec?.versions.find((v) => v.version === n) || null;
 // ------------------------------------------------------------------ PMTiles source
 
 // The PMTiles whose buildings are shown and can be registered: ?f= (opened from the main page or
-// the 3D preview), then the files landmarks were registered from.
+// the 3D preview), then the base of the city (app/osmbase.py, the 3D preview's default too), then
+// the files landmarks were registered from.
 function sourceOptions() {
   const list = [...state.sources];
   const f = params.get("f");
@@ -92,7 +93,7 @@ async function openSource(token) {
     parentAttr: PARENT_ATTRS.find((a) => a in fields) || null,
     hasParts: "has_parts" in fields,
     maxzoom: header.maxZoom,
-    view: { center: [header.centerLon, header.centerLat], zoom: Math.max(header.centerZoom, header.minZoom + 1) },
+    view: opt.view || { center: [header.centerLon, header.centerLat], zoom: Math.max(header.centerZoom, header.minZoom + 1) },
   };
 }
 
@@ -117,7 +118,7 @@ function renderSources() {
   $("#srcNote").textContent = s
     ? (s.idCol ? `Layer ${s.layer}, id ${s.idCol}${s.heightAttr ? `, chiều cao ${s.heightAttr}` : ""}. Click building để đăng ký.` : `Layer ${s.layer} không có cột id (building_id / id / osm_id): không đăng ký được.`)
     : opts.length ? "Chọn PMTiles để click building và đăng ký landmark mới."
-      : "Mở một file .pmtiles ở trang chính rồi bấm “Landmark 3D” để đăng ký building mới.";
+      : "Tạo base Hà Nội ở trang chính, hoặc mở một file .pmtiles ở đó rồi bấm “Landmark 3D”, để đăng ký building mới.";
 }
 
 const bldgSource = () => (state.src ? { type: "vector", url: `pmtiles://${state.src.url}` } : null);

@@ -8,7 +8,7 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const HEIGHT_ATTRS = ["h_m", "height_m", "height", "render_height"];
 const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
 const params = new URLSearchParams(location.search);
-const token = params.get("f");
+let token = params.get("f");  // no f: the base of the city (see main)
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
 const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
 // Landmark check (landmark.js, loaded on demand): the building whose extrusion a GLB replaces,
@@ -137,8 +137,26 @@ function showShadow(map, look) {
   map.setLayoutProperty("bldg-shadow", "visibility", "visible");
 }
 
+// The OSM buildings of the city built by app/osmbase.py, shown when no file is given: the same
+// buildings the landmark library opens on.
+async function loadBase() {
+  const st = await fetch("/api/base").then((r) => r.json()).catch(() => null);
+  if (st?.base) return st.base;
+  const building = ["queued", "running"].includes(st?.job?.status);
+  $("#title").textContent = building ? `Base ${st.label} đang được tạo…` : `Chưa có base${st ? ` ${st.label}` : ""}.`;
+  $("#meta").innerHTML = building
+    ? "Tải lại trang sau vài phút, hoặc theo dõi tiến trình ở <a href=\"/\">trang chính</a>."
+    : "Tạo base ở <a href=\"/\">trang chính</a>, hoặc mở một file .pmtiles ở đó.";
+  return null;
+}
+
 async function main() {
-  if (!token) { $("#title").textContent = "Thiếu tham số f (token file PMTiles)."; return; }
+  let base = null;
+  if (!token) {
+    base = await loadBase();
+    if (!base) return;
+    token = base.pmtiles_token;
+  }
   const url = new URL(`/api/files/${encodeURIComponent(token)}`, location.href).href;
   const protocol = new pmtiles.Protocol();
   maplibregl.addProtocol("pmtiles", protocol.tile);
@@ -162,7 +180,7 @@ async function main() {
   }
   state.bakedShadows = (meta.vector_layers || []).find((l) => l.id === SHADOW_LAYER && "preset" in (l.fields || {})) || null;
   const layers = (meta.vector_layers || []).map((l) => l.id).filter((id) => !(state.bakedShadows && id === SHADOW_LAYER));
-  const name = params.get("name") || meta.name || "PMTiles";
+  const name = params.get("name") || base?.name || meta.name || "PMTiles";
   document.title = `${name} — 3D`;
   $("#title").textContent = name;
   $("#meta").textContent = `z${header.minZoom}–${header.maxZoom} · ${layers.length} layer${state.bakedShadows ? " + layer bóng" : ""}${meta.generator ? ` · ${meta.generator}` : ""}`;
@@ -174,8 +192,8 @@ async function main() {
   await loadVmapPresets();
   initBasemap();
   const hasCenter = params.has("lon") && params.has("lat");
-  const center = hasCenter ? [Number(params.get("lon")), Number(params.get("lat"))] : [header.centerLon, header.centerLat];
-  const zoom = hasCenter ? Number(params.get("z") || 17) : Math.max(header.centerZoom, header.minZoom + 1);
+  const center = hasCenter ? [Number(params.get("lon")), Number(params.get("lat"))] : base?.view.center || [header.centerLon, header.centerLat];
+  const zoom = hasCenter ? Number(params.get("z") || 17) : base?.view.zoom || Math.max(header.centerZoom, header.minZoom + 1);
   const bldgSource = { type: "vector", url: `pmtiles://${url}`, attribution: meta.attribution || "" };
 
   const map = new maplibregl.Map({
@@ -667,4 +685,65 @@ function onDiffClick(map, e) {
   });
 }
 
+// ------------------------------------------------------------------ panel width
+// The grip on the panel's right edge drags its width (remembered per browser); double-click
+// or Home resets it, arrow keys nudge it.
+const PANEL_W = { def: 300, min: 260, max: 900, step: 20 };
+
+function bindPanelResize() {
+  const panel = $("#panel");
+  const grip = $("#panelGrip");
+  const clamp = (w) => Math.round(Math.min(Math.max(w, PANEL_W.min), Math.min(PANEL_W.max, innerWidth - 80)));
+  const place = () => {
+    const r = panel.getBoundingClientRect();
+    grip.style.left = `${r.right}px`;
+    grip.style.top = `${r.top + r.height / 2}px`;
+  };
+  const setWidth = (w, save) => {
+    const v = clamp(w);
+    panel.style.setProperty("--panel-w", `${v}px`);
+    grip.setAttribute("aria-valuenow", String(v));
+    if (save) remember("panelWidth", String(v));
+    place();
+  };
+  grip.setAttribute("aria-valuemin", String(PANEL_W.min));
+  grip.setAttribute("aria-valuemax", String(PANEL_W.max));
+  setWidth(Number(recall("panelWidth")) || PANEL_W.def, false);
+  new ResizeObserver(place).observe(panel);
+  addEventListener("resize", () => setWidth(panel.getBoundingClientRect().width, false));
+
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = panel.getBoundingClientRect().width;
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("dragging");
+    document.body.classList.add("resizing-panel");
+    const move = (ev) => setWidth(startW + ev.clientX - startX, false);
+    const end = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", end);
+      grip.removeEventListener("pointercancel", end);
+      grip.classList.remove("dragging");
+      document.body.classList.remove("resizing-panel");
+      setWidth(panel.getBoundingClientRect().width, true);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  });
+  grip.addEventListener("dblclick", () => setWidth(PANEL_W.def, true));
+  grip.addEventListener("keydown", (e) => {
+    const w = panel.getBoundingClientRect().width;
+    const step = e.shiftKey ? PANEL_W.step * 3 : PANEL_W.step;
+    if (e.key === "ArrowRight") setWidth(w + step, true);
+    else if (e.key === "ArrowLeft") setWidth(w - step, true);
+    else if (e.key === "Home") setWidth(PANEL_W.def, true);
+    else return;
+    e.preventDefault();
+  });
+}
+
+bindPanelResize();
 main();

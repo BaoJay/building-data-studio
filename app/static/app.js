@@ -14,7 +14,7 @@ const CRS_PRESETS = [
   ["EPSG:3406", "EPSG:3406 — VN-2000 / UTM 49N"],
 ];
 const STATUS_LABEL = { queued: "Đang chờ", running: "Đang chạy", done: "Hoàn tất", failed: "Lỗi", cancelled: "Đã huỷ" };
-const KIND_LABEL = { convert: "Convert", diff: "So sánh" };
+const KIND_LABEL = { convert: "Convert", diff: "So sánh", base: "Base OSM" };
 const TAB_KEY = "building-data-studio.tab.v1";
 const PREF_KEY = "building-data-studio.prefs.v1";
 const LEGACY_PREF_KEY = "building-converter.prefs.v1"; // before the rename
@@ -64,7 +64,89 @@ async function init() {
   } catch (e) {
     toast(`Không kết nối được server: ${e.message}`);
   }
+  $("#baseActions").addEventListener("click", onBaseAction);
+  loadBase();
   loadHistory();
+}
+
+// ------------------------------------------------------------------ base (Hà Nội, OSM)
+// The OSM buildings of the whole city, built once from Overture (app/osmbase.py). The 3D preview
+// and the landmark library open on it when no file is given.
+const base = { timer: null, status: null };
+const isActive = (job) => Boolean(job && ["queued", "running"].includes(job.status));
+
+async function loadBase() {
+  clearTimeout(base.timer);
+  let st;
+  try { st = await api("/api/base"); } catch { return; }
+  const wasActive = isActive(base.status?.job);
+  base.status = st;
+  renderBase(st);
+  if (isActive(st.job)) base.timer = setTimeout(loadBase, 1500);
+  else if (wasActive) loadHistory();
+}
+
+function renderBase(st) {
+  const b = st.base;
+  const job = st.job;
+  const active = isActive(job);
+  let info;
+  if (b) {
+    const h = b.height?.real_pct;
+    info = `<div class="base-count">${fmtInt(b.counts.buildings)} building + ${fmtInt(b.counts.parts)} khối con</div>
+      <div class="hint">OSM ngày ${esc(b.osm_snapshot || "?")} qua Overture ${esc(b.release)} · ${esc(b.boundary?.name || st.label)} (${fmtNum(b.boundary?.area_km2, 0)} km²)${h == null ? "" : ` · có chiều cao thật ${fmtNum(h, 1)}%`} · tạo lúc ${esc(new Date(b.built_at).toLocaleString("vi-VN"))}</div>`;
+  } else if (active) {
+    info = `<div class="hint">Đang tạo base lần đầu từ OpenStreetMap (qua Overture Maps), khoảng 3–5 phút. Xong là trang 3D và trang Landmark tự mở base này.</div>`;
+  } else {
+    info = `<div class="hint">Chưa có base. Bấm <b>Tạo base</b> để tải building OSM của toàn thành phố từ Overture Maps (cần internet, khoảng 3–5 phút).</div>`;
+  }
+  if (job?.status === "failed") {
+    info += `<div class="alert bad"><span class="icon">!</span><div>Lần tạo base gần nhất bị lỗi: ${esc(job.error || "xem log")}</div></div>`;
+  }
+  $("#baseInfo").innerHTML = info;
+
+  const buttons = [];
+  if (b) {
+    buttons.push(`<a class="btn primary" href="/preview" target="_blank" rel="noopener">Xem bản đồ 3D</a>`,
+      `<a class="btn" href="/landmarks" target="_blank" rel="noopener">Landmark 3D</a>`,
+      `<a class="btn" href="/api/files/${encodeURIComponent(b.gpkg_token)}?download=1" title="${esc(b.gpkg)}">Tải GeoPackage</a>`,
+      `<button class="btn" type="button" data-base="folder">Mở thư mục</button>`);
+  }
+  if (job) buttons.push(`<button class="btn" type="button" data-base="job">${active ? "Xem tiến trình" : "Log lần tạo"}</button>`);
+  if (!active) {
+    buttons.push(b
+      ? `<button class="btn" type="button" data-base="build" title="Tạo lại từ release Overture mới nhất. Bản đang dùng giữ nguyên tới khi bản mới xong.">Cập nhật</button>`
+      : `<button class="btn primary" type="button" data-base="build">Tạo base</button>`);
+  }
+  $("#baseActions").innerHTML = buttons.join("");
+
+  $("#baseProgress").hidden = !active;
+  if (active) {
+    const steps = job.steps || [];
+    const cur = steps.find((s) => s.status === "running");
+    const done = steps.filter((s) => s.status === "done" || s.status === "skipped").length;
+    $("#baseStep").textContent = job.status === "queued" ? "Đang chờ job khác chạy xong…"
+      : `Bước ${Math.min(done + 1, steps.length)}/${steps.length}: ${cur?.title || "…"}${cur?.progress ? ` (${fmtNum(cur.progress, 0)}%)` : ""}`;
+    $("#baseBar").style.width = `${steps.length ? (100 * (done + (cur?.progress || 0) / 100)) / steps.length : 0}%`;
+  }
+}
+
+async function onBaseAction(e) {
+  const btn = e.target.closest("[data-base]");
+  const st = base.status;
+  if (!btn || !st) return;
+  if (btn.dataset.base === "folder") reveal(st.base.folder_token);
+  else if (btn.dataset.base === "job") showJob(st.job.id, true);
+  else if (btn.dataset.base === "build") {
+    btn.disabled = true;
+    try {
+      await api("/api/base/build", { method: "POST", body: { area: st.area } });
+    } catch (err) {
+      toast(err.message);
+    }
+    loadBase();
+    loadHistory();
+  }
 }
 
 function renderTools(health) {

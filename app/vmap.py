@@ -17,7 +17,6 @@ import hashlib
 import json
 import os
 import re
-import ssl
 import threading
 import time
 import urllib.error
@@ -28,6 +27,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from . import net
 
 UPSTREAM = "https://assets.vmaps.vn/"
 CATALOG = "https://api-app.vmaps.vn//map-proxy/v2/map/layers"  # where VMAP lists its styles
@@ -287,19 +288,7 @@ _parsed: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _offline_until = 0.0
 
 
-def _ssl_context() -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    # python.org builds on macOS have no CA bundle until "Install Certificates" is run;
-    # the system bundle covers that (harmless where the default store already works).
-    if os.path.exists("/etc/ssl/cert.pem"):
-        try:
-            ctx.load_verify_locations("/etc/ssl/cert.pem")
-        except ssl.SSLError:
-            pass
-    return ctx
-
-
-_ssl = _ssl_context()
+_ssl = net.ssl_context()
 
 
 def _fetch(path: str, ttl: float) -> tuple[bytes, str]:

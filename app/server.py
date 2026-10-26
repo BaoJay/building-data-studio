@@ -21,7 +21,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, landmark, landmark_library, pipeline, probe, shadows, tools, vmap
+from . import __version__, diff, landmark, landmark_library, osmbase, pipeline, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -35,12 +35,15 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 
 registry = FileRegistry()
 library = landmark_library.Library(landmark_library.default_dir())
+BASE_DIR = osmbase.default_dir()
 
 
 def execute(job: Job) -> None:
     """Run a job of either kind on the worker thread."""
     if job.kind == "diff":
         diff.execute(job, registry)
+    elif job.kind == "base":
+        osmbase.execute(job, registry, BASE_DIR)
     else:
         pipeline.execute(job, registry)
 
@@ -243,6 +246,58 @@ async def vmap_asset(request: Request) -> Response:
     return Response(body, media_type=media, headers={"Cache-Control": "max-age=86400"})
 
 
+# ------------------------------------------------------------------ base (OSM buildings of a city)
+
+def base_status(area_key: str = osmbase.DEFAULT_AREA) -> dict[str, Any]:
+    """The base in use (with file tokens) and the latest build job of this session."""
+    area = osmbase.AREAS[area_key]
+    out: dict[str, Any] = {"area": area.key, "label": area.label, "dir": str(osmbase.area_dir(BASE_DIR, area)),
+                           "ready": False, "job": None}
+    manifest = osmbase.read_manifest(BASE_DIR, area)
+    if manifest:
+        out.update(ready=True, base={
+            **{k: v for k, v in manifest.items() if not k.endswith("_path")},
+            "pmtiles_token": registry.register(Path(manifest["pmtiles_path"])),
+            "gpkg_token": registry.register(Path(manifest["gpkg_path"])),
+            "folder_token": registry.register(Path(manifest["folder_path"])),
+        })
+    job = _base_job(area.key)
+    if job is not None:
+        d = job.to_dict(log_since=1 << 30)
+        out["job"] = {k: d[k] for k in ("id", "status", "error", "steps", "started", "ended")}
+    return out
+
+
+def _base_job(area_key: str) -> Job | None:
+    return next((j for j in jobs.list() if j.kind == "base" and j.config.get("area") == area_key), None)
+
+
+def start_base_build(area_key: str = osmbase.DEFAULT_AREA, release: str | None = None) -> Job:
+    """Queue a build of the base, unless one is already queued or running."""
+    job = _base_job(area_key)
+    if job is not None and job.status in ("queued", "running"):
+        return job
+    area = osmbase.AREAS[area_key]
+    return jobs.submit({"area": area.key, "release": release}, name=osmbase.out_name(area), kind="base")
+
+
+async def get_base(request: Request) -> Response:
+    area = request.query_params.get("area") or osmbase.DEFAULT_AREA
+    if area not in osmbase.AREAS:
+        return _error(f"Không có khu vực {area}.", 404)
+    return JSONResponse(base_status(area), headers=NO_CACHE)
+
+
+async def build_base(request: Request) -> Response:
+    body = await _json(request)
+    area = str(body.get("area") or osmbase.DEFAULT_AREA)
+    if area not in osmbase.AREAS:
+        return _error(f"Không có khu vực {area}.", 404)
+    release = str(body.get("release") or "").strip() or None
+    job = start_base_build(area, release)
+    return JSONResponse({"id": job.id, **base_status(area)}, status_code=202)
+
+
 async def building_shadows(request: Request) -> Response:
     """Prototype: dissolved ground shadows of the buildings of a registered PMTiles over one
     area, cast along the light of a VMAP preset. ?download=1 saves the GeoJSON."""
@@ -360,6 +415,12 @@ async def list_landmarks(request: Request) -> Response:
     library.root.mkdir(parents=True, exist_ok=True)
     items = await _in_thread(library.list)
     sources = [{**s, "token": registry.register(Path(s["path"]))} for s in await _in_thread(library.sources)]
+    base = (await _in_thread(base_status)).get("base")
+    if base:
+        # The base comes first: new landmarks are registered on the same buildings as the 3D preview.
+        token = base["pmtiles_token"]
+        sources = [{"token": token, "name": base["name"], "layer": "buildings", "id_field": "building_id",
+                    "base": True, "view": base["view"]}, *(s for s in sources if s["token"] != token)]
     return JSONResponse({"dir": str(library.root), "dir_token": registry.register(library.root),
                          "landmarks": items, "sources": sources}, headers=NO_CACHE)
 
@@ -521,6 +582,8 @@ routes = [
     Route("/api/jobs/{job_id}/cancel", cancel_job, methods=["POST"]),
     Route("/api/files/{token}", get_file, methods=["GET", "HEAD"]),
     Route("/api/reveal", reveal, methods=["POST"]),
+    Route("/api/base", get_base, methods=["GET"]),
+    Route("/api/base/build", build_base, methods=["POST"]),
     Route("/api/vmap/presets", vmap_presets),
     Route("/api/vmap/style.json", vmap_style),
     Route("/api/vmap/assets/{path:path}", vmap_asset),
@@ -547,12 +610,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Building Data Studio — local web app")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", DEFAULT_PORT)))
     parser.add_argument("--no-browser", action="store_true", help="Không tự mở trình duyệt")
+    parser.add_argument("--no-base", action="store_true",
+                        help="Không tự tạo base building OSM Hà Nội khi chưa có (hoặc BDS_BASE_AUTOBUILD=0)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     missing = [n for n in tools.REQUIRED_TOOLS if tools.which(n) is None]
     if missing:
         log.warning("Thiếu công cụ: %s — cài bằng: brew install gdal tippecanoe pmtiles", ", ".join(missing))
+    elif not args.no_base and os.environ.get("BDS_BASE_AUTOBUILD", "1") != "0" and not base_status()["ready"]:
+        # First run: build the Hà Nội base in the background, so the 3D pages have buildings to show.
+        start_base_build()
+        print(f"  Chưa có base Hà Nội: đang tạo từ OpenStreetMap (Overture Maps), khoảng 3–5 phút → {BASE_DIR}", flush=True)
 
     url = f"http://{HOST}:{args.port}/"
     if not args.no_browser:

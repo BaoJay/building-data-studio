@@ -10,3 +10,4 @@ uploads/
 *.fgb
 .DS_Store
 landmarks/
+base/

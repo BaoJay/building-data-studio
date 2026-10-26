@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import __version__, tools
+from . import __version__, net, tools
 from .jobs import FileRegistry, Job, Step
 from .pipeline import (
     WGS84,
@@ -104,7 +104,7 @@ def releases(root: str = DEFAULT_ROOT) -> list[str]:
         if root.rstrip("/") != DEFAULT_ROOT:
             raise BaseError(f"Chỉ liệt kê được release của {DEFAULT_ROOT}; hãy đặt BDS_OVERTURE_RELEASE.")
         try:
-            with urllib.request.urlopen(LIST_URL, timeout=30) as res:  # noqa: S310 — fixed https URL
+            with urllib.request.urlopen(LIST_URL, timeout=30, context=net.ssl_context()) as res:  # noqa: S310 — fixed https URL
                 body = res.read().decode("utf-8", "replace")
         except OSError as exc:
             raise BaseError(f"Không đọc được danh sách release Overture: {exc}") from exc

@@ -217,6 +217,7 @@ MapLibre không vẽ được bóng building đổ xuống mặt đất. Ô **Đ
 - Bóng được tính cho vùng quanh khung nhìn (từ zoom 15, tối đa khoảng 5 km mỗi chiều), khoảng 4 giây cho 12 nghìn building. Dịch bản đồ ra ngoài vùng đã tính thì tự tính lại. Bật / tắt được, lựa chọn được nhớ trong trình duyệt.
 - Mỗi building được quét theo tia nắng từ đáy (`min_height`) tới đỉnh: footprint dời tới hai độ cao cộng một hình bình hành cho mỗi cạnh, nên footprint lõm (chữ L, chữ U, có sân trong) vẫn đúng. Toàn bộ bóng được gộp thành một hình (không bị đậm lên ở chỗ chồng nhau) và trừ đi footprint.
 - Nút **Tải layer bóng vùng này (GeoJSON)** để team Mobile thử trên app.
+- Landmark đã có version đang dùng thì đổ bóng theo chính mesh GLB thay cho hộp LoD1 của building (xem [Landmark 3D trong trang xem 3D](#landmark-3d-trong-trang-xem-3d) bên dưới).
 - Giới hạn: bóng chỉ đổ xuống mặt đất, không đổ lên mái hay tường building bên cạnh, và chỉ đúng với hướng nắng cố định của từng chế độ.
 
 ### Layer bóng trong PMTiles (cho app Mobile)
@@ -265,7 +266,7 @@ Trang xem 3D (`/preview`) là nơi duy nhất xem và quản lý landmark: panel
 
 - Mọi landmark **đang dùng** của chính file PMTiles đang mở được vẽ cùng lúc, mỗi mô hình với hướng, tỉ lệ, điểm neo và toạ độ neo của version đang dùng. Server so file bằng đường dẫn thật (`source.path` lúc đăng ký), kể cả base mặc định. Landmark đăng ký trên file khác vẫn có trong danh sách, nhưng không vẽ trên file này.
 - File GLB chỉ được tải khi landmark ở trong vùng đang xem (cộng thêm 25% mỗi phía), tối đa 3 file cùng lúc, và giữ trong bộ nhớ tối đa 24 mô hình. Đổi bản đồ nền hay chế độ ánh sáng không tải lại file.
-- Extrusion của building, gồm các khối con (`parent_building_id`), chỉ bị ẩn khi file GLB đã tải xong. File lỗi (ví dụ nén Draco) thì extrusion vẫn giữ, lỗi hiện trong drawer. Bóng vẽ sẵn của building vẫn giữ.
+- Extrusion của building, gồm các khối con (`parent_building_id`), chỉ bị ẩn khi file GLB đã tải xong. File lỗi (ví dụ nén Draco) thì extrusion vẫn giữ, lỗi hiện trong drawer. Bóng: landmark có version đang dùng đổ bóng theo mesh GLB của version đó (Bình minh, Ban ngày, Hoàng hôn; Ban đêm và Nền tối không đổ bóng), gộp chung với bóng building xung quanh nên không đậm lên ở chỗ chồng nhau. Landmark chưa có version đang dùng, hoặc file GLB không đọc được hình học (nén Draco / meshopt), giữ bóng hộp LoD1. Bóng đi theo placement đã lưu: đang kéo thử placement hay xem version khác thì bóng chưa đổi. Mỗi tam giác của GLB được đặt như mô hình trên bản đồ (heading, tỉ lệ, điểm neo), chiếu xuống mặt đất theo tia nắng rồi gộp lại. Khác bóng LoD1, bóng landmark không bị footprint của chính building đó cắt đi: mô hình thường không phủ kín footprint LoD1, nên bóng phủ cả phần đất trống quanh mô hình trong footprint (dưới thân mô hình thì bị mô hình che). Kết quả tính một lần cho mỗi (file GLB, placement, chế độ) và lưu ở `landmarks/<id>/shadows/`. Với PMTiles có sẵn layer `shadows`, bóng GLB được vẽ đè lên, bóng hộp LoD1 trong file vẫn nằm dưới.
 - Click mô hình hoặc footprint của landmark để mở nó trong drawer. Click building thường để xem thuộc tính và đăng ký. Nếu click vào một khối con, drawer hỏi chọn cả building cha hay chỉ khối đó.
 - URL giữ landmark đang mở (`lm=<id>`) hoặc building vừa click (`id=`), cùng `f`, `name`, `idcol`, `lon`, `lat`, `z`. Tải lại trang, hoặc Back / Forward, trở về đúng file, vị trí và landmark. Ô **Building từ PMTiles** ở panel trái chuyển sang base hoặc các file đã có landmark.
 
@@ -282,7 +283,7 @@ Trang xem 3D (`/preview`) là nơi duy nhất xem và quản lý landmark: panel
 
   Mô hình trên bản đồ đổi ngay khi bạn chỉnh. Drawer ghi khoảng cách từ toạ độ neo tới tâm footprint, và so chiều cao mô hình (đã nhân tỉ lệ) với chiều cao building, cảnh báo khi lệch quá cả 2 m lẫn 5%. Bấm **Lưu placement** để lưu, **Hoàn tác** để bỏ. Version đầu tiên đặt ở tâm footprint, hướng 0. Version sau bắt đầu với placement của version đang dùng.
 - **Đang dùng**: bấm **Dùng** ở một version (kèm ghi chú nếu cần) để chọn version đó, hoặc **Bỏ dùng** để không dùng version nào. Mỗi lần đổi được ghi vào **Lịch sử**, cùng các lần đăng ký, upload, lưu placement và sửa tên. Bảng version ghi trạng thái **đang dùng**, **đã dùng đến ngày…** hoặc **chưa dùng**.
-- **Tải manifest** tải `landmarks-manifest.json`. File này liệt kê version đang dùng của mọi landmark, kèm đường dẫn file, sha256 và placement, để gửi team Mobile hoặc đối chiếu với MapOps.
+- **Tải manifest** tải `landmarks-manifest.json`. File này liệt kê version đang dùng của mọi landmark, kèm đường dẫn file, sha256 và placement, để gửi team Mobile hoặc đối chiếu với MapOps. Mỗi landmark có thêm `shadows` (file GeoJSON bóng theo từng chế độ có nắng, đường dẫn tương đối trong thư mục landmark như `file`), và `shadow_presets` ở đầu file ghi màu, độ mờ và hướng nắng của từng chế độ. App vẽ các file này như layer `shadows` (thay bóng LoD1 của building đó).
 
 Dữ liệu nằm trong thư mục `landmarks/` cạnh `output/`. Thư mục này không commit vào git. Đổi chỗ lưu bằng biến môi trường `BDS_LANDMARK_DIR`, ví dụ trỏ tới một thư mục Google Drive dùng chung với team. Mỗi landmark là một thư mục `landmarks/<id>/`, gồm `landmark.json` và `v1.glb`, `v2.glb`… **Xoá landmark** chỉ chuyển thư mục đó vào `landmarks/_trash/`, không xoá file nào.
 
@@ -398,6 +399,7 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/jobs.py` | Hàng đợi job (chạy lần lượt từng job), huỷ job |
 | `app/vmap.py` | Nền VMAP cho trang xem 3D: proxy style / sprite / glyphs từ assets.vmaps.vn, 5 chế độ ánh sáng (mỗi chế độ một style streets-v2), màu building 3D ước lượng |
 | `app/shadows.py` | Đổ bóng vẽ sẵn: tính bóng building theo hướng nắng của từng chế độ, cho một vùng (trang xem 3D) hoặc cả GeoPackage (layer `shadows` của PMTiles) |
+| `app/landmark_shadow.py` | Bóng mặt đất của landmark tính từ mesh GLB của version đang dùng, theo từng chế độ có nắng; lưu ở `landmarks/<id>/shadows/` |
 | `app/landmark.py` | Neo landmark trong trang xem 3D: footprint của một `building_id` trong PMTiles (ghép mảnh tile, tâm, diện tích, chiều cao) |
 | `app/landmark_library.py` | Thư viện landmark: version GLB, placement của từng version, version đang dùng và lịch sử (thư mục `landmarks/`), landmark đang dùng của một file PMTiles |
 | `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |

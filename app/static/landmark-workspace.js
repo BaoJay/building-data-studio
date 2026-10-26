@@ -11,6 +11,10 @@
 // never drawn here. Opening a landmark lets you look at another version, or a local file, with a
 // draft placement: it stands in for the version drawn until the landmark is closed.
 //
+// A landmark with a version in use casts its ground shadow from that GLB, computed on the server
+// and dissolved with the LoD1 shadows (preview.js asks again when released() changes). A draft
+// placement or a version not in use keeps the shadow of the LoD1 box.
+//
 // The drawer (landmark-drawer.js) carries everything of the library: list and search, building
 // attributes and registration, GLB upload, versions, version in use, placement, history,
 // manifest and trash. The URL keeps the landmark open (?lm=) or the building clicked (?id=) and
@@ -34,7 +38,8 @@ const glbUrl = (lid, n) => `${lmUrl(lid)}/versions/${n}/glb`;
 // host (preview.js): map, token, params, state (layer, idCol, parentAttr, heightAttr, baseAttr,
 // maxzoom), name(), threeD(), referenceColor(), buildingFilter(id), select(id) (the building lit
 // up in the LoD1 colours), syncExtrusions() (bldg-3d filter, which reads hidden()), restyle()
-// (LoD1 colours, which read pending()), palette(),
+// (LoD1 colours, which read pending()), syncShadows() (ground shadows, which read released()),
+// palette(),
 // openDrawer(), previewUrl(f, name, lm). Call start() on the workspace returned.
 export function create(host) {
   return new Workspace(host);
@@ -55,6 +60,7 @@ class Workspace {
     this.overrideId = null;
     this.localSeq = 0;
     this.pendingSig = "";  // pending() when the LoD1 colours were last set
+    this.shadowSig = "";  // shadowRev() when the shadows were last asked for
     Object.assign(this, { search: "", picking: false, confirmUse: undefined, editing: false, uploading: false, compare: false, flat: false, qaOpen: false });
     this.marker = null;
     this.urlTimer = null;
@@ -152,6 +158,21 @@ class Workspace {
       label: `${l.original_name} (v${l.version})`, placement: l.placement,
     })));
     this.syncFootprints();
+    if (this.shadowRev() !== this.shadowSig) {
+      this.shadowSig = this.shadowRev();
+      this.host.syncShadows();
+    }
+  }
+
+  // The landmarks drawn whose version is in use: they cast their ground shadow from the GLB
+  // (app/landmark_shadow.py), the others keep the shadow of their LoD1 box.
+  released() {
+    return renderable(this.items, this.host.state).filter((l) => l.in_use !== null && l.version === l.in_use);
+  }
+
+  // Changes whenever a released shadow would: a version put in use or out, a placement saved.
+  shadowRev() {
+    return this.released().map((l) => `${l.id}:${l.version}:${PLACEMENT_KEYS.map((k) => l.placement[k]).join(",")}`).join("|");
   }
 
   // Another layer of the PMTiles: nothing loaded belongs to it.

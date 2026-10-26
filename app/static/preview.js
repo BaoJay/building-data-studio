@@ -20,7 +20,8 @@ const landmark = { ws: null, failed: false };
 // ------------------------------------------------------------------ shadows (prototype)
 // Ground shadows precomputed on the server (app/shadows.py) for the area around the view,
 // cast along the sun of the light preset (day sun on the other basemaps). Drawn as one
-// dissolved fill under the labels and the buildings.
+// dissolved fill under the labels and the buildings. A landmark with a version in use casts from
+// its GLB mesh instead of its LoD1 box (app/landmark_shadow.py); night and dark cast none.
 const SHADOW_MINZOOM = 15;
 // A convert output with shadows carries them as this layer (one set per preset, `preset` field).
 const SHADOW_LAYER = "shadows";
@@ -65,9 +66,10 @@ async function updateShadows(map) {
   if (why) {
     shadow.seq++;
     note(why.trim());
-    if (map.getLayer("bldg-shadow")) map.setLayoutProperty("bldg-shadow", "visibility", "none");
+    ["bldg-shadow", "lmk-shadow"].forEach((id) => { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none"); });
     return;
   }
+  const released = landmark.ws ? landmark.ws.released() : [];
   if (state.bakedShadows) {
     // Shadows shipped in the PMTiles: the same layer + filter the mobile app would use.
     if (!map.getLayer("bldg-shadow")) {
@@ -78,13 +80,18 @@ async function updateShadows(map) {
     map.setPaintProperty("bldg-shadow", "fill-color", look.color);
     map.setPaintProperty("bldg-shadow", "fill-opacity", look.opacity);
     map.setLayoutProperty("bldg-shadow", "visibility", "visible");
-    note(`Bóng có sẵn trong file (layer ${SHADOW_LAYER}, z${state.bakedShadows.minzoom ?? "?"}–${state.bakedShadows.maxzoom ?? "?"}), lọc theo preset = "${shadowPresetId()}" như trên app.`);
+    note(`Bóng có sẵn trong file (layer ${SHADOW_LAYER}, z${state.bakedShadows.minzoom ?? "?"}–${state.bakedShadows.maxzoom ?? "?"}), lọc theo preset = "${shadowPresetId()}" như trên app.`
+      + (released.length ? ` ${released.length} landmark đổ bóng theo GLB đè lên, bóng hộp LoD1 của chúng trong file vẫn nằm dưới.` : ""));
+    showLandmarkShadows(map, look, released);
     return;
   }
 
   const params = new URLSearchParams({ f: token, layer: state.layer, z: String(state.maxzoom), h: state.heightAttr, preset: shadowPresetId() });
   if (state.baseAttr) params.set("base", state.baseAttr);
   if (!$("#hideParentsWrap").hidden && $("#hideParents").checked) params.set("parts", "has_parts");
+  // Not read by the server (it finds the released landmarks itself): a release or a placement
+  // saved changes the key, so the shadows are asked for again.
+  if (landmark.ws) params.set("lm", landmark.ws.shadowRev());
   const key = params.toString();
   const [w, s, e, n] = viewBbox(map, 0, 0.6);
   const have = shadow.key === key && shadow.bbox && shadow.bbox[0] <= w && shadow.bbox[1] <= s && shadow.bbox[2] >= e && shadow.bbox[3] >= n;
@@ -107,10 +114,14 @@ async function updateShadows(map) {
     if (seq !== shadow.seq) return;
     const az = Number(res.headers.get("X-Sun-Azimuth"));
     const alt = Number(res.headers.get("X-Sun-Altitude"));
+    const lms = Number(res.headers.get("X-Shadow-Landmarks") || 0);
+    const lmErrors = res.headers.get("X-Shadow-Landmark-Errors");
     Object.assign(shadow, {
       key, bbox, data,
       info: `Nắng từ hướng ${COMPASS[Math.round(az / 45) % 8]}, cao ${alt}° → bóng dài ${(1 / Math.tan((alt * Math.PI) / 180)).toFixed(2)}× chiều cao. `
-        + `${Number(res.headers.get("X-Shadow-Buildings")).toLocaleString("vi-VN")} building, ${res.headers.get("X-Shadow-Ms")} ms. Kéo ra ngoài vùng này sẽ tự tính lại.`,
+        + `${Number(res.headers.get("X-Shadow-Buildings")).toLocaleString("vi-VN")} building, ${res.headers.get("X-Shadow-Ms")} ms`
+        + `${lms ? ` · ${lms} landmark đổ bóng theo GLB` : ""}. Kéo ra ngoài vùng này sẽ tự tính lại.`
+        + `${lmErrors ? ` Giữ bóng LoD1: ${decodeURIComponent(lmErrors)}` : ""}`,
       download: `/api/shadows?${params}&download=1`,
     });
   }
@@ -118,6 +129,32 @@ async function updateShadows(map) {
   note(shadow.info);
   $("#shadowDownload").href = shadow.download;
   $("#shadowDownloadRow").hidden = false;
+}
+
+// Baked shadows: the GLB shadow of each released landmark drawn over the file's own layer, with
+// the same look. (On the fly, the server dissolves them into the area instead.)
+const lmkShadow = { key: null, seq: 0 };
+async function showLandmarkShadows(map, look, released) {
+  const preset = shadowPresetId();
+  const key = `${preset}|${landmark.ws?.shadowRev() ?? ""}`;
+  if (lmkShadow.key !== key || !map.getSource("lmk-shadow")) {  // a style switch drops the source
+    const seq = ++lmkShadow.seq;
+    const files = await Promise.all(released.map((l) => fetch(`/api/landmarks/${encodeURIComponent(l.id)}/versions/${l.version}/shadow?preset=${preset}`)
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+    if (seq !== lmkShadow.seq) return;
+    const data = { type: "FeatureCollection", features: files.flatMap((f) => f?.features || []) };
+    if (map.getSource("lmk-shadow")) map.getSource("lmk-shadow").setData(data);
+    else map.addSource("lmk-shadow", { type: "geojson", data });
+    lmkShadow.key = key;
+  }
+  if (!map.getLayer("lmk-shadow") && map.getSource("lmk-shadow")) {
+    const before = map.getStyle().layers.find((l) => l.type === "symbol" && l.layout?.["text-field"])?.id;
+    map.addLayer({ id: "lmk-shadow", type: "fill", source: "lmk-shadow", paint: { "fill-antialias": false } }, before);
+  }
+  if (!map.getLayer("lmk-shadow")) return;
+  map.setPaintProperty("lmk-shadow", "fill-color", look.color);
+  map.setPaintProperty("lmk-shadow", "fill-opacity", look.opacity);
+  map.setLayoutProperty("lmk-shadow", "visibility", "visible");
 }
 
 function showShadow(map, look) {
@@ -272,6 +309,7 @@ async function openWorkspace(map) {
         applyStyle(map);
       },
       syncExtrusions: () => syncExtrusions(map),
+      syncShadows: () => { if (state.layer) syncShadows(map); },
       restyle: () => { if (state.layer) applyStyle(map); },
       openDrawer: () => setDrawer(map, true),
       previewUrl: (f, name, lm) => {
@@ -449,8 +487,8 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-2d", "fill-color", expr);
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
-  // A landmark model replaces the extrusion of its building (parts included). Its ground
-  // shadow (bldg-shadow) stays.
+  // A landmark model replaces the extrusion of its building (parts included). With a version
+  // in use its ground shadow is cast from the GLB, else it keeps its LoD1 box's (syncShadows).
   syncExtrusions(map);
   map.setLayoutProperty("bldg-3d", "visibility", threeD ? "visible" : "none");
   map.setLayoutProperty("bldg-2d", "visibility", threeD ? "none" : "visible");

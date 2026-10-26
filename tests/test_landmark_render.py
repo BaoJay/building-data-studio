@@ -248,6 +248,29 @@ def test_library_crud_through_the_api(app_state):
     assert status == 404
 
 
+# ------------------------------------------------------------------ ground shadows of the GLB
+
+
+def test_only_landmarks_in_use_of_this_file_are_released(files):
+    assert [r["id"] for r in files["library"].released(files["a"])] == [files["on_a"]]
+
+
+def test_shadow_route_casts_presets_with_sun_only(app_state, monkeypatch):
+    from app import landmark_shadow, shadows
+
+    monkeypatch.setattr(landmark_shadow, "preset_sun", lambda pid: shadows.Sun(270, 45) if pid == "day" else None)
+    lid = app_state["on_a"]
+    status, headers, body = call("GET", f"/api/landmarks/{lid}/versions/1/shadow", "preset=day")
+    assert status == 200 and headers["content-type"].startswith("application/geo+json")
+    assert json.loads(body)["type"] == "FeatureCollection"
+    assert (app_state["library"].folder(lid) / "shadows").is_dir()
+    for preset in ("night", "dark"):
+        status, _, _ = call("GET", f"/api/landmarks/{lid}/versions/1/shadow", f"preset={preset}")
+        assert status == 404, preset
+    status, _ = get_json(f"/api/landmarks/{lid}/versions/9/shadow", "preset=day")
+    assert status == 404
+
+
 # ------------------------------------------------------------------ /landmarks is gone
 
 

@@ -12,6 +12,7 @@ import threading
 import webbrowser
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import uvicorn
 from starlette.applications import Starlette
@@ -21,7 +22,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, landmark, landmark_library, osmbase, pipeline, probe, shadows, tools, vmap
+from . import __version__, diff, glb, landmark, landmark_library, landmark_shadow, osmbase, pipeline, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -318,15 +319,19 @@ async def building_shadows(request: Request) -> Response:
         if not light:
             raise shadows.ShadowError("Style không có khối light để lấy hướng nắng.")
         zoom = int(q["z"]) if q.get("z") and path.suffix.lower() == ".pmtiles" else None
+        layer = shadows.check_field(q.get("layer"), "layer") or ""
+        # Released landmarks of this file cast from their GLB instead of their LoD1 box.
+        landmarks, fallbacks = await _in_thread(landmark_shadow.released, library, path, preset)
         req = shadows.Request(
             path=path,
-            layer=shadows.check_field(q.get("layer"), "layer") or "",
+            layer=layer,
             zoom=zoom,
             bbox=shadows.parse_bbox(q.get("bbox", "")),
             height=height,
             base=shadows.check_field(q.get("base"), "đáy"),
             parts=shadows.check_field(q.get("parts"), "has_parts"),
             sun=shadows.Sun.from_light(light),
+            landmarks=tuple(lm for lm in landmarks if lm.layer in ("", layer)),
         )
         body, stats = await _in_thread(shadows.cached_compute, req)
     except ValueError as exc:  # ShadowError, bad z
@@ -339,7 +344,10 @@ async def building_shadows(request: Request) -> Response:
         "X-Shadow-Ms": str(stats["ms"]),
         "X-Sun-Azimuth": f"{req.sun.azimuth:g}",
         "X-Sun-Altitude": f"{req.sun.altitude:g}",
+        "X-Shadow-Landmarks": str(stats["landmarks"]),
     }
+    if fallbacks:  # landmarks that keep their LoD1 shadow, and why (UTF-8, percent-encoded)
+        headers["X-Shadow-Landmark-Errors"] = quote(" · ".join(fallbacks)[:2000])
     if q.get("download"):
         headers["Content-Disposition"] = f'attachment; filename="shadows-{preset}.geojson"'
     return Response(body, media_type="application/geo+json", headers=headers)
@@ -543,6 +551,29 @@ async def landmark_glb(request: Request) -> Response:
     return FileResponse(path, media_type="model/gltf-binary", headers={"Cache-Control": "max-age=31536000, immutable"})
 
 
+async def landmark_shadow_file(request: Request) -> Response:
+    """The ground shadow one version casts under a preset with sun (?preset=, default day), as
+    GeoJSON: computed from the GLB on first use (app/landmark_shadow.py)."""
+    preset = request.query_params.get("preset") or vmap.DEFAULT_PRESET
+    if preset not in vmap.PRESETS:
+        return _error(f"Không có preset {preset}.")
+    if vmap.PRESETS[preset].shadow is None:
+        return _error("Chế độ này không có nắng nên không đổ bóng.", 404)
+    lid, n = request.path_params["lid"], request.path_params["n"]
+
+    def cast() -> Path:
+        rec = library._read(lid)
+        return landmark_shadow.for_version(library.folder(lid), rec, library._version(rec, n), preset)
+
+    try:
+        path = await _in_thread(cast)
+    except (landmark_library.LibraryError, glb.GlbError, shadows.ShadowError) as exc:
+        return _library_error(exc)
+    except tools.ToolMissingError as exc:
+        return _error(str(exc), 500)
+    return FileResponse(path, media_type="application/geo+json", headers=NO_CACHE)
+
+
 async def set_landmark_placement(request: Request) -> Response:
     body = await _json(request)
     try:
@@ -565,8 +596,9 @@ async def use_landmark_version(request: Request) -> Response:
 
 
 async def landmarks_manifest(request: Request) -> Response:
-    """The version in use of every landmark with its placement (?download=1 saves it)."""
-    data = await _in_thread(library.manifest)
+    """The version in use of every landmark with its placement and its ground shadow per preset
+    with sun (?download=1 saves it)."""
+    data = await _in_thread(lambda: landmark_shadow.add_to_manifest(library, library.manifest()))
     headers = dict(NO_CACHE)
     if request.query_params.get("download"):
         headers["Content-Disposition"] = 'attachment; filename="landmarks-manifest.json"'
@@ -626,6 +658,7 @@ routes = [
     Route("/api/landmarks/{lid}", delete_landmark, methods=["DELETE"]),
     Route("/api/landmarks/{lid}/versions", upload_landmark_version, methods=["PUT", "POST"]),
     Route("/api/landmarks/{lid}/versions/{n:int}/glb", landmark_glb, methods=["GET", "HEAD"]),
+    Route("/api/landmarks/{lid}/versions/{n:int}/shadow", landmark_shadow_file, methods=["GET"]),
     Route("/api/landmarks/{lid}/versions/{n:int}/placement", set_landmark_placement, methods=["PUT"]),
     Route("/api/landmarks/{lid}/use", use_landmark_version, methods=["POST"]),
     Mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static"),

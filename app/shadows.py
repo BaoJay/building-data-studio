@@ -18,6 +18,10 @@ shifted copies plus one parallelogram per edge (holes included), whose union is 
 Pieces of a building cut at tile or cell edges need no stitching: the sweep of a union is
 the union of the sweeps. The dissolve keeps overlapping shadows from stacking darker under
 a translucent fill. Shadows land on the ground only (not on roofs or walls of neighbours).
+
+A landmark with a version in use casts from its GLB mesh instead (app/landmark_shadow.py): in
+compute(), its shadow polygon replaces its LoD1 building and parts, inside the same dissolve,
+and their footprints do not cut it: the shadow covers the ground around the model. Presets without sun (night, dark) cast nothing.
 """
 
 from __future__ import annotations
@@ -91,6 +95,9 @@ class Request:
     base: str | None
     parts: str | None  # boolean field marking outlines that are drawn as parts instead
     sun: Sun
+    # Released landmarks (landmark_shadow.LandmarkShadow): their LoD1 building and parts give
+    # way to the shadow cast by their GLB, which their footprints do not cut out either.
+    landmarks: tuple = ()
 
 
 def parse_bbox(text: str) -> tuple[float, float, float, float]:
@@ -222,6 +229,10 @@ _UNION_SQL = (
     "), 3)) AS geometry"
 )
 
+# The same without footprints to cut out (a difference with nothing is NULL).
+_UNION_ONLY_SQL = ("SELECT CastToMultiPolygon(ST_CollectionExtract(ST_Union(CASE WHEN ST_IsValid(geometry) "
+                   "THEN geometry ELSE MakeValid(geometry) END), 3)) AS geometry FROM pieces WHERE k = 's'")
+
 EMPTY = b'{"type":"FeatureCollection","features":[]}'
 
 
@@ -239,9 +250,12 @@ def compute(req: Request) -> tuple[bytes, dict[str, Any]]:
     margin = read_margin_m(req.sun)
     m_lat = margin / METERS_PER_DEG_LAT
     m_lon = margin / (METERS_PER_DEG_LON_EQ * math.cos(math.radians(lat)))
-    fields = [f for f in (req.height, req.base, req.parts) if f]
+    released = {lm.building_id for lm in req.landmarks}
+    id_fields = {f for lm in req.landmarks for f in (lm.id_field, lm.parent_field) if f}
+    fields = list(dict.fromkeys(f for f in (req.height, req.base, req.parts, *sorted(id_fields)) if f))
     dlon, dlat = req.sun.offset_deg(lat)
-    stats = {"buildings": 0, "pieces": 0}
+    stats = {"buildings": 0, "pieces": 0, "landmarks": 0}
+    footprints = 0
     with tempfile.TemporaryDirectory(prefix="bds-shadow-") as tmp:
         src = Path(tmp) / "src.geojsonl"
         pieces = Path(tmp) / "pieces.geojsonl"
@@ -264,18 +278,27 @@ def compute(req: Request) -> tuple[bytes, dict[str, Any]]:
                 if not polys:
                     continue
                 stats["buildings"] += 1
+                if released and any(str(props.get(f)) in released for f in id_fields if props.get(f) is not None):
+                    continue  # a released landmark: its GLB shadow goes in below, over its footprint too
                 for rings in polys:
                     fout.write(_feature("f", rings) + "\n")
+                    footprints += 1
                     if high is None or high <= low:
                         continue
                     for piece in shadow_pieces(rings, low, high, dlon, dlat):
                         fout.write(_feature("s", piece) + "\n")
                         stats["pieces"] += 1
+            for lm in req.landmarks:
+                for feat in json.loads(lm.path.read_text()).get("features") or []:
+                    for rings in _polygons(feat.get("geometry")):
+                        fout.write(_feature("s", rings) + "\n")
+                        stats["pieces"] += 1
+                stats["landmarks"] += 1
         if not stats["pieces"]:
             body = EMPTY
         else:
             out = _run([ogr2ogr, "-f", "GeoJSON", "/vsistdout/", str(pieces), "-dialect", "SQLite",
-                        "-sql", _UNION_SQL, "-lco", "COORDINATE_PRECISION=6"], "gộp bóng")
+                        "-sql", _UNION_SQL if footprints else _UNION_ONLY_SQL, "-lco", "COORDINATE_PRECISION=6"], "gộp bóng")
             body = out.encode() if out.strip() else EMPTY
     stats["ms"] = round((time.monotonic() - t0) * 1000)
     return body, stats

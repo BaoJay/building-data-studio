@@ -395,11 +395,24 @@ export function renderQa(ws) {
   }
   if (fp && d) {
     rows.push(`<div>Neo tại ${d.lat.toFixed(6)}, ${d.lon.toFixed(6)}, cách tâm footprint ${fmtNum(distanceM(fp.centroid, [d.lon, d.lat]), 1)} m. `
-      + `Extrusion của ${fp.matched === "parent" ? "các khối con của " : ""}building đã ẩn khi mô hình tải xong, bóng vẫn giữ.</div>`);
+      + `Extrusion của ${fp.matched === "parent" ? "các khối con của " : ""}building đã ẩn khi mô hình tải xong.</div>`);
   }
+  if (d) rows.push(shadowRow(ws));
   if (d) rows.push(lightRows(ws));
   info.innerHTML = rows.join("");
   $("#lmkUniforms").textContent = model && d ? uniformDump(ws, d) : "";
+}
+
+// Which ground shadow the landmark casts (app/landmark_shadow.py): its GLB once a version is in
+// use, else the LoD1 box of its building.
+function shadowRow(ws) {
+  const rec = ws.sel?.kind === "landmark" ? ws.sel.rec : null;
+  const [, az, polar] = ws.layer.light.position;
+  const sun = `nắng từ ${fmtNum(az, 0)}°, cao ${fmtNum(90 - polar, 0)}°`;
+  if (ws.layer.night) return `<div>Bóng mặt đất: không có (ban đêm không đổ bóng).</div>`;
+  if (!rec || rec.in_use === null) return `<div>Bóng mặt đất: theo hộp LoD1 của building (chưa có version đang dùng).</div>`;
+  const viewing = ws.preview?.kind === "version" && ws.preview.n === rec.in_use && !ws.isDirty() ? "" : ` <span class="warn">Bản đang xem chưa đổ bóng: bóng đi theo v${rec.in_use} với placement đã lưu.</span>`;
+  return `<div>Bóng mặt đất: theo mesh GLB v${rec.in_use} (${sun}), gộp với bóng LoD1 xung quanh. Ban đêm và nền tối không đổ bóng.${viewing}</div>`;
 }
 
 function lightRows(ws) {

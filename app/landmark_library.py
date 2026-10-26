@@ -257,6 +257,12 @@ class Library:
         recs.sort(key=lambda r: (r["name"] or r["building_id"]).casefold())
         return [render_item(r) for r in recs]
 
+    def released(self, path: Path) -> list[dict[str, Any]]:
+        """The landmarks registered from this PMTiles with a version in use (records): those
+        cast their ground shadow from the GLB (app/landmark_shadow.py)."""
+        return [r for r in self._records()
+                if r["in_use"] is not None and same_file((r.get("source") or {}).get("path"), path)]
+
     def source_paths(self) -> dict[str, str]:
         """Landmark id -> the PMTiles it was registered from."""
         return {r["id"]: (r.get("source") or {}).get("path") or "" for r in self._records()}

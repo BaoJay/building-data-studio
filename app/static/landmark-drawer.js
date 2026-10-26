@@ -49,17 +49,21 @@ function renderList(ws) {
   const q = ws.search.trim().toLowerCase();
   const all = ws.lib.landmarks;
   const here = all.filter((l) => l.same_source);
-  const inUse = here.filter((l) => l.in_use != null).length;
+  const drawn = here.filter((l) => l.versions).length;
+  const noGlb = here.length - drawn;
   $("#lmCount").textContent = all.length ? fmtInt(all.length) : "";
-  $("#lmHere").textContent = here.length ? `${fmtInt(here.length)} landmark trên PMTiles này, ${fmtInt(inUse)} đang dùng được vẽ trên bản đồ.` : "PMTiles này chưa có landmark nào.";
+  $("#lmHere").textContent = here.length
+    ? `${fmtInt(here.length)} landmark trên PMTiles này, ${fmtInt(drawn)} có GLB được vẽ trên bản đồ${noGlb ? `, ${fmtInt(noGlb)} chưa có GLB (tô màu riêng trên bản đồ)` : ""}.`
+    : "PMTiles này chưa có landmark nào.";
   // The landmarks of this PMTiles first; the others open read-only (they are not drawn here).
   const items = all.filter((l) => !q || [l.name, l.building_id, l.link].some((v) => String(v || "").toLowerCase().includes(q)))
     .sort((a, b) => Number(Boolean(b.same_source)) - Number(Boolean(a.same_source)));
   box.innerHTML = items.map((l) => {
     const badge = l.in_use != null ? `<span class="badge done">v${l.in_use}</span>` : `<span class="badge">${l.versions ? "chưa dùng" : "chưa có GLB"}</span>`;
     let meta = l.in_use != null ? `v${l.in_use} đang dùng · ${l.versions} version` : `${l.versions} version`;
+    if (l.same_source && l.in_use == null && l.versions) meta += ` · bản đồ hiện v${l.versions} (mới nhất)`;
     if (!l.same_source) meta += ` · PMTiles khác (${l.source_name || "?"})`;
-    else if (l.in_use != null) meta += loadState(ws, l.id);
+    else if (l.versions) meta += loadState(ws, l.id);
     return `<li><button type="button" data-lm="${esc(l.id)}" class="${l.same_source ? "" : "lm-other"}">
       <span class="nm">${esc(l.name || l.building_id)}</span>${badge}
       <span class="meta">${l.name ? `<span class="mono">${esc(l.building_id)}</span> · ` : ""}${esc(meta)}</span></button></li>`;
@@ -202,6 +206,7 @@ function landmarkHtml(ws, rec) {
   return `<section class="lm-sec">
     ${backRow(`<h2 class="lm-title">${esc(rec.name || rec.building_id)}</h2>`, `Landmark · ${rec.versions.length} version`)}
     <div>${inUse}</div>
+    ${here ? drawnNote(rec) : ""}
     ${other}
     ${head}
   </section>
@@ -221,6 +226,14 @@ function landmarkHtml(ws, rec) {
     <button class="btn small danger" type="button" data-act="delete">Xoá landmark…</button>
     <span class="hint">Thư mục được chuyển vào <code>_trash/</code>, không file nào bị xoá.</span>
   </section>`;
+}
+
+// What the map shows of a landmark that has no version in use.
+function drawnNote(rec) {
+  if (rec.in_use != null) return "";
+  if (!rec.versions.length) return `<div class="hint">Chưa có file GLB: building vẫn hiện bằng extrusion, tô màu riêng. Upload GLB ở mục <b>File GLB</b> bên dưới.</div>`;
+  const v = rec.versions.at(-1);
+  return `<div class="hint">Bản đồ đang hiện v${v.version} (version mới nhất) vì chưa dùng version nào. Bấm <b>Dùng</b> để đưa nó vào manifest cho Mobile.</div>`;
 }
 
 // A landmark registered from another PMTiles: kept in the list, never drawn on this one.

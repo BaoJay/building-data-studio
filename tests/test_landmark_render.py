@@ -1,4 +1,5 @@
-"""Landmarks drawn by the 3D preview: only the versions in use of the PMTiles being viewed,
+"""Landmarks drawn by the 3D preview: the landmarks with a GLB of the PMTiles being viewed (the
+version in use, else the newest),
 matched by the resolved path of the file token (app/landmark_library.py, /api/landmarks/render),
 and the library API the preview's drawer uses, end to end."""
 
@@ -51,10 +52,12 @@ def files(tmp_path):
 # ------------------------------------------------------------------ library
 
 
-def test_only_the_versions_in_use_of_this_file(files):
+def test_the_landmarks_with_a_glb_of_this_file(files):
     library = files["library"]
-    [item] = library.render(files["a"])
-    assert (item["id"], item["building_id"], item["version"]) == (files["on_a"], "1", 1)
+    unused, item = library.render(files["a"])  # by name: "Chưa dùng", "Hồ Gươm"; "Chưa có GLB" is left out
+    assert (item["id"], item["building_id"], item["version"], item["in_use"]) == (files["on_a"], "1", 1, 1)
+    # No version in use: the newest is drawn, and says so.
+    assert (unused["building_id"], unused["version"], unused["in_use"]) == ("3", 1, None)
     assert item["placement"] == {"heading": 0.0, "scale": 1.0, "anchor": "origin", "lon": 105.8375194, "lat": 21.0371115}
     assert item["bbox"] == [105.837, 21.037, 105.838, 21.0375]
     assert item["model"]["bounds"] == [[10, 0, -2], [14, 6, 0]]
@@ -67,7 +70,7 @@ def test_a_file_reached_another_way_is_the_same_file(files, tmp_path):
     link.symlink_to(files["a"])
     same = [files["a"].parent / ".." / "tiles" / "a.pmtiles", link]
     for path in same:
-        assert [i["id"] for i in files["library"].render(path)] == [files["on_a"]], path
+        assert [i["building_id"] for i in files["library"].render(path)] == ["3", "1"], path
 
 
 def test_a_file_without_landmarks_draws_none(files, tmp_path):
@@ -82,7 +85,7 @@ def test_records_without_a_source_path_are_never_drawn(files):
     rec = json.loads(rec_path.read_text("utf-8"))
     rec["source"] = {"name": "a.pmtiles"}
     rec_path.write_text(json.dumps(rec), "utf-8")
-    assert library.render(files["a"]) == []
+    assert files["on_a"] not in [i["id"] for i in library.render(files["a"])]
 
 
 @pytest.mark.parametrize("recorded", [None, "", "relative/a.pmtiles"])
@@ -150,7 +153,8 @@ def app_state(files, monkeypatch):
 def test_render_endpoint_answers_the_landmarks_of_the_token(app_state):
     status, data = get_json("/api/landmarks/render", f"f={app_state['ta']}")
     assert status == 200
-    [item] = data["landmarks"]
+    [unused, item] = data["landmarks"]
+    assert unused["in_use"] is None
     lid = app_state["on_a"]
     assert (item["id"], item["version"], item["glb"]) == (lid, 1, f"/api/landmarks/{lid}/versions/1/glb")
     assert item["placement"]["anchor"] == "origin" and item["geometry"]["type"] == "Polygon"
@@ -158,7 +162,7 @@ def test_render_endpoint_answers_the_landmarks_of_the_token(app_state):
     # The GLB URL serves the version, and nothing of file B leaks into A.
     status, headers, body = call("GET", item["glb"])
     assert status == 200 and body[:4] == b"glTF" and headers["content-type"] == "model/gltf-binary"
-    assert {i["building_id"] for i in data["landmarks"]} == {"1"}
+    assert {i["building_id"] for i in data["landmarks"]} == {"1", "3"}
 
 
 def test_render_endpoint_follows_the_resolved_path(app_state, tmp_path):
@@ -166,7 +170,7 @@ def test_render_endpoint_follows_the_resolved_path(app_state, tmp_path):
     link.symlink_to(app_state["a"])
     token = app_state["registry"].register(link)
     status, data = get_json("/api/landmarks/render", f"f={token}")
-    assert status == 200 and [i["id"] for i in data["landmarks"]] == [app_state["on_a"]]
+    assert status == 200 and [i["building_id"] for i in data["landmarks"]] == ["3", "1"]
 
 
 @pytest.mark.parametrize("query", ["", "f=", "f=not-a-token", "f=../../etc/passwd"])
@@ -207,9 +211,10 @@ def test_library_crud_through_the_api(app_state):
     status, _, _ = call("PUT", f"/api/landmarks/{lid}/versions", "name=x.obj", b"nope")
     assert status == 400
 
-    # Not in use yet: not drawn.
+    # Not in use yet: drawn all the same (the newest version), marked as not in use.
     _, data = get_json("/api/landmarks/render", f"f={ta}")
-    assert lid not in [i["id"] for i in data["landmarks"]]
+    [item] = [i for i in data["landmarks"] if i["id"] == lid]
+    assert (item["version"], item["in_use"]) == (1, None)
 
     placement = {"heading": 90, "scale": 2, "anchor": "bbox", "lon": 105.8376, "lat": 21.0372}
     status, _, body = call("PUT", f"/api/landmarks/{lid}/versions/1/placement", json_body=placement)
@@ -231,8 +236,11 @@ def test_library_crud_through_the_api(app_state):
 
     status, _, body = call("POST", f"/api/landmarks/{lid}/use", json_body={"version": None})
     assert status == 200 and json.loads(body)["in_use"] is None
+    status, manifest = get_json("/api/landmarks/manifest.json")
+    assert lid not in [m["id"] for m in manifest["landmarks"]]  # the manifest keeps versions in use only
     _, data = get_json("/api/landmarks/render", f"f={ta}")
-    assert lid not in [i["id"] for i in data["landmarks"]]
+    [item] = [i for i in data["landmarks"] if i["id"] == lid]
+    assert item["in_use"] is None
 
     status, _, body = call("DELETE", f"/api/landmarks/{lid}")
     assert status == 200 and "_trash" in json.loads(body)["moved_to"]

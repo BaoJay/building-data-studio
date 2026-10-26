@@ -1,10 +1,10 @@
 // Which landmark models the 3D preview draws, and loading them. Pure logic: no DOM, no three.js,
 // no MapLibre, so tests/js/landmark-store.test.mjs runs it under Node.
 //
-// Every landmark of the PMTiles being viewed that has a version in use is an entry (its id, the
+// Every landmark of the PMTiles being viewed that has a GLB is an entry (its id, the
 // building_id it replaces, the footprint box, the GLB to load and its placement). The landmark
 // being edited may be overridden by another version, or a local file, with a draft placement:
-// the override stands in for its version in use, so the two never stand on the same building.
+// the override stands in for the version drawn, so the two never stand on the same building.
 //
 // Models load lazily: only entries whose footprint box meets the view grown by BUFFER on each
 // side, nearest to the centre first, at most CAPACITY of them; CONCURRENCY requests at a time,
@@ -31,7 +31,7 @@ export class ModelStore {
   // load(entry, signal) -> Promise<model>; dispose(model); onChange(): the models shown changed.
   constructor({ load, dispose = () => {}, onChange = () => {}, concurrency = CONCURRENCY, capacity = CAPACITY, buffer = BUFFER } = {}) {
     Object.assign(this, { load, dispose, onChange, concurrency, capacity, buffer });
-    this.items = new Map();  // id -> entry (version in use)
+    this.items = new Map();  // id -> entry (version in use, else the newest)
     this.overrides = new Map();  // id -> entry (being edited)
     this.cache = new Map();  // key -> { model, used }
     this.pending = new Map();  // key -> AbortController
@@ -106,7 +106,7 @@ export class ModelStore {
   }
 
   // The entries drawn now, each with its model: an override whose model is not loaded yet
-  // leaves its version in use on the map meanwhile (none once the override failed).
+  // leaves the version drawn before on the map meanwhile (none once the override failed).
   shown() {
     const out = [];
     for (const e of this.wanted) {

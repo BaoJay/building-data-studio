@@ -439,9 +439,10 @@ async def list_landmarks(request: Request) -> Response:
 
 
 async def render_landmarks(request: Request) -> Response:
-    """The landmarks of one PMTiles (?f=<token>) with a version in use, for the 3D preview:
-    footprint, version, placement, model box and GLB URL. Landmarks registered from another
-    file are left out: the token is resolved to its path and compared with each source.path."""
+    """The landmarks of one PMTiles (?f=<token>) that have a GLB, for the 3D preview: footprint,
+    the version to draw (in use, else the newest), placement, model box and GLB URL. Landmarks
+    registered from another file are left out: the token is resolved to its path and compared
+    with each source.path."""
     path = _source_file(request.query_params.get("f", ""))
     if path is None:
         return _error("File PMTiles không tồn tại.", 404)

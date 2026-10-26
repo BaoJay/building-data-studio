@@ -2,12 +2,14 @@
 // of one PMTiles. preview.js loads it (with three.js) once the building layers are up, except in
 // diff mode.
 //
-// Every landmark registered from this PMTiles with a version in use is drawn by one custom layer
-// (landmark-model.js), its GLB loaded when it comes near the view (landmark-store.js). The
+// Every landmark registered from this PMTiles that has a GLB is drawn as soon as the page opens,
+// by one custom layer (landmark-model.js): its version in use, else its newest version. Its GLB
+// loads when it comes near the view (landmark-store.js). A landmark without any GLB yet keeps its
+// building, coloured apart so it can be found and clicked to upload one. The
 // extrusion of its building, parts included, is hidden once the GLB has loaded; a GLB that fails
 // leaves the extrusion and the error shows in the drawer. Landmarks of other files are listed but
 // never drawn here. Opening a landmark lets you look at another version, or a local file, with a
-// draft placement: it stands in for the version in use until the landmark is closed.
+// draft placement: it stands in for the version drawn until the landmark is closed.
 //
 // The drawer (landmark-drawer.js) carries everything of the library: list and search, building
 // attributes and registration, GLB upload, versions, version in use, placement, history,
@@ -31,7 +33,8 @@ const glbUrl = (lid, n) => `${lmUrl(lid)}/versions/${n}/glb`;
 
 // host (preview.js): map, token, params, state (layer, idCol, parentAttr, heightAttr, baseAttr,
 // maxzoom), name(), threeD(), referenceColor(), buildingFilter(id), select(id) (the building lit
-// up in the LoD1 colours), syncExtrusions() (bldg-3d filter, which reads hidden()), palette(),
+// up in the LoD1 colours), syncExtrusions() (bldg-3d filter, which reads hidden()), restyle()
+// (LoD1 colours, which read pending()), palette(),
 // openDrawer(), previewUrl(f, name, lm). Call start() on the workspace returned.
 export function create(host) {
   return new Workspace(host);
@@ -51,6 +54,7 @@ class Workspace {
     this.place = null;  // building clicked: footprint read by /api/building, once a local file is tried on it
     this.overrideId = null;
     this.localSeq = 0;
+    this.pendingSig = "";  // pending() when the LoD1 colours were last set
     Object.assign(this, { search: "", picking: false, confirmUse: undefined, editing: false, uploading: false, compare: false, flat: false, qaOpen: false });
     this.marker = null;
     this.urlTimer = null;
@@ -116,6 +120,11 @@ class Workspace {
     this.lib = { dir: data.dir, dirToken: data.dir_token, landmarks: data.landmarks, sources: data.sources };
     this.byId = new Map(data.landmarks.map((l) => [l.id, l]));
     this.byBuilding = new Map(data.landmarks.filter((l) => l.same_source).map((l) => [l.building_id, l]));
+    const pending = this.pending().join("|");
+    if (pending !== this.pendingSig) {
+      this.pendingSig = pending;
+      this.host.restyle();
+    }
     this.renderSources();
     this.syncFootprints();
     // The list is refreshed in place, so the search box keeps its focus.
@@ -169,6 +178,11 @@ class Workspace {
 
   hidden() {
     return this.store.hiddenBuildings();
+  }
+
+  // building_ids of the landmarks of this PMTiles that have no GLB yet.
+  pending() {
+    return this.lib.landmarks.filter((l) => l.same_source && !l.versions).map((l) => l.building_id);
   }
 
   viewChanged() {
@@ -350,7 +364,7 @@ class Workspace {
     ui.render(this);
   }
 
-  // Back to the version in use: the model being edited goes.
+  // Back to the version drawn: the model being edited goes.
   clearEdit() {
     this.stopPicking();
     Object.assign(this, { preview: null, draft: null, place: null });
@@ -392,7 +406,7 @@ class Workspace {
     if (render) ui.render(this);
   }
 
-  // What stands in for the version in use of the landmark open (or on the building clicked).
+  // What stands in for the version drawn of the landmark open (or on the building clicked).
   overrideEntry() {
     const s = this.sel;
     const p = this.preview;

@@ -162,9 +162,10 @@ def same_file(recorded: Any, path: Path) -> bool:
 
 
 def render_item(rec: dict[str, Any]) -> dict[str, Any]:
-    """What the 3D preview needs to draw the version in use of a landmark over its building."""
+    """What the 3D preview needs to draw a landmark over its building: the version in use, or the
+    newest version while none is in use (`in_use` tells which)."""
     fp, src = rec["footprint"], rec.get("source") or {}
-    v = Library._version(rec, rec["in_use"])
+    v = Library._version(rec, rec["in_use"]) if rec["in_use"] is not None else rec["versions"][-1]
     return {
         "id": rec["id"],
         "building_id": rec["building_id"],
@@ -177,6 +178,7 @@ def render_item(rec: dict[str, Any]) -> dict[str, Any]:
         "id_field": src.get("id_field"),
         "parent_field": src.get("parent_field"),
         "version": v["version"],
+        "in_use": rec["in_use"],
         "original_name": v["original_name"],
         "sha256": v["sha256"],
         "size": v["size"],
@@ -248,9 +250,10 @@ class Library:
         return list(seen.values())
 
     def render(self, path: Path) -> list[dict[str, Any]]:
-        """The landmarks registered from this PMTiles that have a version in use, by name."""
+        """The landmarks registered from this PMTiles that have a GLB, by name: the version in use
+        is drawn, else the newest version (the manifest keeps the versions in use only)."""
         recs = [r for r in self._records()
-                if r["in_use"] is not None and same_file((r.get("source") or {}).get("path"), path)]
+                if r["versions"] and same_file((r.get("source") or {}).get("path"), path)]
         recs.sort(key=lambda r: (r["name"] or r["building_id"]).casefold())
         return [render_item(r) for r in recs]
 

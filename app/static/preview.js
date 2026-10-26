@@ -1,8 +1,8 @@
 // PMTiles 3D preview — MapLibre fill-extrusion, same styling approach as the mobile app — and the
-// landmark workspace: every landmark in use on this PMTiles drawn over its building, the library
+// landmark workspace: every landmark of this PMTiles drawn over its building, the library
 // in the drawer on the right (landmark-workspace.js, not loaded in diff mode).
 /* global maplibregl, pmtiles */
-import { extrusionFilter } from "/static/landmark-store.js";
+import { extrusionFilter, matchBuildings } from "/static/landmark-store.js";
 import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, recall, remember, vmap, vmapPreset } from "/static/basemap.js";
 
 const $ = (s) => document.querySelector(s);
@@ -272,6 +272,7 @@ async function openWorkspace(map) {
         applyStyle(map);
       },
       syncExtrusions: () => syncExtrusions(map),
+      restyle: () => { if (state.layer) applyStyle(map); },
       openDrawer: () => setDrawer(map, true),
       previewUrl: (f, name, lm) => {
         const q = new URLSearchParams();
@@ -404,6 +405,12 @@ function colorExpression() {
   } else {
     expr = pal.plain;
     legend = "";
+  }
+  const pending = landmark.ws && state.idCol ? landmark.ws.pending() : [];
+  if (pending.length) {
+    // Landmarks without a GLB yet keep their extrusion: coloured apart, to be found and clicked.
+    expr = ["case", matchBuildings(pending, state.idCol, state.parentAttr), pal.accent, expr];
+    legend += item(pal.accent, "Landmark chưa có GLB (click để upload)");
   }
   if (state.selected && state.idCol) {
     // Also light up the parts of a multi-part building (its outline may be hidden).

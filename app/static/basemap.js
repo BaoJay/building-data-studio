@@ -2,8 +2,7 @@
 // diff modes). The page carries the controls: #baseSel, #vmapControls, #presetSeg, #presetNote,
 // #presetDownload and #baseNote.
 
-const $ = (s) => document.querySelector(s);
-const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+import { $, esc } from "/static/util.js";
 
 // Map colours are the Studio Indochine tokens in tokens.css: height-1…9 sit on these
 // breaks (paper yellow → roof brown), cat-1…8 are the categorical slots (anything past

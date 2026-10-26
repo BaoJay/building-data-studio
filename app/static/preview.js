@@ -3,10 +3,9 @@
 // in the drawer on the right (landmark-workspace.js, not loaded in diff mode).
 /* global maplibregl, pmtiles */
 import { extrusionFilter, matchBuildings } from "/static/landmark-store.js";
+import { $, esc, fetchOk } from "/static/util.js";
 import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, recall, remember, vmap, vmapPreset } from "/static/basemap.js";
 
-const $ = (s) => document.querySelector(s);
-const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 const HEIGHT_ATTRS = ["h_m", "height_m", "height", "render_height"];
 const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
@@ -104,8 +103,7 @@ async function updateShadows(map) {
     let data;
     let res;
     try {
-      res = await fetch(`/api/shadows?${params}`);
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      res = await fetchOk(`/api/shadows?${params}`);
       data = await res.json();
     } catch (err) {
       if (seq === shadow.seq) note(`Không tính được bóng: ${err.message}`);
@@ -236,22 +234,7 @@ async function main() {
   const zoom = hasCenter ? Number(params.get("z") || 17) : base?.view.zoom || Math.max(header.centerZoom, header.minZoom + 1);
   const bldgSource = { type: "vector", url: `pmtiles://${url}`, attribution: meta.attribution || "" };
 
-  const map = new maplibregl.Map({
-    container: "map",
-    center,
-    zoom,
-    pitch: 55,
-    bearing: -15,
-    maxPitch: 85,
-    attributionControl: false,
-    // Keeps the frame readable for screenshots / "save image" in the browser.
-    canvasContextAttributes: { antialias: true, preserveDrawingBuffer: true },
-    style: await basemapStyle($("#baseSel").value, bldgSource),
-  });
-  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
-  map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
-  map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
-  window.map = map;
+  const map = await createMap({ center, zoom, pitch: 55, bearing: -15 }, bldgSource, ["bldg-3d", "bldg-2d"]);
 
   map.on("load", () => {
     selectLayer(map, meta, layers[0]);
@@ -261,10 +244,6 @@ async function main() {
   map.on("zoom", () => updateZoomUI(map));
   map.on("moveend", () => updateZoomUI(map));
   map.on("click", (e) => onClick(map, e));
-  ["bldg-3d", "bldg-2d"].forEach((id) => {
-    map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
-    map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
-  });
 
   // Picking the mobile basemap also switches the buildings to the mobile look. A switch made
   // before the first "load" leaves the building layers to selectLayer (no layer chosen yet).
@@ -348,6 +327,28 @@ function setDrawer(map, open, save = true) {
   // On a phone the panel folds away while the sheet is open, so some map stays to work on.
   if (open && window.matchMedia("(max-width: 640px)").matches) setPanelCollapsed(true);
   map.resize();
+}
+
+// The map both page modes start from: view options, controls, and a pointer over the clickable layers.
+async function createMap(view, bldgSource, hoverLayers) {
+  const map = new maplibregl.Map({
+    container: "map",
+    maxPitch: 85,
+    attributionControl: false,
+    // Keeps the frame readable for screenshots / "save image" in the browser.
+    canvasContextAttributes: { antialias: true, preserveDrawingBuffer: true },
+    ...view,
+    style: await basemapStyle($("#baseSel").value, bldgSource),
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+  map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
+  map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+  window.map = map;
+  hoverLayers.forEach((id) => {
+    map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
+    map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
+  });
+  return map;
 }
 
 function setPanelCollapsed(collapsed) {
@@ -582,20 +583,11 @@ async function mainDiff(url, header, meta) {
   initBasemap();
   const hasCenter = params.has("lon") && params.has("lat");
   const bldgSource = { type: "vector", url: `pmtiles://${url}`, attribution: meta.attribution || "" };
-  const map = new maplibregl.Map({
-    container: "map",
+  const map = await createMap({
     center: hasCenter ? [Number(params.get("lon")), Number(params.get("lat"))] : [header.centerLon, header.centerLat],
     zoom: hasCenter ? Number(params.get("z") || 16) : 5,
     pitch: 0,
-    maxPitch: 85,
-    attributionControl: false,
-    canvasContextAttributes: { antialias: true, preserveDrawingBuffer: true },
-    style: await basemapStyle($("#baseSel").value, bldgSource),
-  });
-  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
-  map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
-  map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
-  window.map = map;
+  }, bldgSource, ["diff-fill", "diff-3d", "grid-fill"]);
 
   map.on("load", () => {
     addDiffLayers(map);
@@ -610,10 +602,6 @@ async function mainDiff(url, header, meta) {
   });
   map.on("zoom", () => updateZoomUI(map));
   map.on("click", (e) => onDiffClick(map, e));
-  ["diff-fill", "diff-3d", "grid-fill"].forEach((id) => {
-    map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
-    map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
-  });
   bindBasemapControls(map, () => bldgSource, () => addDiffLayers(map));
   $("#diffLegend").addEventListener("change", (e) => {
     const kind = e.target.dataset.kind;
@@ -624,11 +612,7 @@ async function mainDiff(url, header, meta) {
   $("#gridSel").addEventListener("change", (e) => { state.diff.gridBy = e.target.value; applyDiffStyle(map); });
   $("#showGrid").addEventListener("change", () => applyDiffStyle(map));
   $("#threeD").addEventListener("change", () => applyDiffStyle(map));
-  $("#collapseBtn").addEventListener("click", () => {
-    const p = $("#panel");
-    p.classList.toggle("collapsed");
-    $("#collapseBtn").textContent = p.classList.contains("collapsed") ? "Mở" : "Thu gọn";
-  });
+  $("#collapseBtn").addEventListener("click", () => setPanelCollapsed(!$("#panel").classList.contains("collapsed")));
 }
 
 function addDiffLayers(map) {

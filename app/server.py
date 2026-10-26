@@ -139,12 +139,8 @@ async def upload(request: Request) -> Response:
     dest_dir = UPLOAD_DIR / secrets.token_hex(4)
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / name
-    size = 0
     try:
-        with dest.open("wb") as fh:
-            async for chunk in request.stream():
-                fh.write(chunk)
-                size += len(chunk)
+        size = await _save_stream(request, dest)
     except OSError as exc:
         dest.unlink(missing_ok=True)
         return _error(f"Không ghi được file upload: {exc}", 500)
@@ -195,8 +191,8 @@ async def cancel_job(request: Request) -> Response:
 
 async def get_file(request: Request) -> Response:
     """Serve a registered file. Range requests are supported (needed by PMTiles)."""
-    path = registry.get(request.path_params["token"])
-    if path is None or not path.is_file():
+    path = _source_file(request.path_params["token"])
+    if path is None:
         return _error("File không tồn tại.", 404)
     if request.query_params.get("download"):
         return FileResponse(path, filename=path.name)
@@ -307,8 +303,8 @@ async def building_shadows(request: Request) -> Response:
     """Prototype: dissolved ground shadows of the buildings of a registered PMTiles over one
     area, cast along the light of a VMAP preset. ?download=1 saves the GeoJSON."""
     q = request.query_params
-    path = registry.get(q.get("f", ""))
-    if path is None or not path.is_file():
+    path = _source_file(q.get("f", ""))
+    if path is None:
         return _error("File không tồn tại.", 404)
     preset = q.get("preset") or vmap.DEFAULT_PRESET
     if preset not in vmap.PRESETS:
@@ -322,7 +318,7 @@ async def building_shadows(request: Request) -> Response:
         light = await _in_thread(vmap.effective_light, preset)
         if not light:
             raise shadows.ShadowError("Style không có khối light để lấy hướng nắng.")
-        zoom = int(q["z"]) if q.get("z") and path.suffix.lower() == ".pmtiles" else None
+        zoom = _zoom(q, path)
         layer = shadows.check_field(q.get("layer"), "layer") or ""
         # Released landmarks of this file cast from their GLB instead of their LoD1 box.
         landmarks, fallbacks = await _in_thread(landmark_shadow.released, library, path, preset)
@@ -361,8 +357,8 @@ async def building_footprint(request: Request) -> Response:
     """Footprint centroid, size and height of one building of a registered PMTiles, read
     around ?lon=&lat=: where the 3D preview anchors a landmark model (app/landmark.py)."""
     q = request.query_params
-    path = registry.get(q.get("f", ""))
-    if path is None or not path.is_file():
+    path = _source_file(q.get("f", ""))
+    if path is None:
         return _error("File không tồn tại.", 404)
     try:
         result = await _in_thread(landmark.lookup, _lookup_request(path, q))
@@ -382,7 +378,7 @@ def _lookup_request(path: Path, q) -> landmark.Lookup:
     req = landmark.Lookup(
         path=path,
         layer=shadows.check_field(q.get("layer"), "layer") or "",
-        zoom=int(q["z"]) if q.get("z") is not None and q.get("z") != "" and path.suffix.lower() == ".pmtiles" else None,
+        zoom=_zoom(q, path),
         id_field=id_field,
         building_id=building_id,
         lon=_coord(q.get("lon")),
@@ -416,12 +412,6 @@ def _landmark_json(rec: dict[str, Any], status: int = 200) -> JSONResponse:
 
 def _library_error(exc: ValueError) -> JSONResponse:
     return _error(str(exc), 404 if isinstance(exc, landmark_library.NotFound) else 400)
-
-
-def _source_file(token: str) -> Path | None:
-    """The PMTiles behind a file token, or None when the token is unknown or its file is gone."""
-    path = registry.get(token)
-    return path if path is not None and path.is_file() else None
 
 
 async def list_landmarks(request: Request) -> Response:
@@ -468,8 +458,8 @@ async def render_landmarks(request: Request) -> Response:
 async def register_landmark(request: Request) -> Response:
     """Add a building of a registered PMTiles to the library: its footprint is read once, here."""
     body = await _json(request)
-    path = registry.get(str(body.get("f", "")))
-    if path is None or not path.is_file():
+    path = _source_file(str(body.get("f", "")))
+    if path is None:
         return _error("File PMTiles không tồn tại.", 404)
     try:
         req = _lookup_request(path, {k: v if v is None else str(v) for k, v in body.items()})
@@ -525,13 +515,7 @@ async def upload_landmark_version(request: Request) -> Response:
         return _library_error(exc)
     tmp = folder / f".upload-{secrets.token_hex(4)}.glb"
     try:
-        size = 0
-        with tmp.open("wb") as fh:
-            async for chunk in request.stream():
-                size += len(chunk)
-                if size > MAX_GLB_BYTES:
-                    return _error(f"File lớn hơn {MAX_GLB_BYTES >> 20} MB.")
-                fh.write(chunk)
+        size = await _save_stream(request, tmp, MAX_GLB_BYTES)
         rec = await _in_thread(lambda: library.add_version(lid, tmp, original_name=raw_name,
                                                            note=request.query_params.get("note", "")))
     except ValueError as exc:  # LibraryError, GlbError
@@ -566,8 +550,8 @@ async def landmark_shadow_file(request: Request) -> Response:
     lid, n = request.path_params["lid"], request.path_params["n"]
 
     def cast() -> Path:
-        rec = library._read(lid)
-        return landmark_shadow.for_version(library.folder(lid), rec, library._version(rec, n), preset)
+        rec = library.read(lid)
+        return landmark_shadow.for_version(library.folder(lid), rec, library.version(rec, n), preset)
 
     try:
         path = await _in_thread(cast)
@@ -618,6 +602,29 @@ def open_in_file_manager(path: Path) -> None:
     else:
         cmd = ["xdg-open", str(path.parent if path.is_file() else path)]
     subprocess.Popen(cmd)  # noqa: S603 — fixed argv, no shell
+
+
+def _source_file(token: str) -> Path | None:
+    """The file behind a token, or None when the token is unknown or its file is gone."""
+    path = registry.get(token)
+    return path if path is not None and path.is_file() else None
+
+
+def _zoom(q, path: Path) -> int | None:
+    """?z= for a PMTiles source (the tile zoom to read); other formats have no zoom."""
+    return int(q["z"]) if q.get("z") and path.suffix.lower() == ".pmtiles" else None
+
+
+async def _save_stream(request: Request, dest: Path, max_bytes: int | None = None) -> int:
+    """Stream the request body to dest without holding it in memory; returns its size."""
+    size = 0
+    with dest.open("wb") as fh:
+        async for chunk in request.stream():
+            size += len(chunk)
+            if max_bytes is not None and size > max_bytes:
+                raise ValueError(f"File lớn hơn {max_bytes >> 20} MB.")
+            fh.write(chunk)
+    return size
 
 
 async def _json(request: Request) -> dict[str, Any]:

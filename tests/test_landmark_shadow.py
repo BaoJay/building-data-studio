@@ -152,7 +152,7 @@ def library(tmp_path, monkeypatch):
 @needs_gdal
 def test_shadow_is_cached_per_placement(library):
     library, lid, _ = library
-    rec = library._read(lid)
+    rec = library.read(lid)
     first = landmark_shadow.for_version(library.folder(lid), rec, rec["versions"][0], "day")
     assert first.parent.name == "shadows" and first.name.startswith("v1-day-")
     assert landmark_shadow.for_version(library.folder(lid), rec, rec["versions"][0], "day") == first
@@ -164,7 +164,7 @@ def test_shadow_is_cached_per_placement(library):
 @pytest.mark.parametrize("preset", ["night", "dark"])
 def test_presets_without_sun_cast_nothing(library, preset):
     library, lid, _ = library
-    rec = library._read(lid)
+    rec = library.read(lid)
     with pytest.raises(shadows.ShadowError):
         landmark_shadow.for_version(library.folder(lid), rec, rec["versions"][0], preset)
 

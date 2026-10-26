@@ -123,7 +123,7 @@ def check_field(name: str | None, label: str) -> str | None:
 # ------------------------------------------------------------------ geometry
 
 
-def _number(value: Any) -> float | None:
+def number(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -205,7 +205,7 @@ def shadow_pieces(rings: list[list[list[float]]], low: float, high: float,
             yield [[a, b, (x2 + hi[0], y2 + hi[1]), (x1 + hi[0], y1 + hi[1]), a]]
 
 
-def _polygons(geometry: dict[str, Any] | None) -> list[list[list[list[float]]]]:
+def polygons(geometry: dict[str, Any] | None) -> list[list[list[list[float]]]]:
     if not geometry:
         return []
     if geometry["type"] == "Polygon":
@@ -215,7 +215,7 @@ def _polygons(geometry: dict[str, Any] | None) -> list[list[list[list[float]]]]:
     return []
 
 
-def _feature(kind: str, rings: list) -> str:
+def feature(kind: str, rings: list) -> str:
     return json.dumps({"type": "Feature", "properties": {"k": kind},
                        "geometry": {"type": "Polygon", "coordinates": rings}}, separators=(",", ":"))
 
@@ -230,7 +230,7 @@ _UNION_SQL = (
 )
 
 # The same without footprints to cut out (a difference with nothing is NULL).
-_UNION_ONLY_SQL = ("SELECT CastToMultiPolygon(ST_CollectionExtract(ST_Union(CASE WHEN ST_IsValid(geometry) "
+UNION_ONLY_SQL = ("SELECT CastToMultiPolygon(ST_CollectionExtract(ST_Union(CASE WHEN ST_IsValid(geometry) "
                    "THEN geometry ELSE MakeValid(geometry) END), 3)) AS geometry FROM pieces WHERE k = 's'")
 
 EMPTY = b'{"type":"FeatureCollection","features":[]}'
@@ -264,47 +264,47 @@ def compute(req: Request) -> tuple[bytes, dict[str, Any]]:
                "-select", ",".join(fields)]
         if req.zoom is not None:
             cmd += ["-oo", f"ZOOM_LEVEL={req.zoom}"]
-        _run(cmd, "đọc building")
+        run(cmd, "đọc building")
         with src.open() as fin, pieces.open("w") as fout:
             for line in fin:
                 feat = json.loads(line)
                 props = feat.get("properties") or {}
                 if req.parts and _truthy(props.get(req.parts)):
                     continue  # its parts carry the heights; the outline is not drawn either
-                high = _number(props.get(req.height))
-                low = _number(props.get(req.base)) if req.base else None
+                high = number(props.get(req.height))
+                low = number(props.get(req.base)) if req.base else None
                 low = max(low or 0.0, 0.0)
-                polys = _polygons(feat.get("geometry"))
+                polys = polygons(feat.get("geometry"))
                 if not polys:
                     continue
                 stats["buildings"] += 1
                 if released and any(str(props.get(f)) in released for f in id_fields if props.get(f) is not None):
                     continue  # a released landmark: its GLB shadow goes in below, over its footprint too
                 for rings in polys:
-                    fout.write(_feature("f", rings) + "\n")
+                    fout.write(feature("f", rings) + "\n")
                     footprints += 1
                     if high is None or high <= low:
                         continue
                     for piece in shadow_pieces(rings, low, high, dlon, dlat):
-                        fout.write(_feature("s", piece) + "\n")
+                        fout.write(feature("s", piece) + "\n")
                         stats["pieces"] += 1
             for lm in req.landmarks:
                 for feat in json.loads(lm.path.read_text()).get("features") or []:
-                    for rings in _polygons(feat.get("geometry")):
-                        fout.write(_feature("s", rings) + "\n")
+                    for rings in polygons(feat.get("geometry")):
+                        fout.write(feature("s", rings) + "\n")
                         stats["pieces"] += 1
                 stats["landmarks"] += 1
         if not stats["pieces"]:
             body = EMPTY
         else:
-            out = _run([ogr2ogr, "-f", "GeoJSON", "/vsistdout/", str(pieces), "-dialect", "SQLite",
-                        "-sql", _UNION_SQL if footprints else _UNION_ONLY_SQL, "-lco", "COORDINATE_PRECISION=6"], "gộp bóng")
+            out = run([ogr2ogr, "-f", "GeoJSON", "/vsistdout/", str(pieces), "-dialect", "SQLite",
+                        "-sql", _UNION_SQL if footprints else UNION_ONLY_SQL, "-lco", "COORDINATE_PRECISION=6"], "gộp bóng")
             body = out.encode() if out.strip() else EMPTY
     stats["ms"] = round((time.monotonic() - t0) * 1000)
     return body, stats
 
 
-def _run(cmd: list[str], what: str) -> str:
+def run(cmd: list[str], what: str) -> str:
     proc = tools.run_capture(cmd, timeout=TIMEOUT)
     if proc.returncode != 0:
         detail = tools.stderr_detail(proc.stderr)
@@ -546,8 +546,8 @@ def compute_dataset(spec: DatasetSpec, *, progress: Callable[[float], None] = la
                 polys = [_closed(rings) for rings in polys]
                 for rings in polys:
                     put("f", "", rings)
-                high = _number(h)
-                low = max(_number(base) or 0.0, 0.0)
+                high = number(h)
+                low = max(number(base) or 0.0, 0.0)
                 if high is None or high <= max(low, spec.min_height) or (spec.parts_col and _truthy(parts)):
                     continue
                 stats["casting"] += 1

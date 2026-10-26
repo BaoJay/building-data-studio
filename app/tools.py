@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import threading
 from collections.abc import Callable
@@ -114,6 +115,21 @@ def run_capture(cmd: list[str], timeout: float = 300) -> subprocess.CompletedPro
     """Run a short command and capture its output (no streaming)."""
     log.debug("run: %s", cmd)
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def stderr_detail(stderr: str, limit: int = 500) -> str:
+    """Tail of a tool's stderr without GDAL warning lines, for error messages."""
+    return "\n".join(line for line in stderr.splitlines() if "warning" not in line.lower())[-limit:]
+
+
+def oo_args(open_options: dict[str, str]) -> list[str]:
+    """GDAL open options as repeated -oo KEY=VALUE arguments."""
+    return [arg for key, value in open_options.items() for arg in ("-oo", f"{key}={value}")]
+
+
+def connect_ro(path: Path) -> sqlite3.Connection:
+    """Open a SQLite/GeoPackage file read-only."""
+    return sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
 
 
 class ProcessRunner:

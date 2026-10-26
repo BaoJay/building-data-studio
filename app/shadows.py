@@ -307,7 +307,7 @@ def compute(req: Request) -> tuple[bytes, dict[str, Any]]:
 def _run(cmd: list[str], what: str) -> str:
     proc = tools.run_capture(cmd, timeout=TIMEOUT)
     if proc.returncode != 0:
-        detail = "\n".join(line for line in proc.stderr.splitlines() if "warning" not in line.lower())[-500:]
+        detail = tools.stderr_detail(proc.stderr)
         raise ShadowError(f"Lỗi khi {what}: {detail or f'mã thoát {proc.returncode}'}")
     return proc.stdout
 
@@ -528,7 +528,7 @@ def compute_dataset(spec: DatasetSpec, *, progress: Callable[[float], None] = la
                     n += 1
             return n
 
-        with closing(sqlite3.connect(spec.gpkg.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        with closing(tools.connect_ro(spec.gpkg)) as conn:
             total = conn.execute(f'SELECT COUNT(*) FROM "{spec.table}"').fetchone()[0] or 1
             rows = conn.execute(f'SELECT "{spec.geom_col}", {select} FROM "{spec.table}"')
             for i, (blob, h, base, parts) in enumerate(rows):
@@ -604,7 +604,7 @@ def compute_dataset(spec: DatasetSpec, *, progress: Callable[[float], None] = la
         if proc.returncode != 0:
             if cancelled():
                 raise Cancelled()
-            detail = "\n".join(x for x in err.splitlines() if "warning" not in x.lower())[-400:]
+            detail = tools.stderr_detail(err, 400)
             raise ShadowError(f"Gộp bóng thất bại (mã {proc.returncode}): {detail}")
         return dst
 

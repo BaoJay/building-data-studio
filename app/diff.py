@@ -25,7 +25,7 @@ from . import __version__, probe, tools
 from .diffcore import MERCATOR_HALF_WORLD, MVT_EXTENT, CompareSpec, DiffEngine, DiffError, SideSpec
 from .diffgate import DEFAULT_IGNORE_COLS, GateError, Thresholds, compare_schema, evaluate, parse_thresholds, render_markdown
 from .jobs import FileRegistry, Job, Step
-from .pipeline import DEFAULT_OUTPUT_DIR, WGS84, ConfigError, StagedPipeline, _oo_args, build_height_rule, safe_name
+from .pipeline import DEFAULT_OUTPUT_DIR, WGS84, ConfigError, StagedPipeline, build_height_rule, safe_name
 from .probe import ProbeError
 from .probe import quote_ident as q
 from .sqlbuild import sql_str
@@ -376,7 +376,7 @@ class DiffPipeline(StagedPipeline):
             self.job.add_log(f"Đọc tile z{zoom} của {s.upper()} (mảnh building cắt theo biên tile sẽ được ghép lại).")
         else:
             cmd = [ogr2ogr, "-f", "FlatGeobuf", str(raw), str(inp.path), info["layer"],
-                   *_oo_args(info["open_options"]), *common, "-t_srs", WGS84]
+                   *tools.oo_args(info["open_options"]), *common, "-t_srs", WGS84]
             if info["crs"]["missing"]:
                 cmd += ["-s_srs", str(inp.src_crs)]
             attrs = [f["name"] for f in info["fields"]]

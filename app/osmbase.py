@@ -41,6 +41,7 @@ from .pipeline import (
     PipelineError,
     TilesConfig,
 )
+from .sqlbuild import sql_str
 
 log = logging.getLogger(__name__)
 
@@ -128,10 +129,6 @@ def latest_release(root: str = DEFAULT_ROOT) -> str:
 
 
 # ------------------------------------------------------------------ SQL (pure, unit-tested)
-
-def sql_str(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
 
 def theme_glob(root: str, release: str, theme: str, kind: str) -> str:
     return f"{root.rstrip('/')}/{release}/theme={theme}/type={kind}/*.parquet"

@@ -146,7 +146,7 @@ def lookup(req: Lookup, with_outline: bool = False) -> dict[str, Any]:
             cmd += ["-oo", f"ZOOM_LEVEL={req.zoom}"]
         proc = tools.run_capture(cmd, timeout=shadows.TIMEOUT)
         if proc.returncode != 0:
-            detail = "\n".join(line for line in proc.stderr.splitlines() if "warning" not in line.lower())[-500:]
+            detail = tools.stderr_detail(proc.stderr)
             raise LandmarkError(f"Lỗi khi đọc building: {detail or f'mã thoát {proc.returncode}'}")
         own: list[dict[str, Any]] = []
         parts: list[dict[str, Any]] = []

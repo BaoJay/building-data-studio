@@ -27,6 +27,13 @@ export async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 
+/** fetch() that throws the server's {error} message on a non-2xx answer. */
+export async function fetchOk(url, init) {
+  const res = await fetch(url, init);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+  return res;
+}
+
 let toastTimer;
 export function toast(message) {
   let el = $(".toast");
@@ -60,18 +67,43 @@ export function hbars(items) {
     </div>`).join("")}</div>`;
 }
 
-/** PUT a dropped file to /api/upload, reporting progress (0–100). Resolves to {path, size}. */
-export function uploadFile(file, onProgress) {
+export const kpi = (label, value, sub = "", cls = "") =>
+  `<div class="kpi ${cls}"><div class="label">${esc(label)}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+
+/** <option>s for picking one column of a probed file (value "" = none). */
+export function colOptions(fields, selected, none = "— không dùng —") {
+  const opts = [`<option value="">${esc(none)}</option>`];
+  for (const f of fields) {
+    opts.push(`<option value="${esc(f.name)}" ${f.name === selected ? "selected" : ""}>${esc(f.name)} (${esc(f.type)})</option>`);
+  }
+  return opts.join("");
+}
+
+/** Click, keyboard and drag-and-drop on a drop zone all hand the chosen file to onFile. */
+export function bindDropzone(dz, input, onFile) {
+  dz.addEventListener("click", () => input.click());
+  dz.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
+  input.addEventListener("change", () => { if (input.files[0]) onFile(input.files[0]); input.value = ""; });
+  ["dragenter", "dragover"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => dz.addEventListener(t, () => dz.classList.remove("over")));
+  dz.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files[0]) onFile(e.dataTransfer.files[0]);
+  });
+}
+
+/** PUT a file (by default to /api/upload), reporting progress (0–100). Resolves to the JSON answer. */
+export function uploadFile(file, onProgress, url = `/api/upload?name=${encodeURIComponent(file.name)}`) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/upload?name=${encodeURIComponent(file.name)}`);
+    xhr.open("PUT", url);
     xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress((100 * e.loaded) / e.total); };
     xhr.onload = () => {
       let data = {};
       try { data = JSON.parse(xhr.responseText || "{}"); } catch { /* keep empty */ }
       if (xhr.status < 300) resolve(data); else reject(new Error(data.error || `HTTP ${xhr.status}`));
     };
-    xhr.onerror = () => reject(new Error("Upload thất bại."));
+    xhr.onerror = () => reject(new Error("mất kết nối tới server"));
     xhr.send(file);
   });
 }

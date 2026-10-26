@@ -165,7 +165,7 @@ def render_item(rec: dict[str, Any]) -> dict[str, Any]:
     """What the 3D preview needs to draw a landmark over its building: the version in use, or the
     newest version while none is in use (`in_use` tells which)."""
     fp, src = rec["footprint"], rec.get("source") or {}
-    v = Library._version(rec, rec["in_use"]) if rec["in_use"] is not None else rec["versions"][-1]
+    v = Library.version(rec, rec["in_use"]) if rec["in_use"] is not None else rec["versions"][-1]
     return {
         "id": rec["id"],
         "building_id": rec["building_id"],
@@ -202,7 +202,7 @@ class Library:
             raise NotFound("Không có landmark này.")
         return path
 
-    def _read(self, lid: str) -> dict[str, Any]:
+    def read(self, lid: str) -> dict[str, Any]:
         return json.loads((self.folder(lid) / MANIFEST).read_text("utf-8"))
 
     def _write(self, rec: dict[str, Any]) -> None:
@@ -230,11 +230,11 @@ class Library:
         return [summary(r) for r in recs]
 
     def get(self, lid: str) -> dict[str, Any]:
-        return view(self._read(lid))
+        return view(self.read(lid))
 
     def glb_path(self, lid: str, version: int) -> tuple[Path, dict[str, Any]]:
-        rec = self._read(lid)
-        v = self._version(rec, version)
+        rec = self.read(lid)
+        v = self.version(rec, version)
         path = self.folder(lid) / v["file"]
         if not path.is_file():
             raise NotFound(f"Thiếu file {v['file']} trong thư mục landmark.")
@@ -273,7 +273,7 @@ class Library:
         for rec in sorted(self._records(), key=lambda r: r["id"]):
             if rec["in_use"] is None:
                 continue
-            v = self._version(rec, rec["in_use"])
+            v = self.version(rec, rec["in_use"])
             items.append({
                 "id": rec["id"],
                 "building_id": rec["building_id"],
@@ -291,7 +291,7 @@ class Library:
                 "landmarks": items}
 
     @staticmethod
-    def _version(rec: dict[str, Any], version: int) -> dict[str, Any]:
+    def version(rec: dict[str, Any], version: int) -> dict[str, Any]:
         for v in rec["versions"]:
             if v["version"] == version:
                 return v
@@ -338,7 +338,7 @@ class Library:
 
     def update(self, lid: str, *, name: Any = None, link: Any = None) -> dict[str, Any]:
         with self._lock:
-            rec = self._read(lid)
+            rec = self.read(lid)
             changed = []
             for key, value, label in (("name", name, "Tên"), ("link", link, "ID liên kết")):
                 if value is not None and _text(value, label) != rec[key]:
@@ -357,10 +357,10 @@ class Library:
             raise LibraryError("GLB không có mesh nào.")
         digest, size = sha256(upload), upload.stat().st_size
         with self._lock:
-            rec = self._read(lid)
+            rec = self.read(lid)
             n = max((v["version"] for v in rec["versions"]), default=0) + 1
             if rec["in_use"] is not None:
-                placement = dict(self._version(rec, rec["in_use"])["placement"])
+                placement = dict(self.version(rec, rec["in_use"])["placement"])
             elif rec["versions"]:
                 placement = dict(rec["versions"][-1]["placement"])
             else:
@@ -381,8 +381,8 @@ class Library:
     def set_placement(self, lid: str, version: int, raw: dict[str, Any]) -> dict[str, Any]:
         placement = check_placement(raw)
         with self._lock:
-            rec = self._read(lid)
-            v = self._version(rec, version)
+            rec = self.read(lid)
+            v = self.version(rec, version)
             if v["placement"] != placement:
                 v["placement"] = placement
                 self._touch(rec, {"action": "placement", "version": version})
@@ -393,9 +393,9 @@ class Library:
         """Put one version in use (None: none). The switch goes to the history."""
         note = _text(note, "Ghi chú")
         with self._lock:
-            rec = self._read(lid)
+            rec = self.read(lid)
             if version is not None:
-                self._version(rec, version)
+                self.version(rec, version)
             if version == rec["in_use"]:
                 raise LibraryError("Version này đang được dùng rồi." if version is not None else "Chưa dùng version nào.")
             self._touch(rec, {"action": "use", "from": rec["in_use"], "to": version, "note": note})

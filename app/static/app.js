@@ -1,6 +1,6 @@
 // Building Data Studio — UI logic (vanilla JS, no build step).
 
-import { $, $$, api, esc, fmtBytes, fmtDur, fmtInt, fmtNum, hbars, loadJSON, previewUrl, reveal, saveJSON, section, toast, uploadFile } from "./util.js";
+import { $, $$, api, bindDropzone, colOptions, esc, fmtBytes, fmtDur, fmtInt, fmtNum, hbars, kpi, loadJSON, previewUrl, reveal, saveJSON, section, toast, uploadFile } from "./util.js";
 import { initDiff, renderDiffReport, setDiffHealth } from "./diff.js";
 
 const GENERATED_HEIGHT = ["h_m", "h_src", "h_outlier"];
@@ -190,18 +190,7 @@ function onGlobalClick(e) {
 
 // ------------------------------------------------------------------ input
 function setupDropzone() {
-  const dz = $("#dropzone");
-  const input = $("#fileInput");
-  dz.addEventListener("click", () => input.click());
-  dz.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
-  input.addEventListener("change", () => { if (input.files[0]) handleFile(input.files[0]); input.value = ""; });
-  ["dragenter", "dragover"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.add("over"); }));
-  ["dragleave", "drop"].forEach((t) => dz.addEventListener(t, () => dz.classList.remove("over")));
-  dz.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  });
+  bindDropzone($("#dropzone"), $("#fileInput"), handleFile);
   // A file dropped outside the zones must not navigate the tab away. On the convert tab it is
   // taken as the input; on the diff tab there are two slots, so it is ignored.
   window.addEventListener("dragover", (e) => e.preventDefault());
@@ -305,14 +294,6 @@ function renderFileInfo(p) {
 }
 
 // ------------------------------------------------------------------ options form
-function colOptions(fields, selected, none = "— không dùng —") {
-  const opts = [`<option value="">${esc(none)}</option>`];
-  for (const f of fields) {
-    opts.push(`<option value="${esc(f.name)}" ${f.name === selected ? "selected" : ""}>${esc(f.name)} (${esc(f.type)})</option>`);
-  }
-  return opts.join("");
-}
-
 function renderOptions(p) {
   const pr = state.prefs;
   const s = p.suggest;
@@ -707,7 +688,6 @@ function renderReport(job) {
   const idCol = r.id_col || null;
   $("#reportCard").hidden = false;
 
-  const kpi = (label, value, sub = "") => `<div class="kpi"><div class="label">${esc(label)}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
   let html = `<div class="kpis">${kpi("Tổng building", fmtInt(r.total))}`;
   if (h) {
     html += kpi("Có chiều cao thực", fmtInt(h.real_count), `${fmtNum(h.real_pct, 2)}% · từ cột chiều cao/số tầng`)

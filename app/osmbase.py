@@ -40,7 +40,9 @@ from .pipeline import (
     Pipeline,
     PipelineError,
     TilesConfig,
+    run_job,
 )
+from .sqlbuild import sql_str
 
 log = logging.getLogger(__name__)
 
@@ -128,10 +130,6 @@ def latest_release(root: str = DEFAULT_ROOT) -> str:
 
 
 # ------------------------------------------------------------------ SQL (pure, unit-tested)
-
-def sql_str(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
 
 def theme_glob(root: str, release: str, theme: str, kind: str) -> str:
     return f"{root.rstrip('/')}/{release}/theme={theme}/type={kind}/*.parquet"
@@ -325,7 +323,6 @@ class BasePipeline(Pipeline):
         self.raw = self.work / f"{out_name(area)}_raw.gpkg"
         self.boundary_file = self.work / "boundary.gpkg"
         self.cfg = replace(self.cfg, input_path=self.raw)
-        self.con = None
         self.extract: dict[str, Any] = {}
 
     def intro(self) -> list[str]:
@@ -344,11 +341,6 @@ class BasePipeline(Pipeline):
                      Step("boundary_layer", "Thêm layer ranh giới vào GeoPackage"))
         return steps
 
-    def cleanup(self) -> None:
-        if self.con is not None:
-            self.con.close()
-            self.con = None
-
     # ---------------------------------------------------------------- stages
     def _step_release(self, step: Step) -> None:
         if not self.release:
@@ -359,8 +351,7 @@ class BasePipeline(Pipeline):
         self.job.add_log(f"Overture release {self.release} ({self.root})")
 
     def _step_boundary(self, step: Step) -> None:
-        self.con = connect(self.root)
-        self.job.runner.add_cancel_hook(self._interrupt)
+        self._use_duckdb(connect(self.root))
         src = theme_glob(self.root, self.release, "divisions", "division_area")
         sql = boundary_sql(src, self.area)
         self.commands.append(f"duckdb: {sql}")
@@ -448,11 +439,6 @@ class BasePipeline(Pipeline):
                 raise tools.CancelledError("Đã huỷ") from exc
             raise PipelineError(f"DuckDB: {exc}") from exc
 
-    def _interrupt(self) -> None:
-        con = self.con
-        if con is not None:
-            con.interrupt()
-
     def _step_tiles(self, step: Step) -> None:
         # The attribution needs the release, known only once the run started.
         self.cfg = replace(self.cfg, tiles=replace(self.cfg.tiles, attribution=self.attribution))
@@ -461,16 +447,16 @@ class BasePipeline(Pipeline):
 
 def execute(job: Job, registry: FileRegistry, base_dir: Path | None = None) -> None:
     """Entry point used by the JobManager worker thread."""
-    area = AREAS.get(str(job.config.get("area") or DEFAULT_AREA))
-    if area is None:
-        with job.lock:
-            job.status = "failed"
-            job.error = f"Không có khu vực {job.config.get('area')!r}."
-            job.ended = time.time()
-        return
-    root = str(job.config.get("root") or os.environ.get("BDS_OVERTURE_ROOT") or DEFAULT_ROOT)
-    release = job.config.get("release") or os.environ.get("BDS_OVERTURE_RELEASE") or None
-    BasePipeline(job, registry, area, base_dir or default_dir(), root=root, release=release).run()
+
+    def build() -> BasePipeline:
+        area = AREAS.get(str(job.config.get("area") or DEFAULT_AREA))
+        if area is None:
+            raise ConfigError(f"Không có khu vực {job.config.get('area')!r}.")
+        root = str(job.config.get("root") or os.environ.get("BDS_OVERTURE_ROOT") or DEFAULT_ROOT)
+        release = job.config.get("release") or os.environ.get("BDS_OVERTURE_RELEASE") or None
+        return BasePipeline(job, registry, area, base_dir or default_dir(), root=root, release=release)
+
+    run_job(job, build)
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
 // "So sánh 2 file" tab: pick A (production) and B (release candidate), set the release gate, read the diff report.
 
-import { $, $$, api, esc, fmtBytes, fmtInt, fmtNum, hbars, loadJSON, previewUrl, saveJSON, section, toast, uploadFile } from "./util.js";
+import { $, $$, api, bindDropzone, colOptions, esc, fmtBytes, fmtInt, fmtNum, hbars, kpi, loadJSON, previewUrl, saveJSON, section, toast, uploadFile } from "./util.js";
 
 const PREF_KEY = "building-data-studio.diff.v1";
 const SIDES = ["a", "b"];
@@ -74,18 +74,8 @@ const slot = (side) => $(`.slot[data-side="${side}"]`);
 
 function setupSlot(side) {
   const el = slot(side);
-  const dz = $(".dropzone", el);
-  const input = $("input[type=file]", el);
   const path = $(".path-row input", el);
-  dz.addEventListener("click", () => input.click());
-  dz.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
-  input.addEventListener("change", () => { if (input.files[0]) handleFile(side, input.files[0]); input.value = ""; });
-  ["dragenter", "dragover"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.add("over"); }));
-  ["dragleave", "drop"].forEach((t) => dz.addEventListener(t, () => dz.classList.remove("over")));
-  dz.addEventListener("drop", (e) => {
-    e.preventDefault();
-    if (e.dataTransfer.files[0]) handleFile(side, e.dataTransfer.files[0]);
-  });
+  bindDropzone($(".dropzone", el), $("input[type=file]", el), (file) => handleFile(side, file));
   const open = () => {
     const value = path.value.trim().replace(/^["']|["']$/g, "");
     if (value) probe(side, value); else toast(`Nhập đường dẫn file ${SIDE_NAME[side]}.`);
@@ -188,9 +178,7 @@ function defaultIgnore(mode, common) {
 }
 
 function colSelect(p, side, role, value) {
-  const opts = [`<option value="">— không dùng —</option>`, ...p.fields.map((f) =>
-    `<option value="${esc(f.name)}" ${f.name === value ? "selected" : ""}>${esc(f.name)} (${esc(f.type)})</option>`)];
-  return `<select name="col_${side}_${role}">${opts.join("")}</select>`;
+  return `<select name="col_${side}_${role}">${colOptions(p.fields, value)}</select>`;
 }
 
 function renderForm() {
@@ -404,7 +392,6 @@ export function renderDiffReport(job) {
         <div><div class="t">${esc(f.title)}</div>${f.detail ? `<div class="d">${esc(f.detail)}</div>` : ""}</div></div>`).join("")
     : `<div class="finding"><span class="badge st-pass">Pass</span><div class="t">Không vi phạm ngưỡng nào.</div></div>`}</div>`;
 
-  const kpi = (label, value, sub = "", cls = "") => `<div class="kpi ${cls}"><div class="label">${esc(label)}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
   html += `<div class="kpis diff-kpis">
     ${kpi("Building A", fmtInt(sa.buildings), esc(sa.kind === "pmtiles" ? `PMTiles z${sa.zoom}` : sa.driver || ""))}
     ${kpi("Building B", fmtInt(sb.buildings), `${signed(deltaPct)}% so với A`)}

@@ -378,7 +378,7 @@ def suggest_mapping(fields: list[Field]) -> dict[str, Any]:
 
 
 def _ogrinfo_json(path: Path, open_options: dict[str, str]) -> dict[str, Any]:
-    cmd = [tools.require("ogrinfo"), "-json", "-so", "-al", *_oo_args(open_options), str(path)]
+    cmd = [tools.require("ogrinfo"), "-json", "-so", "-al", *tools.oo_args(open_options), str(path)]
     proc = tools.run_capture(cmd, timeout=PROBE_TIMEOUT_S)
     if proc.returncode != 0:
         raise ProbeError(f"GDAL không đọc được file: {proc.stderr.strip() or proc.stdout.strip()}")
@@ -417,7 +417,7 @@ def _sample_geometry_types(
         f"WHERE g IS NOT NULL GROUP BY t"
     )
     cmd = [
-        tools.require("ogrinfo"), "-ro", "-json", "-features", *_oo_args(open_options),
+        tools.require("ogrinfo"), "-ro", "-json", "-features", *tools.oo_args(open_options),
         "-dialect", "SQLite", "-sql", sql, str(path),
     ]
     try:
@@ -431,13 +431,6 @@ def _sample_geometry_types(
     except (json.JSONDecodeError, KeyError, IndexError, OSError) as exc:
         log.info("Geometry sampling failed: %s", exc)
         return None
-
-
-def _oo_args(open_options: dict[str, str]) -> list[str]:
-    args: list[str] = []
-    for key, value in open_options.items():
-        args += ["-oo", f"{key}={value}"]
-    return args
 
 
 def quote_ident(name: str) -> str:

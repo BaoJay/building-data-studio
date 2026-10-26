@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import tools
 from .probe import quote_ident as q
 
 HEIGHT_BIN_EDGES: tuple[float, ...] = (0, 3, 6, 10, 15, 25, 40, 60, 100, 200)
@@ -50,8 +51,7 @@ def build_report(gpkg: Path, spec: ReportSpec) -> dict[str, Any]:
 
     Complexity: a handful of full scans plus GROUP BYs; fine for 10^7 rows.
     """
-    uri = gpkg.resolve().as_uri() + "?mode=ro"
-    with closing(sqlite3.connect(uri, uri=True)) as conn:
+    with closing(tools.connect_ro(gpkg)) as conn:
         columns = _table_columns(conn, spec.table)
         t = q(spec.table)
         total = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]

@@ -118,9 +118,9 @@ def compute(path: Path, model: dict[str, Any], placement: dict[str, Any], sun: s
         with pieces.open("w") as fout:
             for tri in tris:
                 ring = [(round(lon0 + e * kx, 9), round(lat0 + n * ky, 9)) for e, n in tri]
-                fout.write(shadows._feature("s", [ring + ring[:1]]) + "\n")
-        out = shadows._run([ogr2ogr, "-f", "GeoJSON", "/vsistdout/", str(pieces), "-dialect", "SQLite",
-                            "-sql", shadows._UNION_ONLY_SQL, "-lco", "COORDINATE_PRECISION=7"], "gộp bóng landmark")
+                fout.write(shadows.feature("s", [ring + ring[:1]]) + "\n")
+        out = shadows.run([ogr2ogr, "-f", "GeoJSON", "/vsistdout/", str(pieces), "-dialect", "SQLite",
+                            "-sql", shadows.UNION_ONLY_SQL, "-lco", "COORDINATE_PRECISION=7"], "gộp bóng landmark")
     return out.encode() if out.strip() else shadows.EMPTY
 
 
@@ -162,7 +162,7 @@ def released(library, path: Path, preset_id: str) -> tuple[list[LandmarkShadow],
     fell back to their LoD1 shadow (one line each)."""
     found, problems = [], []
     for rec in library.released(path):
-        version = library._version(rec, rec["in_use"])
+        version = library.version(rec, rec["in_use"])
         src = rec.get("source") or {}
         if not src.get("id_field"):
             continue
@@ -181,8 +181,8 @@ def add_to_manifest(library, data: dict[str, Any]) -> dict[str, Any]:
     of those presets. A shadow that cannot be cast is left out with its reason."""
     suns = {pid: sun for pid in vmap.PRESETS if (sun := preset_sun(pid)) is not None}
     for item in data["landmarks"]:
-        rec = library._read(item["id"])
-        version = library._version(rec, item["version"])
+        rec = library.read(item["id"])
+        version = library.version(rec, item["version"])
         folder = library.folder(item["id"])
         item["shadows"], errors = {}, {}
         for pid in suns:

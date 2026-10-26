@@ -146,7 +146,7 @@ def lookup(req: Lookup, with_outline: bool = False) -> dict[str, Any]:
             cmd += ["-oo", f"ZOOM_LEVEL={req.zoom}"]
         proc = tools.run_capture(cmd, timeout=shadows.TIMEOUT)
         if proc.returncode != 0:
-            detail = "\n".join(line for line in proc.stderr.splitlines() if "warning" not in line.lower())[-500:]
+            detail = tools.stderr_detail(proc.stderr)
             raise LandmarkError(f"Lỗi khi đọc building: {detail or f'mã thoát {proc.returncode}'}")
         own: list[dict[str, Any]] = []
         parts: list[dict[str, Any]] = []
@@ -159,15 +159,15 @@ def lookup(req: Lookup, with_outline: bool = False) -> dict[str, Any]:
                 elif req.parent and _key(props.get(req.parent)) == req.building_id:
                     parts.append(feat)
     feats, matched = (own, "id") if own else (parts, "parent")
-    polygons = [p for f in feats for p in shadows._polygons(f.get("geometry"))]
+    polygons = [p for f in feats for p in shadows.polygons(f.get("geometry"))]
     if not polygons:
         raise LandmarkError(
             f"Không thấy {req.id_field} = {req.building_id} trong khoảng {SEARCH_M:g} m quanh điểm đang xem. "
             "Hãy dịch bản đồ tới building đó rồi thử lại."
         )
     result = footprint(polygons, req.lon, req.lat)
-    heights = [h for f in feats if (h := shadows._number((f.get("properties") or {}).get(req.height))) is not None] if req.height else []
-    bases = [b for f in feats if (b := shadows._number((f.get("properties") or {}).get(req.base))) is not None] if req.base else []
+    heights = [h for f in feats if (h := shadows.number((f.get("properties") or {}).get(req.height))) is not None] if req.height else []
+    bases = [b for f in feats if (b := shadows.number((f.get("properties") or {}).get(req.base))) is not None] if req.base else []
     out = {
         "id": req.building_id,
         "matched": matched,  # "id": the building itself; "parent": the union of its parts

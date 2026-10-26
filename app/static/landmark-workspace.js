@@ -20,7 +20,7 @@
 // manifest and trash. The URL keeps the landmark open (?lm=) or the building clicked (?id=) and
 // the view (lon, lat, z), so reload and back / forward come back to them.
 /* global maplibregl */
-import { $, api, esc, reveal, toast } from "/static/util.js";
+import { $, api, esc, fetchOk, reveal, toast, uploadFile } from "/static/util.js";
 import { ModelStore, renderable } from "/static/landmark-store.js";
 import { LandmarkLayer, disposeModel, parseModel } from "/static/landmark-model.js";
 import * as ui from "/static/landmark-drawer.js";
@@ -29,7 +29,6 @@ const REF_LAYER_ID = "landmark-ref";
 const HIT_LAYER_ID = "lm-hit";
 const LINE_LAYER_ID = "lm-line";
 const EARTH_M = 40075016.686;  // metres per pixel = EARTH_M · cos(lat) / (512 · 2^zoom)
-const EMPTY = { type: "FeatureCollection", features: [] };
 const PLACEMENT_KEYS = ["heading", "scale", "anchor", "lon", "lat"];
 const round7 = (v) => Math.round(v * 1e7) / 1e7;
 const lmUrl = (lid) => `/api/landmarks/${encodeURIComponent(lid)}`;
@@ -185,8 +184,7 @@ class Workspace {
 
   async loadModel(entry, signal) {
     if (entry.buffer) return parseModel(entry.buffer.slice(0), entry.label);
-    const res = await fetch(entry.url, { signal });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const res = await fetchOk(entry.url, { signal });
     return parseModel(await res.arrayBuffer(), entry.label);
   }
 
@@ -807,7 +805,7 @@ class Workspace {
     toast(`Đã đăng ký ${rec.name || rec.building_id}.`);
   }
 
-  upload() {
+  async upload() {
     const file = this.preview?.kind === "local" ? this.preview.file : $("#lmFile")?.files[0];
     if (!file) {
       toast("Chọn một file .glb trước.");
@@ -818,40 +816,33 @@ class Workspace {
     this.uploading = true;
     document.querySelector('[data-act="upload"]').disabled = true;
     $("#upBar").hidden = false;
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `${lmUrl(lid)}/versions?${q}`);
-    xhr.upload.onprogress = (e) => {
-      if (!e.lengthComputable || !$("#upBar")) return;
-      $("#upBar > span").style.width = `${(100 * e.loaded) / e.total}%`;
-      $("#upStatus").textContent = e.loaded < e.total ? `${Math.round((100 * e.loaded) / e.total)}%` : "Đang kiểm tra GLB…";
+    const progress = (pct) => {
+      if (!$("#upBar")) return;
+      $("#upBar > span").style.width = `${pct}%`;
+      $("#upStatus").textContent = pct < 100 ? `${Math.round(pct)}%` : "Đang kiểm tra GLB…";
     };
-    const done = async (rec, error) => {
+    let rec;
+    try {
+      rec = await uploadFile(file, progress, `${lmUrl(lid)}/versions?${q}`);
+    } catch (err) {
       this.uploading = false;
-      if (error) {
-        toast(`Upload thất bại: ${error}`);
-        if (this.sel?.rec?.id === lid) ui.render(this);
-        return;
-      }
-      await this.refreshLists();
-      if (this.sel?.rec?.id !== lid) return;
-      const draft = this.draft;
-      this.sel.rec = rec;
-      const v = rec.versions.at(-1);
-      toast(`Đã lưu v${v.version}${v.same_as ? ` (trùng file với v${v.same_as})` : ""}.`);
-      if (this.sameSource(rec)) {
-        this.showVersion(v.version, { render: false });
-        // The placement tried on the local file stays, unsaved, on the new version.
-        if (draft) this.setDraft(draft);
-      }
-      ui.render(this);
-    };
-    xhr.onload = () => {
-      let data = {};
-      try { data = JSON.parse(xhr.responseText || "{}"); } catch { /* keep empty */ }
-      if (xhr.status < 300) done(data); else done(null, data.error || `HTTP ${xhr.status}`);
-    };
-    xhr.onerror = () => done(null, "mất kết nối tới server");
-    xhr.send(file);
+      toast(`Upload thất bại: ${err.message}`);
+      if (this.sel?.rec?.id === lid) ui.render(this);
+      return;
+    }
+    this.uploading = false;
+    await this.refreshLists();
+    if (this.sel?.rec?.id !== lid) return;
+    const draft = this.draft;
+    this.sel.rec = rec;
+    const v = rec.versions.at(-1);
+    toast(`Đã lưu v${v.version}${v.same_as ? ` (trùng file với v${v.same_as})` : ""}.`);
+    if (this.sameSource(rec)) {
+      this.showVersion(v.version, { render: false });
+      // The placement tried on the local file stays, unsaved, on the new version.
+      if (draft) this.setDraft(draft);
+    }
+    ui.render(this);
   }
 
   async savePlacement() {

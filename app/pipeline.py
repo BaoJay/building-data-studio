@@ -23,7 +23,7 @@ import time
 from contextlib import closing
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import __version__, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, Step
@@ -306,6 +306,7 @@ class StagedPipeline:
         self.out_dir = out_dir
         self.work = out_dir / WORK_DIR_NAME
         self.commands: list[str] = []
+        self.con: Any = None  # in-process DuckDB connection, for the job kinds that use one
 
     def plan(self) -> list[Step]:
         raise NotImplementedError
@@ -359,6 +360,19 @@ class StagedPipeline:
 
     def cleanup(self) -> None:
         """Release resources held by the run (called on success, failure and cancel)."""
+        if self.con is not None:
+            self.con.close()
+            self.con = None
+
+    def _use_duckdb(self, con: Any) -> None:
+        """Hold a DuckDB connection: cancelling the job interrupts its query, cleanup closes it."""
+        self.con = con
+        self.job.runner.add_cancel_hook(self._interrupt)
+
+    def _interrupt(self) -> None:
+        con = self.con
+        if con is not None:
+            con.interrupt()
 
     def _mark_cancelled(self) -> None:
         with self.job.lock:
@@ -387,6 +401,19 @@ class StagedPipeline:
         job.add_log(f"✔ {step.title} ({step.ended - step.started:.1f}s)")
 
     # ---------------------------------------------------------------- helpers
+    def _write_report(self, report: dict[str, Any], markdown: str, stem: str, label: str, keep_temp: bool) -> None:
+        """Write <stem>.json and <stem>.md as outputs, then drop the work dir unless asked to keep it."""
+        report_json = self.out_dir / f"{stem}.json"
+        report_md = self.out_dir / f"{stem}.md"
+        report_json.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        report_md.write_text(markdown, encoding="utf-8")
+        self._add_output("report_md", f"{label} (Markdown)", report_md, "report")
+        self._add_output("report_json", f"{label} (JSON)", report_json, "report")
+        if keep_temp:
+            self.job.add_log(f"Giữ file tạm trong {self.work}")
+        else:
+            shutil.rmtree(self.work, ignore_errors=True)
+
     def _run(self, cmd: list[str], step: Step, *, fail_on_error_lines: bool = False,
              line_hook=None) -> None:
         display = shlex.join([Path(cmd[0]).name, *cmd[1:]])
@@ -547,7 +574,7 @@ class Pipeline(StagedPipeline):
         self.normalized.unlink(missing_ok=True)
         cmd = [
             tools.require("ogr2ogr"), "-f", "GPKG", str(self.normalized), str(cfg.input_path),
-            *_oo_args(info["open_options"]),
+            *tools.oo_args(info["open_options"]),
             "-dialect", "SQLite", "-sql", sql,
             "-nln", cfg.gpkg_layer, "-nlt", info["geometry"]["nlt"],
             "-s_srs", str(self.src_crs), "-t_srs", WGS84,
@@ -568,7 +595,7 @@ class Pipeline(StagedPipeline):
         for i, sql in enumerate(statements, start=1):
             self._run([ogrinfo, str(self.normalized), "-q", "-sql", sql], step, fail_on_error_lines=True)
             step.progress = 100.0 * i / len(statements)
-        with closing(sqlite3.connect(self.normalized.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        with closing(tools.connect_ro(self.normalized)) as conn:
             has_parts, is_part = conn.execute(
                 f'SELECT SUM("has_parts"), SUM("is_part") FROM {q(self.cfg.gpkg_layer)}'
             ).fetchone()
@@ -577,7 +604,7 @@ class Pipeline(StagedPipeline):
         self.job.add_log(f"{has_parts or 0:,} toà nhà có khối con; {is_part or 0:,} khối con (is_part).")
 
     def _step_verify(self, step: Step) -> None:
-        with closing(sqlite3.connect(self.normalized.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        with closing(tools.connect_ro(self.normalized)) as conn:
             table = q(self.cfg.gpkg_layer)
             count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             null_geom = conn.execute(f'SELECT COUNT(*) FROM {table} WHERE "{GEOM_NAME}" IS NULL').fetchone()[0]
@@ -633,7 +660,7 @@ class Pipeline(StagedPipeline):
 
     def _step_fgb(self, step: Step) -> None:
         cfg = self.cfg
-        with closing(sqlite3.connect(self.normalized.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        with closing(tools.connect_ro(self.normalized)) as conn:
             columns = [r[1] for r in conn.execute(f"PRAGMA table_info({q(cfg.gpkg_layer)})")]
         wanted = list(cfg.tiles.attributes) if cfg.tiles.attributes else []
         attrs = [a for a in wanted if a in columns and a not in ("fid", GEOM_NAME)]
@@ -691,7 +718,7 @@ class Pipeline(StagedPipeline):
 
     def _step_shadows(self, step: Step) -> None:
         cfg, job = self.cfg, self.job
-        with closing(sqlite3.connect(self.normalized.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        with closing(tools.connect_ro(self.normalized)) as conn:
             columns = {r[1] for r in conn.execute(f"PRAGMA table_info({q(cfg.gpkg_layer)})")}
         base = next((c for c in probe.MIN_HEIGHT_NAMES if c in columns), None)
         parts = "has_parts" if "has_parts" in columns else None
@@ -818,16 +845,8 @@ class Pipeline(StagedPipeline):
         report["provenance"] = self._provenance()
         with self.job.lock:
             self.job.report = report
-        report_json = self.out_dir / "report.json"
-        report_md = self.out_dir / "report.md"
-        report_json.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-        report_md.write_text(render_markdown(report, self.cfg.out_name), encoding="utf-8")
-        self._add_output("report_md", "Báo cáo (Markdown)", report_md, "report")
-        self._add_output("report_json", "Báo cáo (JSON)", report_json, "report")
-        if self.cfg.keep_temp:
-            self.job.add_log(f"Giữ file tạm trong {self.work}")
-        else:
-            shutil.rmtree(self.work, ignore_errors=True)
+        self._write_report(report, render_markdown(report, self.cfg.out_name), "report", "Báo cáo",
+                           self.cfg.keep_temp)
 
     # ---------------------------------------------------------------- helpers
     def _provenance(self) -> dict[str, Any]:
@@ -851,21 +870,19 @@ def _same_crs(a: str, b: str) -> bool:
     return a.strip().upper().replace(" ", "") == b.strip().upper().replace(" ", "")
 
 
-def _oo_args(open_options: dict[str, str]) -> list[str]:
-    args: list[str] = []
-    for key, value in open_options.items():
-        args += ["-oo", f"{key}={value}"]
-    return args
-
-
-def execute(job: Job, registry: FileRegistry) -> None:
-    """Entry point used by the JobManager worker thread."""
+def run_job(job: Job, build: Callable[[], StagedPipeline]) -> None:
+    """Build a job's pipeline and run it; a config error fails the job before any step runs."""
     try:
-        cfg = parse_config(job.config)
+        staged = build()
     except ConfigError as exc:
         with job.lock:
             job.status = "failed"
             job.error = str(exc)
             job.ended = time.time()
         return
-    Pipeline(job, registry, cfg).run()
+    staged.run()
+
+
+def execute(job: Job, registry: FileRegistry) -> None:
+    """Entry point used by the JobManager worker thread."""
+    run_job(job, lambda: Pipeline(job, registry, parse_config(job.config)))

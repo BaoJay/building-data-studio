@@ -157,6 +157,17 @@ label.check input[type="checkbox"] { vertical-align: -2px; margin-right: 8px; }
 .cols .chip { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink); }
 .cols .chip em { font-style: normal; color: var(--muted); }
 
+/* ---------- Excel sheet form ---------- */
+.sheet-preview { max-height: 280px; overflow: auto; margin-top: var(--space-2); }
+.sheet-preview td { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.sheet-preview td.rownum { color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; text-align: right; background: var(--surface-2); }
+.sheet-preview tr.hdr td { font-weight: 600; background: var(--accent-soft); color: var(--ink); }
+.sheet-form { margin-top: var(--space-4); }
+.sheet-form [hidden] { display: none; }
+.sheet-form .seg { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+#stagedInfo:not(:empty) { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 3px double var(--line-strong); }
+.staged-title { font: 600 15px/22px var(--font-serif); margin: 0; }
+
 /* ---------- alert ---------- */
 .alert {
   padding: 10px 14px; margin-top: var(--space-3); display: flex; gap: 10px; align-items: flex-start;

@@ -375,6 +375,8 @@ function selectLayer(map, meta, layerId) {
   const ts = (meta.tilestats?.layers || []).find((l) => l.layer === layerId);
   state.stats = Object.fromEntries((ts?.attributes || []).map((a) => [a.attribute, a]));
   state.heightAttr = HEIGHT_ATTRS.find((a) => a in state.fields) || null;
+  // Polygons without a height (e.g. buffered roads from an Excel sheet) are flat: start in 2D.
+  if (!state.heightAttr) $("#threeD").checked = false;
   state.baseAttr = BASE_ATTRS.find((a) => a in state.fields) || null;
   state.parentAttr = PARENT_ATTRS.find((a) => a in state.fields) || null;
   if (!state.idCol || !(state.idCol in state.fields)) {

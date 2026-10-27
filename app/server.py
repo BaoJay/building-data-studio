@@ -22,7 +22,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, glb, landmark, landmark_library, landmark_shadow, osmbase, pipeline, probe, shadows, tools, vmap
+from . import __version__, diff, glb, landmark, landmark_library, landmark_shadow, osmbase, pipeline, probe, shadows, tools, vmap, xlsx
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -124,6 +124,7 @@ async def health(request: Request) -> Response:
         "missing": missing,
         "defaults": {"output_dir": str(pipeline.DEFAULT_OUTPUT_DIR)},
         "accept": sorted(probe.ALLOWED_SUFFIXES),
+        "accept_convert": sorted(probe.CONVERT_SUFFIXES),
     })
 
 
@@ -132,7 +133,7 @@ async def upload(request: Request) -> Response:
     raw_name = request.query_params.get("name", "")
     name = pipeline.safe_name(Path(raw_name).name)
     suffix = Path(raw_name).suffix.lower()
-    if suffix not in probe.ALLOWED_SUFFIXES:
+    if suffix not in probe.CONVERT_SUFFIXES:
         return _error(f"Định dạng {suffix or '(không có đuôi)'} chưa hỗ trợ.")
     if not name.lower().endswith(suffix):
         name += suffix
@@ -149,14 +150,50 @@ async def upload(request: Request) -> Response:
 
 
 async def probe_file(request: Request) -> Response:
+    """Describe an input file; an Excel workbook (Convert tab only: `sheets`) gets its sheet form."""
     body = await _json(request)
+    accept = probe.CONVERT_SUFFIXES if body.get("sheets") else probe.ALLOWED_SUFFIXES
     try:
-        path = probe.resolve_input_path(str(body.get("path", "")))
-        result = await _in_thread(probe.probe, path, body.get("geom_column") or None, body.get("layer") or None)
-    except (probe.ProbeError, tools.ToolMissingError) as exc:
+        path = probe.resolve_input_path(str(body.get("path", "")), accept)
+        if xlsx.is_sheet(path):
+            result = await _in_thread(xlsx.inspect, path, body.get("layer") or None, _header_row(body))
+        else:
+            result = await _in_thread(probe.probe, path, body.get("geom_column") or None, body.get("layer") or None)
+    except (probe.ProbeError, xlsx.XlsxError, tools.ToolMissingError, ValueError) as exc:
         return _error(str(exc))
     result["token"] = registry.register(path)
     return JSONResponse(result)
+
+
+async def stage_sheet(request: Request) -> Response:
+    """Build a GeoPackage from one Excel sheet, next to the uploads, for the normal convert flow."""
+    body = await _json(request)
+    try:
+        path = probe.resolve_input_path(str(body.get("path", "")), probe.SHEET_SUFFIXES)
+        sheet = str(body.get("sheet") or "")
+        if not sheet:
+            raise xlsx.XlsxError("Chọn sheet.")
+        header_row = _header_row(body)
+        spec = xlsx.parse_geom_spec(body.get("geom") or {})
+        name = pipeline.safe_name(f"{path.stem}__{sheet}")
+        out = UPLOAD_DIR / secrets.token_hex(4) / f"{name}.gpkg"
+        result = await _in_thread(xlsx.stage, path, sheet, 1 if header_row is None else header_row, spec, out)
+    except (probe.ProbeError, xlsx.XlsxError, tools.ToolMissingError, ValueError) as exc:
+        return _error(str(exc))
+    return JSONResponse(result)
+
+
+def _header_row(body: dict[str, Any]) -> int | None:
+    raw = body.get("header_row")
+    if raw in (None, ""):
+        return None
+    try:
+        row = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Dòng header phải là số nguyên.") from exc
+    if row < 0:
+        raise ValueError("Dòng header phải ≥ 0 (0 = không có header).")
+    return row
 
 
 async def create_job(request: Request) -> Response:
@@ -647,6 +684,7 @@ routes = [
     Route("/api/health", health),
     Route("/api/upload", upload, methods=["PUT", "POST"]),
     Route("/api/probe", probe_file, methods=["POST"]),
+    Route("/api/xlsx/stage", stage_sheet, methods=["POST"]),
     Route("/api/jobs", list_jobs, methods=["GET"]),
     Route("/api/jobs", create_job, methods=["POST"]),
     Route("/api/jobs/{job_id}", get_job),

@@ -819,6 +819,8 @@ function renderReport(job) {
       + kpi("h_m trung vị", `${fmtNum(h.stats.median)} m`, `TB ${fmtNum(h.stats.mean)} · p90 ${fmtNum(h.stats.p90)} · p99 ${fmtNum(h.stats.p99)}`)
       + kpi("h_m cao nhất", `${fmtNum(h.stats.max)} m`, `thấp nhất ${fmtNum(h.stats.min)} m`);
   }
+  const ov = r.overlaps;
+  if (ov) html += kpi("Footprint chồng lấn", `${fmtNum(ov.pct, 2)}%`, `${fmtInt(ov.buildings)} / ${fmtInt(ov.total)} building · ${fmtInt(ov.pairs)} cặp`);
   html += `</div>`;
 
   const flow = [`Input ${fmtInt(acc.input_count)}`, `GPKG ${fmtInt(acc.normalized_count)}`];
@@ -851,9 +853,42 @@ function renderReport(job) {
     html += section(`Outlier (${fmtInt(h.outlier_count)})`, "giá trị gốc ngoài khoảng hợp lệ — cần kiểm tra lại dữ liệu nguồn", featureTable(r.outliers, pm, idCol, true));
     html += section("Cao nhất (hợp lệ)", "top 20 theo h_m", featureTable(r.tallest, pm, idCol, false));
   }
+  if (ov) {
+    const shown = ov.rows.length < ov.pairs ? ` · bảng: ${fmtInt(ov.rows.length)} cặp IoU cao nhất` : "";
+    const inGpkg = ov.pairs && job.outputs.gpkg ? ` · đủ ${fmtInt(ov.pairs)} cặp ở layer ${ov.layer} trong GeoPackage` : "";
+    html += section(`Footprint chồng lấn (${fmtInt(ov.pairs)} cặp)`,
+      `phần giao có diện tích > 0, không tính chung tường hay cặp cha–con · IoU = giao / hợp${shown}${inGpkg}`,
+      ov.pairs ? hbars(ov.iou_bins.map((b) => ({ label: `IoU ${b.label}`, count: b.count, pct: b.pct }))) + overlapTable(ov.rows, pm, idCol) : `<p class="hint">Không có.</p>`);
+  }
   const md = job.outputs.report_md;
   if (md) html += `<div class="out-actions"><a class="btn small" href="/api/files/${esc(md.token)}?download=1" download>Tải báo cáo .md</a><a class="btn small" href="/api/files/${esc(job.outputs.report_json.token)}?download=1" download>Tải báo cáo .json</a></div>`;
   $("#report").innerHTML = html;
+}
+
+// One row per overlapping pair; "Xem 3D" frames both buildings, colours them A / B and draws
+// the intersection (its volume up to the lower of the two in 3D).
+function overlapTable(rows, pm, idCol) {
+  const hasId = rows.some((r) => r.id_a != null);
+  const hasH = rows.some((r) => r.h_a != null);
+  const pct = (v) => (v == null ? "—" : `${fmtNum(100 * v, 1)}%`);
+  const head = `<tr><th class="n">#</th><th>A${hasId ? ` (${esc(idCol || "id")})` : " (fid)"}</th><th>B</th><th class="n">IoU</th><th class="n">Giao (m²)</th><th class="n">% của A</th><th class="n">% của B</th>${hasH ? '<th class="n">h_m A</th><th class="n">h_m B</th>' : ""}<th></th></tr>`;
+  const body = rows.map((r, i) => {
+    const a = hasId ? r.id_a : r.fid_a;
+    const b = hasId ? r.id_b : r.fid_b;
+    let link = "";
+    if (r.center) {
+      const params = { name: pm?.name || "", lon: r.center[0].toFixed(6), lat: r.center[1].toFixed(6), z: String(r.zoom), iou: String(r.iou) };
+      if (hasId && idCol) Object.assign(params, { idcol: idCol, pa: String(r.id_a ?? ""), pb: String(r.id_b ?? "") });
+      if (r.shape) params.ov = r.shape;
+      if (r.h_a != null && r.h_b != null) params.ovh = String(Math.min(r.h_a, r.h_b));
+      link = pm ? `<a class="btn small" href="${previewUrl(pm.token, params)}" target="_blank" rel="noopener">Xem 3D</a>`
+        : `<span class="hint mono">${r.center[1].toFixed(5)}, ${r.center[0].toFixed(5)}</span>`;
+    }
+    return `<tr><td class="n">${i + 1}</td><td class="id" title="${esc(a)}">${esc(a)}</td><td class="id" title="${esc(b)}">${esc(b)}</td>
+      <td class="n">${pct(r.iou)}</td><td class="n">${fmtNum(r.inter_m2, 1)}</td><td class="n">${pct(r.cover_a)}</td><td class="n">${pct(r.cover_b)}</td>
+      ${hasH ? `<td class="n">${fmtNum(r.h_a)}</td><td class="n">${fmtNum(r.h_b)}</td>` : ""}<td>${link}</td></tr>`;
+  }).join("");
+  return `<div class="tbl-wrap scroll-y"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 function featureTable(rows, pm, idCol, isOutlier) {

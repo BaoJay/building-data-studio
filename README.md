@@ -20,6 +20,7 @@ input (.parquet / .gpkg / .fgb / .geojson)
   └─ ogr2ogr + SQL ──► GeoPackage chuẩn hoá (EPSG:4326, h_m, h_src, h_outlier)
        ├─ ogrinfo SQL ──► has_parts / is_part (toà nhà nhiều khối)
        ├─ ogr2ogr ──► GeoPackage ở CRS khác (tuỳ chọn, vd VN-2000 / UTM)
+       ├─ R-tree + SpatiaLite ──► footprint chồng lấn (layer overlaps trong GeoPackage)
        ├─ báo cáo chiều cao ──► report.md / report.json
        └─ FlatGeobuf (tạm) ── tippecanoe ──► PMTiles ── pmtiles verify
 ```
@@ -114,6 +115,20 @@ Dữ liệu OSM theo giấy phép ODbL. PMTiles của base ghi sẵn attribution
 4. Theo dõi tiến trình từng bước, có thể **Huỷ** giữa chừng.
 5. Khi xong, mỗi file có nút **Tải về** và **Hiện trong Finder**. Ngoài ra có nút **Mở thư mục output** và **Xem bản đồ 3D**.
 6. **Báo cáo chiều cao** hiển thị ngay bên dưới. Bấm **Xem 3D** ở bảng outlier hoặc bảng toà cao nhất để bay thẳng tới building đó trên bản đồ.
+7. **Footprint chồng lấn**: xem [mục dưới](#footprint-chồng-lấn).
+
+#### Footprint chồng lấn
+
+Mỗi lần convert, app tìm mọi cặp footprint đè lên nhau, với IoU bất kỳ:
+
+- Một cặp **chồng lấn** khi phần giao có diện tích > 0. Hai nhà ống chỉ chung tường (chạm cạnh hoặc chạm góc) thì không tính.
+- Khi có cột parent, app bỏ cặp **cha–con** và cặp **con–con cùng cha**, vì khối con luôn nằm trong toà cha. Khối con đè lên một toà khác vẫn được tính.
+- Ô **Footprint chồng lấn** ở hàng số liệu là **tỷ lệ building dính ít nhất 1 cặp / tổng building** trong GeoPackage, kèm số cặp.
+- Mục **Footprint chồng lấn** trong báo cáo có phân bố IoU và bảng 500 cặp có IoU cao nhất. Mỗi cặp ghi IoU (giao / hợp), diện tích giao (m²), phần giao chiếm bao nhiêu % mỗi building, và `h_m` của hai building.
+- Bấm **Xem 3D** ở một dòng để bay tới cặp đó. Building A tô xanh, B tô vàng, phần giao tô đỏ. Ở chế độ 3D, các building trong suốt hơn, phần giao được dựng tới mái của building thấp hơn. Bỏ **Dựng 3D** để xem phần giao trên mặt bằng.
+- Toàn bộ các cặp nằm ở layer **`overlaps`** trong GeoPackage (polygon phần giao, `fid_a`, `fid_b`, `id_a`, `id_b`, `iou`, `inter_m2`, `area_a_m2`, `area_b_m2`, `h_a`, `h_b`), để lọc trên QGIS.
+
+Ví dụ thời gian chạy: khoảng 8 giây với 200.000 building có 100.000 cặp chồng lấn.
 
 Kéo thả file `.pmtiles` có sẵn vào app để xem 3D mà không cần convert.
 
@@ -173,7 +188,7 @@ Mỗi lần chạy tạo một thư mục mới `output/<tên>__<YYYYMMDD-HHMMSS
 
 | File | Nội dung |
 |---|---|
-| `<tên>.gpkg` | Layer `buildings`, kèm spatial index |
+| `<tên>.gpkg` | Layer `buildings`, kèm spatial index; layer `overlaps` (phần giao của các cặp footprint chồng lấn) khi có ít nhất 1 cặp |
 | `<tên>.pmtiles` | Layer `buildings`, mặc định z13–15 (app MapLibre tự overzoom khi phóng to hơn) |
 | `report.md` / `report.json` | Báo cáo chiều cao, đối soát số lượng, lệnh đã chạy, phiên bản công cụ, cấu hình |
 | `log.txt` | Log đầy đủ của lần chạy |
@@ -190,6 +205,8 @@ Kéo file `.gpkg` vào QGIS, chuột phải layer → **Filter…**:
 | Building đang dùng chiều cao mặc định | `"h_src" = 'default'` |
 | Building cao trên 100 m | `"h_m" > 100` |
 | Toàn bộ khối của một toà nhà | `"parent_building_id" = '<id>' OR "building_id" = '<id>'` |
+| Cặp chồng lấn nặng (layer `overlaps`) | `"iou" >= 0.5` |
+| Building bị gần như trùm lên building khác (layer `overlaps`) | `"inter_m2" / "area_a_m2" > 0.9 OR "inter_m2" / "area_b_m2" > 0.9` |
 
 Để xem 3D: **Layer Properties → 3D View → Single Symbol**, ở ô **Extrusion** bấm nút data-defined và đặt biểu thức `"h_m"`. Sau đó mở **View → 3D Map Views → New 3D Map View**.
 

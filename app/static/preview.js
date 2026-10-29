@@ -15,6 +15,16 @@ const PARENT_ATTRS = ["parent_building_id", "parent_id"];
 const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
 // The landmark workspace (landmark-workspace.js), once loaded.
 const landmark = { ws: null, failed: false };
+// An overlapping pair opened from the convert report: buildings A / B (pa, pb) and their
+// intersection (ov: polygons '|', rings ';', points ',', 'lon lat'), raised in 3D up to ovh m.
+const pair = { a: params.get("pa"), b: params.get("pb"), shape: parseShape(params.get("ov")), h: Number(params.get("ovh")) || 4, iou: Number(params.get("iou")) };
+const OVERLAP_LAYERS = ["overlap-3d", "overlap-fill", "overlap-line"];
+
+function parseShape(text) {
+  if (!text) return null;
+  const coords = text.split("|").map((poly) => poly.split(";").map((ring) => ring.split(",").map((pt) => pt.trim().split(/\s+/).map(Number))));
+  return coords.flat(3).every(Number.isFinite) ? coords : null;
+}
 
 // ------------------------------------------------------------------ shadows (prototype)
 // Ground shadows precomputed on the server (app/shadows.py) for the area around the view,
@@ -410,6 +420,30 @@ function addBuildingLayers(map) {
   map.addLayer({ id: "bldg-2d", type: "fill", source: "bldg", "source-layer": layerId, paint: { "fill-opacity": 0.85 } });
   map.addLayer({ id: "bldg-line", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-color": palette(mapTheme()).outline, "line-opacity": 0.3, "line-width": 0.5 } });
   map.addLayer({ id: "bldg-3d", type: "fill-extrusion", source: "bldg", "source-layer": layerId, paint: { "fill-extrusion-opacity": 0.92, "fill-extrusion-vertical-gradient": true } });
+  addOverlapLayers(map);
+}
+
+function addOverlapLayers(map) {
+  if (!pair.shape) return;
+  OVERLAP_LAYERS.forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
+  if (!map.getSource("overlap")) {
+    map.addSource("overlap", { type: "geojson", data: { type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates: pair.shape } } });
+  }
+  // Drawn before the (see-through) buildings, which would otherwise hide it through the depth
+  // buffer; a little above the lower roof so its top does not z-fight.
+  map.addLayer({ id: "overlap-3d", type: "fill-extrusion", source: "overlap", paint: { "fill-extrusion-height": pair.h + 0.3, "fill-extrusion-opacity": 0.9 } }, "bldg-3d");
+  map.addLayer({ id: "overlap-fill", type: "fill", source: "overlap", paint: { "fill-opacity": 0.55 } });
+  map.addLayer({ id: "overlap-line", type: "line", source: "overlap", paint: { "line-width": 2.5 } });
+}
+
+function styleOverlap(map, threeD) {
+  if (!map.getLayer("overlap-line")) return;
+  const color = palette(mapTheme()).outlier;
+  map.setPaintProperty("overlap-3d", "fill-extrusion-color", color);
+  map.setPaintProperty("overlap-fill", "fill-color", color);
+  map.setPaintProperty("overlap-line", "line-color", color);
+  map.setLayoutProperty("overlap-3d", "visibility", threeD ? "visible" : "none");
+  map.setLayoutProperty("overlap-fill", "visibility", threeD ? "none" : "visible");
 }
 
 function colorExpression() {
@@ -453,6 +487,15 @@ function colorExpression() {
     expr = ["case", matchBuildings(pending, state.idCol, state.parentAttr), pal.accent, expr];
     legend += item(pal.accent, "Landmark chưa có GLB (click để upload)");
   }
+  if (state.idCol && (pair.a || pair.b)) {
+    if (pair.b) expr = ["case", matchBuilding(pair.b), pal.ochre, expr];
+    if (pair.a) expr = ["case", matchBuilding(pair.a), pal.cat[0], expr];
+    legend += (pair.a ? item(pal.cat[0], `A: ${pair.a}`) : "") + (pair.b ? item(pal.ochre, `B: ${pair.b}`) : "");
+  }
+  if (pair.shape) {
+    const iou = Number.isFinite(pair.iou) && pair.iou > 0 ? ` — IoU ${(100 * pair.iou).toFixed(2)}%` : "";
+    legend += item(pal.outlier, `Phần chồng lấn${iou}`);
+  }
   if (state.selected && state.idCol) {
     // Also light up the parts of a multi-part building (its outline may be hidden).
     expr = ["case", matchBuilding(state.selected), pal.highlight, expr];
@@ -486,7 +529,8 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-3d", "fill-extrusion-color", expr);
   map.setPaintProperty("bldg-3d", "fill-extrusion-height", height);
   map.setPaintProperty("bldg-3d", "fill-extrusion-base", base);
-  map.setPaintProperty("bldg-3d", "fill-extrusion-opacity", mobile ? mobile.opacity : 0.92);
+  // With an overlap shown, see-through buildings let its volume show inside them.
+  map.setPaintProperty("bldg-3d", "fill-extrusion-opacity", mobile ? mobile.opacity : pair.shape ? 0.6 : 0.92);
   map.setPaintProperty("bldg-2d", "fill-color", expr);
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
@@ -496,6 +540,7 @@ function applyStyle(map) {
   map.setLayoutProperty("bldg-3d", "visibility", threeD ? "visible" : "none");
   map.setLayoutProperty("bldg-2d", "visibility", threeD ? "none" : "visible");
   map.setLayoutProperty("bldg-line", "visibility", threeD ? "none" : "visible");
+  styleOverlap(map, threeD);
   if (!threeD && map.getPitch() > 0) map.easeTo({ pitch: 0 });
   if (threeD && map.getPitch() < 20) map.easeTo({ pitch: 55 });
   landmark.ws?.styleChanged();

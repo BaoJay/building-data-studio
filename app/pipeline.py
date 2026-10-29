@@ -4,6 +4,7 @@
       └─ ogr2ogr + SQL ──► normalized GeoPackage (EPSG:4326, h_m, h_src, h_outlier)
            ├─ ogrinfo SQL ──► has_parts / is_part
            ├─ ogr2ogr ──► output GeoPackage in another CRS (optional)
+           ├─ ogr2ogr + SpatiaLite ──► overlapping footprints (layer `overlaps` of the output GeoPackage)
            ├─ sqlite3 ──► height report (report.json / report.md)
            ├─ ogr2ogr ──► FlatGeobuf (temp) ── tippecanoe ──► PMTiles
            └─ (optional) shadows.compute_dataset ──► shadows layer, tile-joined into the PMTiles
@@ -25,7 +26,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import __version__, probe, shadows, tools, vmap
+from . import __version__, overlap, probe, shadows, tools, vmap
 from .jobs import FileRegistry, Job, Step
 from .probe import GENERATED_FIELDS, ProbeError
 from .probe import quote_ident as q
@@ -49,6 +50,7 @@ DEFAULT_LAYER = "buildings"
 WORK_DIR_NAME = "_work"
 NORMALIZED_NAME = "normalized.gpkg"
 TILES_INPUT_NAME = "tiles_input.fgb"
+OVERLAPS_NAME = "overlaps.gpkg"
 SHADOWS_INPUT_NAME = "shadows.geojsonl"
 SHADOW_MINZOOM = 15  # shadows of low-rise buildings are invisible further out
 MAX_ZOOM = 22
@@ -476,6 +478,7 @@ class Pipeline(StagedPipeline):
         self.src_crs: str | None = None
         self.tiles_info: dict[str, Any] | None = None
         self.shadow_info: dict[str, Any] | None = None
+        self.overlap_info: dict[str, Any] | None = None
         # With shadows, buildings are tiled on their own first and joined with the shadow tiles.
         self.with_shadows = cfg.want_pmtiles and cfg.tiles.shadows
         self.buildings_tiles = self.work / "buildings.pmtiles" if self.with_shadows else self.pmtiles_out
@@ -494,6 +497,7 @@ class Pipeline(StagedPipeline):
         steps.append(Step("verify", "Đối soát số lượng feature"))
         if cfg.want_gpkg and not _same_crs(cfg.gpkg_crs, WGS84):
             steps.append(Step("reproject", f"Đổi hệ toạ độ GPKG → {cfg.gpkg_crs}"))
+        steps.append(Step("overlaps", "Tìm footprint chồng lấn"))
         steps.append(Step("report", "Báo cáo chiều cao"))
         if cfg.want_pmtiles:
             steps += [
@@ -633,9 +637,49 @@ class Pipeline(StagedPipeline):
         self._run(cmd, step)
         self._add_output("gpkg", f"GeoPackage ({self.cfg.gpkg_crs})", self.gpkg_out, "gpkg")
 
+    def _step_overlaps(self, step: Step) -> None:
+        cfg = self.cfg
+        out = self.work / OVERLAPS_NAME
+        out.unlink(missing_ok=True)
+        with closing(tools.connect_ro(self.normalized)) as conn:
+            columns = {r[1] for r in conn.execute(f"PRAGMA table_info({q(cfg.gpkg_layer)})")}
+        id_col = self._id_col()
+        sql = overlap.build_overlap_sql(
+            cfg.gpkg_layer, GEOM_NAME,
+            id_col=id_col if id_col in columns else None,
+            parts=cfg.parts if cfg.parts and set(cfg.parts) <= columns else None,
+            height_col="h_m" if "h_m" in columns else None,
+        )
+        ogr2ogr = tools.require("ogr2ogr")
+        self._run([
+            ogr2ogr, "-f", "GPKG", str(out), str(self.normalized), "-sql", sql,
+            "-nln", overlap.LAYER, "-nlt", "MULTIPOLYGON", "-a_srs", WGS84,
+            "-lco", f"GEOMETRY_NAME={GEOM_NAME}", "-lco", "FID=fid",
+        ], step)
+        step.progress = 80.0
+        info = overlap.overlap_report(out, self.normalized, cfg.gpkg_layer, GEOM_NAME,
+                                      self.accounting.get("normalized_count") or 0)
+        self.overlap_info = info
+        if cfg.want_gpkg and info["pairs"]:
+            cmd = [ogr2ogr, "-update", str(self.gpkg_out), str(out), overlap.LAYER, "-nln", overlap.LAYER,
+                   "-lco", f"GEOMETRY_NAME={GEOM_NAME}", "-lco", "FID=fid"]
+            if not _same_crs(cfg.gpkg_crs, WGS84):
+                cmd += ["-t_srs", cfg.gpkg_crs]
+            self._run(cmd, step)
+        step.detail = f"{info['buildings']:,} building ({info['pct']}%) trong {info['pairs']:,} cặp"
+        self.job.add_log(
+            f"Footprint chồng lấn: {info['buildings']:,}/{info['total']:,} building ({info['pct']}%), "
+            f"{info['pairs']:,} cặp, tổng diện tích giao {info['inter_m2']:,.0f} m²"
+            + (f" — layer `{overlap.LAYER}` trong GeoPackage" if cfg.want_gpkg and info["pairs"] else "")
+        )
+
+    def _id_col(self) -> str | None:
+        cfg = self.cfg
+        return cfg.report_id_col or (cfg.parts[0] if cfg.parts else None) or self.info["suggest"].get("id_col")
+
     def _step_report(self, step: Step) -> None:
         cfg, rule = self.cfg, self.rule
-        id_col = cfg.report_id_col or (cfg.parts[0] if cfg.parts else None) or self.info["suggest"].get("id_col")
+        id_col = self._id_col()
         spec = ReportSpec(
             table=cfg.gpkg_layer,
             geom_col=GEOM_NAME,
@@ -650,6 +694,7 @@ class Pipeline(StagedPipeline):
         report["accounting"] = self.accounting
         report["rule"] = asdict(rule) if rule else None
         report["id_col"] = id_col
+        report["overlaps"] = self.overlap_info
         with self.job.lock:
             self.job.report = report
         height = report.get("height")

@@ -228,8 +228,8 @@ def gpkg_envelope(blob: bytes | None) -> list[float] | None:
     if envelope_kind:
         minx, maxx, miny, maxy = struct.unpack_from(endian + "4d", blob, GPKG_HEADER_BYTES)
         return [minx, miny, maxx, maxy]
-    wkb = blob[GPKG_HEADER_BYTES:]
-    if len(wkb) < 21:
+    wkb = gpkg_wkb(blob)
+    if wkb is None or len(wkb) < 21:
         return None
     wkb_endian = "<" if wkb[0] == 1 else ">"
     (geom_type,) = struct.unpack_from(wkb_endian + "I", wkb, 1)
@@ -237,6 +237,16 @@ def gpkg_envelope(blob: bytes | None) -> list[float] | None:
         return None
     x, y = struct.unpack_from(wkb_endian + "2d", wkb, 5)
     return [x, y, x, y]
+
+
+def gpkg_wkb(blob: bytes | None) -> bytes | None:
+    """The WKB after a GeoPackage geometry blob's header and envelope (None if not a GPKG blob)."""
+    if not blob or len(blob) < GPKG_HEADER_BYTES or blob[:2] != GPKG_MAGIC:
+        return None
+    doubles = GPKG_ENVELOPE_DOUBLES.get((blob[3] >> 1) & 0b111)
+    if doubles is None:
+        return None
+    return blob[GPKG_HEADER_BYTES + 8 * doubles:]
 
 
 def render_markdown(report: dict[str, Any], title: str) -> str:

@@ -274,6 +274,12 @@ Cả lượt convert có bóng (mọi building) mất khoảng 4,5 phút, RAM đ
 
 96,9% building của bản này đang dùng chiều cao mặc định 4 m (`h_src = default`), nên ngưỡng 4 m bỏ gần hết bóng của nhà "đoán chiều cao" và làm layer nhẹ đi khoảng 30 lần.
 
+### Bay quanh toà cao nhất
+
+Nút **Bay quanh toà cao nhất** trong panel trái của trang xem 3D lấy 6 building cao nhất trong khung nhìn (theo cột chiều cao, bỏ `h_outlier`, gộp khối con vào toà mẹ, hai toà cách nhau dưới 120 m tính là một điểm dừng), rồi lần lượt bay tới từng toà và lượn quanh nó một vòng. Toà đang xem được tô như khi click; thẻ dưới bản đồ hiện tên, `building_id`, chiều cao và một skyline nhỏ của các điểm dừng. Chạy hết thì camera bay về chỗ cũ. Bấm **Dừng**, Esc hoặc chạm vào bản đồ để dừng ở chỗ đang xem.
+
+Chỉ xét building đã tải trong khung nhìn: thu nhỏ bản đồ (vd zoom 13 với base Hà Nội) để tìm trong vùng rộng hơn. Máy bật "giảm chuyển động" (prefers-reduced-motion) thì camera nhảy thẳng tới từng toà, dừng 4 giây, không bay lượn.
+
 ### Landmark 3D trong trang xem 3D
 
 Trang xem 3D (`/preview`) là nơi duy nhất xem và quản lý landmark: panel bên trái điều khiển bản đồ (layer, tô màu, 2D/3D, bóng, bản đồ nền, chế độ ánh sáng), bản đồ ở giữa, drawer **Landmark** bên phải. Nút **Đóng** thu drawer lại để bản đồ rộng ra, nút **Landmark** trên bản đồ mở lại. Trên màn hình hẹp, drawer là một tấm trượt từ dưới lên và panel trái tự thu gọn.
@@ -422,5 +428,5 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |
 | `app/osmbase.py` | Base Hà Nội: ranh giới và building OSM từ Overture (DuckDB), chạy qua pipeline convert, ghi `base/hanoi/base.json` |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
-| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff (`preview.js`); `basemap.js` (bản đồ nền và chế độ ánh sáng); landmark trong trang xem 3D: `landmark-workspace.js` (state, thao tác, URL), `landmark-drawer.js` (giao diện drawer), `landmark-store.js` (tải GLB theo vùng nhìn, cache, filter extrusion; không phụ thuộc trình duyệt, test bằng Node), `landmark-model.js` (vẽ nhiều GLB trong một custom layer) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, chế độ diff không tải three.js) |
+| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff (`preview.js`); `basemap.js` (bản đồ nền và chế độ ánh sáng); landmark trong trang xem 3D: `landmark-workspace.js` (state, thao tác, URL), `landmark-drawer.js` (giao diện drawer), `landmark-store.js` (tải GLB theo vùng nhìn, cache, filter extrusion; không phụ thuộc trình duyệt, test bằng Node), `landmark-model.js` (vẽ nhiều GLB trong một custom layer) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); `tour.js` (bay quanh toà cao nhất: chọn điểm dừng, camera; test bằng Node); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, chế độ diff không tải three.js) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe); `tests/js/` chạy bằng Node |

@@ -486,6 +486,30 @@ body.resizing-panel { cursor: ew-resize; user-select: none; }
 .props td { padding: 2px var(--space-2) 2px 0; border: 0; white-space: normal; word-break: break-all; vertical-align: top; }
 .props td:first-child { color: var(--muted); font-family: var(--font-mono); white-space: nowrap; word-break: normal; }
 #diffControls { display: grid; gap: var(--space-3); }
+/* "Bay quanh toà cao nhất": thẻ dưới bản đồ, skyline nhỏ của các điểm dừng, toà đang xem tô như highlight trên bản đồ */
+.tour-card {
+  position: absolute; bottom: 36px; left: 50%; transform: translateX(-50%); z-index: 6;
+  width: min(480px, calc(100% - 32px)); display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center;
+  gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line-strong); outline: 1px solid var(--line); outline-offset: calc(-1px - var(--rule-gap));
+  box-shadow: var(--shadow-float);
+}
+.tour-card[hidden] { display: none; }
+.tour-skyline { display: flex; align-items: flex-end; gap: 3px; height: 44px; padding-bottom: 2px; border-bottom: 2px solid var(--ink-2); }
+.tour-skyline span { width: 7px; background: var(--line-strong); transition: background-color 0.3s; }
+.tour-skyline span.on { background: var(--map-highlight); }
+.tour-info { min-width: 0; }
+.tour-rank { font: 500 11px/16px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.tour-name { font: 600 17px/22px var(--font-serif); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tour-id { font: 11.5px/16px var(--font-mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tour-h { font: 600 26px/1 var(--font-serif); color: var(--map-highlight); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 640px) {
+  .tour-card { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .tour-card .btn { grid-column: 1 / -1; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-skyline span { transition: none; }
+}
 .legend label.item { cursor: pointer; }
 .legend .n { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 /* ---------- workspace 3D (/preview): bản đồ | drawer landmark ---------- */

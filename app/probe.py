@@ -23,6 +23,9 @@ VECTOR_SUFFIXES = frozenset(
 )
 TILES_SUFFIXES = frozenset({".pmtiles"})
 ALLOWED_SUFFIXES = VECTOR_SUFFIXES | TILES_SUFFIXES
+# Excel sheets are staged into a GeoPackage first (app/xlsx.py); only the Convert tab takes them.
+SHEET_SUFFIXES = frozenset({".xlsx"})
+CONVERT_SUFFIXES = ALLOWED_SUFFIXES | SHEET_SUFFIXES
 PARQUET_SUFFIXES = frozenset({".parquet", ".geoparquet"})
 
 # Columns this app writes; on re-processing they are recomputed, not copied.
@@ -72,7 +75,7 @@ class Field:
         return self.type in TEXT_TYPES
 
 
-def resolve_input_path(raw: str) -> Path:
+def resolve_input_path(raw: str, accept: frozenset[str] = ALLOWED_SUFFIXES) -> Path:
     """Validate a user-supplied path and return it resolved.
 
     Raises:
@@ -81,8 +84,8 @@ def resolve_input_path(raw: str) -> Path:
     path = Path(raw.strip().strip('"').strip("'")).expanduser()
     if not path.is_file():
         raise ProbeError(f"Không tìm thấy file: {path}")
-    if path.suffix.lower() not in ALLOWED_SUFFIXES:
-        allowed = ", ".join(sorted(ALLOWED_SUFFIXES))
+    if path.suffix.lower() not in accept:
+        allowed = ", ".join(sorted(accept))
         raise ProbeError(f"Định dạng {path.suffix or '(không có đuôi)'} chưa hỗ trợ. Hỗ trợ: {allowed}")
     return path.resolve()
 

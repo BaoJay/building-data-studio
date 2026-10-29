@@ -1,6 +1,6 @@
 # Building Data Studio
 
-App chạy local (trên trình duyệt) để chuyển dữ liệu building từ **Parquet / GeoPackage** sang:
+App chạy local (trên trình duyệt) để chuyển dữ liệu building từ **Parquet / GeoPackage** (hoặc một sheet **Excel**) sang:
 
 - **GeoPackage (.gpkg)**: mở bằng QGIS để kiểm tra chiều cao của khối building trong khu vực
 - **PMTiles (.pmtiles)**: publish và serve cho app mobile (MapLibre, dựng 3D bằng `fill-extrusion`)
@@ -14,6 +14,8 @@ Trang xem 3D (`/preview`) hiện building LoD1 cùng mọi **landmark 3D** (file
 **Base Hà Nội**: building OpenStreetMap của toàn thành phố, app tự tạo một lần. Trang xem 3D mở thẳng base này, không cần upload hay convert file (xem [Base Hà Nội](#base-hà-nội-building-osm-toàn-thành-phố)).
 
 ```
+.xlsx (một sheet) ── cột WKT / GeoJSON, hoặc way ID OSM ── Overpass + buffer ──► GeoPackage dựng sẵn ─┐
+                                                                                                    ▼
 input (.parquet / .gpkg / .fgb / .geojson)
   └─ ogr2ogr + SQL ──► GeoPackage chuẩn hoá (EPSG:4326, h_m, h_src, h_outlier)
        ├─ ogrinfo SQL ──► has_parts / is_part (toà nhà nhiều khối)
@@ -114,6 +116,20 @@ Dữ liệu OSM theo giấy phép ODbL. PMTiles của base ghi sẵn attribution
 6. **Báo cáo chiều cao** hiển thị ngay bên dưới. Bấm **Xem 3D** ở bảng outlier hoặc bảng toà cao nhất để bay thẳng tới building đó trên bản đồ.
 
 Kéo thả file `.pmtiles` có sẵn vào app để xem 3D mà không cần convert.
+
+### Convert một sheet Excel (.xlsx)
+
+File Excel không có geometry sẵn. Sau khi mở file, app hiện một form để dựng geometry trước:
+
+1. **Sheet**: app chọn sẵn sheet đầu tiên có cột hình học, đổi được.
+2. **Dòng header**: app tự dò, bỏ qua dòng tiêu đề và ghi chú phía trên bảng. Nếu bảng có một dòng nhãn tiếng Việt và ngay dưới là một dòng tên máy (`way_id`, `buffer_moi_ben_m`…), app lấy dòng tên máy làm tên cột. Bảng xem trước tô đậm dòng header; sửa số dòng nếu dò sai (0 = sheet không có header).
+3. **Nguồn hình học**, một trong hai:
+   - **Cột WKT / GeoJSON**: mỗi ô là một hình (`POLYGON ((…))` hoặc `{"type": "Polygon", …}`). Nhập CRS của toạ độ (mặc định `EPSG:4326`).
+   - **Cột way ID OpenStreetMap**: mỗi ô là một way ID (`123`, `w123`, `way/123` hoặc link openstreetmap.org/way/123). App tải hình đường từ **Overpass API** (cần internet, có thể mất 1–2 phút), rồi buffer **mỗi bên** theo cột buffer đã chọn thành polygon. Dòng không có số buffer dùng **Buffer mặc định**. Lưu ý chọn cột bề rộng *mỗi bên*, không phải cột mặt cắt cả đường.
+4. Bấm **Tạo dữ liệu bản đồ**. App ghi một GeoPackage vào `uploads/` (layer mang tên sheet, thêm cột `xlsx_row` = số dòng trong Excel, và với way ID thêm `osm_way_id`, `buffer_m`). Dòng không dựng được hình (ô trống, WKT lỗi, way đã bị xoá khỏi OSM) bị bỏ qua và được liệt kê trong cảnh báo.
+5. Phần còn lại giống file thường: chọn tuỳ chọn rồi **Chạy convert**. Sheet có cột chiều cao / số tầng thì dựng 3D như building. Không có thì ô **Chiều cao** tắt sẵn, output là polygon phẳng giữ mọi cột của sheet, và trang xem bản đồ mở ở chế độ 2D.
+
+Đổi máy chủ Overpass bằng biến môi trường `BDS_OVERPASS_URL` (mặc định `https://overpass-api.de/api/interpreter`).
 
 ### Về file Parquet không có metadata
 
@@ -370,6 +386,7 @@ Thời gian chạy trên máy dev: canonical v1 (369 nghìn) ↔ v2 (1,2 triệu
 | “Không tìm thấy cột geometry” | File Parquet thường: chọn cột WKB/WKT ở *Nguồn dữ liệu* |
 | Job lỗi giữa chừng | Mở **Log chi tiết**. File trung gian được giữ trong `_work/` của thư mục output |
 | Cổng 8765 đang bận | `./run.sh --port 9000` |
+| Excel: “Overpass trả lỗi HTTP 429/504” hoặc “Không tải được hình học từ Overpass” | Máy chủ Overpass đang bận hoặc không có mạng: đợi vài phút rồi bấm lại **Tạo dữ liệu bản đồ**, hoặc đặt `BDS_OVERPASS_URL` sang máy chủ khác |
 | Thẻ Base báo lỗi `Không tải được extension DuckDB` | Máy không vào được extensions.duckdb.org: `.venv/bin/pip install duckdb-extension-spatial duckdb-extension-httpfs` (cùng version với `duckdb`), rồi bấm **Tạo base** |
 | Thẻ Base báo lỗi `Không đọc được danh sách release Overture` / lỗi HTTP khi tải building | Kiểm tra internet / VPN (app đọc `overturemaps-us-west-2.s3.amazonaws.com`), rồi bấm **Tạo base**. Có thể đặt cố định `BDS_OVERTURE_RELEASE=2026-10-21.0` |
 | Trang 3D báo “Chưa có base Hà Nội” | Base chưa tạo, hoặc đã bị xoá khỏi `base/hanoi/`: bấm **Tạo base** ở trang chính |

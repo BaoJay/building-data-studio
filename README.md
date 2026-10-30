@@ -355,7 +355,17 @@ Dữ liệu nằm trong thư mục `landmarks/` cạnh `output/`. Thư mục nà
 
 Mục **Kiểm tra ánh sáng (QA)** trong drawer giúp kiểm tra mô hình dưới cả 5 chế độ ánh sáng trước khi upload lên MapOps:
 
-- Mô hình được tô sáng bằng đúng công thức fill-extrusion của MapLibre, với `light` của style đang hiển thị. App đọc `light` qua `map.getLight()` và đọc lại mỗi khi style đổi, nên khi chuyển chế độ ánh sáng, landmark đổi sáng cùng lúc với các building xung quanh. Texture emissive (ví dụ cửa sổ sáng đèn) chỉ bật với style ban đêm, tức khi `metadata["tasco:light-preset"]` là `"night"`.
+- Mô hình được tô sáng bằng đúng công thức fill-extrusion của MapLibre, với `light` của style đang hiển thị. App đọc `light` qua `map.getLight()` và đọc lại mỗi khi style đổi, nên khi chuyển chế độ ánh sáng, landmark đổi sáng cùng lúc với các building xung quanh.
+- Emissive (LED, chữ, cửa sổ sáng đèn) sáng theo **nhóm** của từng vật liệu và theo preset (`metadata["tasco:light-preset"]`). Nhóm là `material.extras.emissive_group` do pipeline `glb_lit.py` ghi từ hậu tố tên vật liệu trong SketchUp (`_LED_WARM` → `led_warm`, `_WIN` → `windows_*`…); app không suy nhóm từ tên vật liệu. Cường độ = `emissiveFactor × mask × gain(preset, nhóm) × emissive_strength`, bảng gain là `EMISSIVE_GAIN` trong `landmark-light.js`:
+
+  | Nhóm | dawn | day | dusk | night |
+  |---|---|---|---|---|
+  | `led_warm`, `led_line`, `led_white`, `glow`, `sign*`, `logo*` | 0,4 | 0 | 0,9 | 1 |
+  | `lobby` | 0,3 | 0 | 0,6 | 0,8 |
+  | `windows*` | 0,15 | 0 | 0,35 | 0,5 |
+  | nhóm khác / không có nhóm | 0,3 | 0 | 0,6 | 1 |
+
+  Khóa có `*` khớp theo tiền tố (`windows_tower` → `windows*`). Ban ngày mọi nhóm bằng 0. `emissive_strength` (> 1, ví dụ hậu tố `_LED_WARM_150`) chỉ làm màu bão hòa về trắng vì shader kẹp ở 1; muốn chói thật cần bloom. Mục QA liệt kê từng vật liệu phát sáng của mô hình, nhóm và gain đang dùng.
 - Để QA, ô **So sánh** hiện extrusion gốc của building ngay bên cạnh landmark (đục, màu so sánh). Ô **Tô landmark một màu** thay texture bằng chính màu đó: khi ấy mái, và các mặt tường quay cùng hướng, của landmark và extrusion phải sáng tối như nhau. Mục này còn ghi màu mong đợi của mái và tường 4 hướng, cùng các uniform ánh sáng để đối chiếu khi port.
 
 Công thức, shader và ghi chú cho Mobile (Android / iOS) nằm chung trong [`app/static/landmark-light.js`](app/static/landmark-light.js). MapOps web và renderer LMK3 của app Mobile port nguyên công thức này. `tests/test_landmark.py` kiểm tra công thức với chính code của MapLibre, với màu pixel MapLibre vẽ ra ở cả 5 chế độ, và chạy file JS bằng Node để so với bản port Python. Ba điều dễ sai khi port:

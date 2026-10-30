@@ -52,12 +52,20 @@
 // THREE.Color and three's sRGB textures linearise by default: the preview turns that off.
 // Normal maps, metallic / roughness and occlusion are ignored on purpose: extrusions have none.
 //
-// Emissive (optional). emissiveFactor × emissiveTexture, in sRGB, × KHR_materials_emissive_strength,
-// × the preset's emissive level, added after the light and clamped. emissiveTexture may read
-// TEXCOORD_1 (its texCoord: 1), e.g. a window mask spanning 4×4 facade modules while the base
-// colour tiles one module on TEXCOORD_0: keep texCoord in a port. The level comes from the
-// style's metadata "tasco:light-preset" (EMISSIVE_LEVEL: dawn 0.3, day 0, dusk 0.6, night 1).
-// A style without a preset stays at 0.
+// Emissive (optional). emissiveFactor × emissiveTexture, in sRGB, × the material's strength,
+// × the gain of its group in the preset, added after the light and clamped. emissiveTexture may
+// read TEXCOORD_1 (its texCoord: 1), e.g. a window mask spanning 4×4 facade modules while the
+// base colour tiles one module on TEXCOORD_0: keep texCoord in a port.
+//   strength  KHR_materials_emissive_strength × material.extras.emissive_strength (both 1 when
+//             absent). The pipeline (glb_lit.py) writes emissive_strength only above 100%
+//             (e.g. suffix _LED_WARM_150); levels below 100% are already in emissiveFactor.
+//   gain      EMISSIVE_GAIN[group][preset] (emissiveGain): preset from the style's metadata
+//             "tasco:light-preset", group from material.extras.emissive_group (led_warm,
+//             windows_tower, ...; three's GLTFLoader copies extras to material.userData). Never
+//             infer the group from the material name. Day is 0 for every group: by day the model
+//             looks as in SketchUp. A style without a preset stays at 0.
+// The output is clamped at 1, so gain × strength above 1 only washes the colour towards white
+// (warm [1, 0.8, 0.5] × 1.5 -> [1, 1, 0.75]); it takes bloom to look brighter.
 //
 // Reading the style's `light` (refresh on every style change, and also every frame when the
 // anchor is "viewport", since the bearing then moves the light):
@@ -170,17 +178,16 @@ export function modelToEnu([x, y, z], headingDeg = 0) {
   return [e1 * Math.cos(h) + n1 * Math.sin(h), -e1 * Math.sin(h) + n1 * Math.cos(h), y];
 }
 
-// Everything the shader needs from the style and the camera, for one frame.
+// Everything the shader needs from the style and the camera, for one frame (the per-material
+// u_emissive_gain comes from emissiveGain).
 //   light: resolveLight(map.getLight());  heading: the model's heading_deg;  bearing: map bearing
-//   emissive: emissive level 0..1 (emissiveLevel(style metadata))
-export function landmarkUniforms(light, { heading = 0, bearing = 0, emissive = 0 } = {}) {
+export function landmarkUniforms(light, { heading = 0, bearing = 0 } = {}) {
   const enu = lightVectorENU(light, bearing);
   return {
     u_lightpos: enuToModel(enu, heading),
     u_lightcolor: light.color,
     u_lightintensity: light.intensity,
     u_north: enuToModel([0, 1, 0], heading),
-    u_emissive_on: emissive,
     lightposEnu: enu,
   };
 }
@@ -189,12 +196,48 @@ export function isNightStyle(metadata) {
   return (metadata || {})["tasco:light-preset"] === "night";
 }
 
-// Emissive level per VMAP light preset (relative; the app has the final say). Anything else
-// is 0.
-export const EMISSIVE_LEVEL = Object.freeze({ dawn: 0.3, day: 0, dusk: 0.6, night: 1 });
+// The VMAP light preset of a style (dawn / day / dusk / night), or null.
+export function lightPreset(metadata) {
+  return (metadata || {})["tasco:light-preset"] ?? null;
+}
 
-export function emissiveLevel(metadata) {
-  return EMISSIVE_LEVEL[(metadata || {})["tasco:light-preset"]] ?? 0;
+// Emissive gain per group (material.extras.emissive_group) and light preset. A key ending in
+// "*" matches by prefix (windows_tower -> "windows*"), so a building's config can name groups
+// in detail; "*" is every other group and a material without one. LED strips are the landmark's
+// signature and light up from dusk; windows stay well below them (photos of Tasco by night).
+export const EMISSIVE_GAIN = Object.freeze({
+  "led_warm":  Object.freeze({ dawn: 0.4,  day: 0, dusk: 0.9,  night: 1.0 }),
+  "led_line":  Object.freeze({ dawn: 0.4,  day: 0, dusk: 0.9,  night: 1.0 }),
+  "led_white": Object.freeze({ dawn: 0.4,  day: 0, dusk: 0.9,  night: 1.0 }),
+  "glow":      Object.freeze({ dawn: 0.4,  day: 0, dusk: 0.9,  night: 1.0 }),
+  "sign*":     Object.freeze({ dawn: 0.4,  day: 0, dusk: 0.9,  night: 1.0 }),
+  "logo*":     Object.freeze({ dawn: 0.4,  day: 0, dusk: 0.9,  night: 1.0 }),
+  "lobby":     Object.freeze({ dawn: 0.3,  day: 0, dusk: 0.6,  night: 0.8 }),
+  "windows*":  Object.freeze({ dawn: 0.15, day: 0, dusk: 0.35, night: 0.5 }),
+  "*":         Object.freeze({ dawn: 0.3,  day: 0, dusk: 0.6,  night: 1.0 }),
+});
+
+// The EMISSIVE_GAIN row a group falls into: its own name, else the longest matching prefix key.
+export function emissiveGroupKey(group) {
+  const g = typeof group === "string" ? group : "";
+  if (g && g !== "*" && Object.hasOwn(EMISSIVE_GAIN, g)) return g;
+  let best = "*";
+  for (const k of Object.keys(EMISSIVE_GAIN)) {
+    if (k.length > 1 && k.endsWith("*") && g.startsWith(k.slice(0, -1)) && k.length > best.length) best = k;
+  }
+  return best;
+}
+
+// Gain of a group in a preset (preset: lightPreset(style metadata)). An unknown preset or none: 0.
+export function emissiveGain(preset, group) {
+  const row = EMISSIVE_GAIN[emissiveGroupKey(group)];
+  return Object.hasOwn(row, preset ?? "") ? row[preset] : 0;
+}
+
+// material.extras.emissive_strength as a multiplier: a positive number, else 1.
+export function emissiveStrength(extras) {
+  const v = Number((extras || {}).emissive_strength);
+  return Number.isFinite(v) && v > 0 ? v : 1;
 }
 
 // ------------------------------------------------------------------ colour (CPU mirror of the shader)
@@ -290,8 +333,8 @@ uniform float u_has_base_map;
 uniform vec3 u_emissive;            // glTF emissiveFactor (linear)
 uniform sampler2D u_emissive_map;
 uniform float u_has_emissive_map;
-uniform float u_emissive_intensity; // KHR_materials_emissive_strength
-uniform float u_emissive_on;        // emissive level of the preset (EMISSIVE_LEVEL), 0..1
+uniform float u_emissive_intensity; // KHR_materials_emissive_strength × extras.emissive_strength (emissiveStrength)
+uniform float u_emissive_gain;      // gain of the material's emissive_group in the preset (emissiveGain)
 uniform float u_alpha_cutoff;       // alphaMode MASK, -1 otherwise
 uniform vec4 u_override;            // QA: rgb = flat colour (raw sRGB) used instead of the model's, a = 1 on
 
@@ -348,7 +391,7 @@ void main() {
 
   vec3 emissive = u_emissive;
   if (u_has_emissive_map > 0.5) emissive *= srgbToLinear(texture(u_emissive_map, v_uv_emissive).rgb);
-  lit = clamp(lit + linearToSrgb(clamp(emissive, 0.0, 1.0)) * u_emissive_intensity * u_emissive_on * (1.0 - u_override.a), 0.0, 1.0);
+  lit = clamp(lit + linearToSrgb(clamp(emissive, 0.0, 1.0)) * u_emissive_intensity * u_emissive_gain * (1.0 - u_override.a), 0.0, 1.0);
   fragColor = vec4(lit, base.a);
 }
 `;

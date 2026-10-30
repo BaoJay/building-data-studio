@@ -278,6 +278,17 @@ def test_emissive_mask_can_use_texcoord_1():
     assert "emissiveMap.channel === 1" in model
 
 
+def test_shader_scales_emissive_by_the_group_gain():
+    src = LIGHT_JS.read_text()
+    frag = src[src.index("export const FRAGMENT_SHADER"):]
+    assert "uniform float u_emissive_gain;" in frag
+    assert "u_emissive_intensity * u_emissive_gain" in frag
+    assert "u_emissive_on" not in src
+    model = (LIGHT_JS.parent / "landmark-model.js").read_text()
+    assert "LL.emissiveGain(this.preset, m.userData.emissive_group)" in model
+    assert "LL.emissiveStrength(extras)" in model
+
+
 def test_shader_uses_the_same_constants():
     src = LIGHT_JS.read_text()
     frag = src[src.index("export const FRAGMENT_SHADER"):]
@@ -313,8 +324,6 @@ console.log(JSON.stringify(cases.map((c) => {
     back: LL.modelToEnu(LL.enuToModel(c.n, c.heading), c.heading),
     shade: LL.shade(base, c.n, light, { bearing: c.bearing, heightM: 336, t: c.t }),
     night: LL.isNightStyle({ "tasco:light-preset": "night" }) && !LL.isNightStyle({ "tasco:style-variant": "dark" }),
-    levels: ["dawn", "day", "dusk", "night"].map((p) => LL.emissiveLevel({ "tasco:light-preset": p })).concat(LL.emissiveLevel({ "tasco:style-variant": "dark" }), LL.emissiveLevel(undefined)),
-    emissiveOn: LL.landmarkUniforms(light, { emissive: 0.6 }).u_emissive_on,
   };
 })));
 """ % BUILDING)
@@ -333,8 +342,36 @@ console.log(JSON.stringify(cases.map((c) => {
         expected = shade(rgb(BUILDING), c["n"], light, bearing=c["bearing"], height_m=336, t=c["t"])
         assert r["shade"] == pytest.approx(expected, abs=1e-12)
         assert r["night"] is True
-        assert r["levels"] == [0.3, 0, 0.6, 1, 0, 0]
-        assert r["emissiveOn"] == 0.6
+
+
+@needs_node
+def test_js_emissive_gain_per_preset_and_group(tmp_path):
+    shutil.copy(LIGHT_JS, tmp_path / "landmark-light.mjs")
+    runner = tmp_path / "run.mjs"
+    runner.write_text("""
+import * as LL from "./landmark-light.mjs";
+const presets = ["dawn", "day", "dusk", "night", "dark", null];
+const groups = ["led_warm", "led_line", "led_white", "glow", "sign_podium", "logo", "lobby",
+                "windows_tower", "windows_podium", "windows", "facade", null, "", "*", 3];
+console.log(JSON.stringify({
+  gain: Object.fromEntries(groups.map((g) => [String(g), presets.map((p) => LL.emissiveGain(p, g))])),
+  key: Object.fromEntries(groups.map((g) => [String(g), LL.emissiveGroupKey(g)])),
+  preset: [LL.lightPreset({ "tasco:light-preset": "dusk" }), LL.lightPreset({}), LL.lightPreset(undefined)],
+  strength: [{ emissive_strength: 1.5 }, { emissive_strength: "2" }, { emissive_strength: 0 }, { emissive_strength: "x" }, {}, undefined]
+    .map((e) => LL.emissiveStrength(e)),
+}));
+""")
+    proc = subprocess.run(["node", str(runner)], capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    r = json.loads(proc.stdout)
+    led, win, lobby, other = [0.4, 0, 0.9, 1.0, 0, 0], [0.15, 0, 0.35, 0.5, 0, 0], [0.3, 0, 0.6, 0.8, 0, 0], [0.3, 0, 0.6, 1.0, 0, 0]
+    expected = {"led_warm": led, "led_line": led, "led_white": led, "glow": led, "sign_podium": led, "logo": led,
+                "lobby": lobby, "windows_tower": win, "windows_podium": win, "windows": win,
+                "facade": other, "null": other, "": other, "*": other, "3": other}
+    assert r["gain"] == expected
+    assert r["key"]["windows_tower"] == "windows*" and r["key"]["sign_podium"] == "sign*" and r["key"]["facade"] == "*"
+    assert r["preset"] == ["dusk", None, None]
+    assert r["strength"] == [1.5, 2, 1, 1, 1, 1]
 
 
 # ------------------------------------------------------------------ footprint lookup

@@ -420,11 +420,39 @@ function lightRows(ws) {
   const [r, az, polar] = l.position;
   const extra = l.anchor === "viewport" ? ` + bearing ${fmtNum(ws.map.getBearing(), 0)}°` : "";
   const warn = l.problems.length ? ` <span class="warn">Không dùng được ${l.problems.join(", ")} của light (expression?): dùng giá trị mặc định.</span>` : "";
-  const level = ws.layer.emissive;
-  const emissive = level > 0 ? `Emissive: mức ${fmtNum(level, 1)} theo preset (dawn 0,3 · day 0 · dusk 0,6 · night 1).` : "Emissive: tắt (day; bật ở dawn 0,3 · dusk 0,6 · night 1).";
   return `<div>Light của style (anchor ${l.anchor}): màu ${rgb(l.color)}, cường độ ${l.intensity}, `
-    + `[${r}, ${az}°${extra}, ${polar}°]. ${emissive}${warn}</div>`
+    + `[${r}, ${az}°${extra}, ${polar}°].${warn}</div>`
+    + emissiveRow(ws)
     + `<div class="lmk-swatches">Màu mong đợi với màu so sánh ${esc(ws.host.referenceColor())}: ${expectedSwatches(ws)}</div>`;
+}
+
+// Emissive materials of the shown model, one per glTF material: group (material.extras.emissive_group),
+// the EMISSIVE_GAIN row it falls into and its gain × strength in the current preset.
+function emissiveMaterials(ws) {
+  const model = ws.shownModel();
+  if (!model) return [];
+  const seen = new Map();
+  for (const m of model.materials) {
+    if (!m.userData.emissive || seen.has(m.userData.source)) continue;
+    const group = m.userData.emissive_group;
+    const strength = m.userData.emissive_strength;
+    const gain = LL.emissiveGain(ws.layer.preset, group);
+    seen.set(m.userData.source, { name: m.userData.source, group, key: LL.emissiveGroupKey(group), gain, strength, out: gain * strength });
+  }
+  return [...seen.values()];
+}
+
+function emissiveRow(ws) {
+  const preset = ws.layer.preset;
+  const mats = emissiveMaterials(ws);
+  if (!mats.length) return `<div>Emissive: mô hình không có vật liệu phát sáng.</div>`;
+  const head = preset ? `Emissive theo nhóm, preset ${esc(preset)}` : `Emissive: style không có tasco:light-preset, mọi nhóm tắt`;
+  const items = mats.map((m) => {
+    const group = m.group ? `${esc(m.group)}${m.key !== m.group ? ` → ${esc(m.key)}` : ""}` : `<span class="warn">không có emissive_group</span> → *`;
+    const strength = m.strength !== 1 ? ` × strength ${fmtNum(m.strength, 2)}` : "";
+    return `<li>${esc(m.name)}: ${group}, gain ${fmtNum(m.gain, 2)}${strength}${m.out > 1 ? " (trên 1: chỉ bão hoà về trắng, cần bloom)" : ""}</li>`;
+  });
+  return `<div>${head}:<ul class="lmk-emissive">${items.join("")}</ul></div>`;
 }
 
 // Roof and walls facing N / E / S / W, top of the wall, through the CPU copy of the shader.
@@ -452,7 +480,8 @@ function uniformDump(ws, d) {
     `u_lightintensity = ${u.u_lightintensity}`,
     `u_north = ${v(u.u_north)}`,
     `u_height_m = ${modelHeight(ws.shownModel(), d).toFixed(2)}`,
-    `u_emissive_on = ${u.u_emissive_on}`,
+    `preset = ${ws.layer.preset ?? "(none)"}`,
+    ...emissiveMaterials(ws).map((m) => `u_emissive_gain[${m.name}] = ${m.gain} (group ${m.group ?? "-"} → ${m.key}), strength ${m.strength}`),
   ].join("\n");
 }
 

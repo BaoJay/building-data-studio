@@ -53,6 +53,10 @@
       <div class="hint" id="shadowNote"></div>
       <div class="btn-row" id="shadowDownloadRow" hidden><a class="btn small" id="shadowDownload" href="#" download>Tải layer bóng vùng này (GeoJSON)</a></div>
     </div>
+    <div class="field" id="tourControls">
+      <div class="btn-row"><button class="btn small" id="tourBtn" type="button" disabled>Bay quanh toà cao nhất</button></div>
+      <div class="hint" id="tourNote">Lần lượt bay tới 6 toà cao nhất trong khung nhìn và lượn một vòng. Thu nhỏ bản đồ để tìm trong vùng rộng hơn.</div>
+    </div>
     <label class="check" id="hideParentsWrap" hidden><input type="checkbox" id="hideParents" checked>Ẩn outline có khối con (<code>has_parts</code>)</label>
     <label class="field"><span>Bản đồ nền</span>
       <select id="baseSel">
@@ -76,6 +80,16 @@
   <div class="panel-grip" id="panelGrip" role="separator" aria-orientation="vertical" aria-controls="panel" aria-label="Kéo để đổi độ rộng panel" title="Kéo để đổi độ rộng · nhấp đúp để về mặc định" tabindex="0"></div>
   <div class="zoomnote" id="zoomNote" hidden></div>
   <div class="zoomnote" id="pickNote" hidden>Click lên bản đồ để đặt toạ độ neo · Esc để huỷ</div>
+  <div class="tour-card" id="tourCard" hidden>
+    <div class="tour-skyline" id="tourSkyline" aria-hidden="true"></div>
+    <div class="tour-info" role="status" aria-live="polite">
+      <div class="tour-rank" id="tourRank"></div>
+      <div class="tour-name" id="tourName"></div>
+      <div class="tour-id" id="tourId"></div>
+    </div>
+    <div class="tour-h" id="tourH"></div>
+    <button class="btn small" id="tourStop" type="button" title="Hoặc Esc, hoặc chạm vào bản đồ">Dừng</button>
+  </div>
   <div class="zbadge" id="zBadge"></div>
   <button class="btn small drawer-open" id="drawerOpen" type="button" hidden aria-controls="lmDrawer" aria-expanded="false">Landmark</button>
   </div>

@@ -5,6 +5,7 @@
 import { extrusionFilter, matchBuildings } from "/static/landmark-store.js";
 import { $, esc, fetchOk } from "/static/util.js";
 import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, recall, remember, vmap, vmapPreset } from "/static/basemap.js";
+import { flyHome, runTour, tallest } from "/static/tour.js";
 
 
 const HEIGHT_ATTRS = ["h_m", "height_m", "height", "render_height"];
@@ -265,7 +266,86 @@ async function main() {
   $("#hideParents").addEventListener("change", () => applyStyle(map));
   $("#collapseBtn").addEventListener("click", () => setPanelCollapsed(!$("#panel").classList.contains("collapsed")));
   bindDrawer(map);
+  bindTour(map);
 }
+
+// ------------------------------------------------------------------ tour of the tallest
+// The camera flies to the tallest buildings in view and circles each (tour.js), the building lit
+// up as if clicked, a card at the bottom naming it. Esc, the Stop button or any touch of the map
+// ends it; a tour that runs to the end flies back to where it started.
+const tour = { ctrl: null, hint: "" };
+
+function bindTour(map) {
+  tour.hint = $("#tourNote").textContent;
+  $("#tourBtn").addEventListener("click", () => (tour.ctrl ? tour.ctrl.abort("button") : startTour(map)));
+  $("#tourStop").addEventListener("click", () => tour.ctrl?.abort("button"));
+  addEventListener("keydown", (e) => { if (e.key === "Escape") tour.ctrl?.abort("button"); });
+  // The user takes the camera: their gesture already stops the animation.
+  ["mousedown", "touchstart", "wheel"].forEach((t) => map.on(t, () => tour.ctrl?.abort("user")));
+}
+
+async function startTour(map) {
+  const b = map.getBounds();
+  const stops = tallest(map.querySourceFeatures("bldg", { sourceLayer: state.layer }), {
+    heightAttr: state.heightAttr, idCol: state.idCol, parentAttr: state.parentAttr,
+    within: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+  });
+  if (!stops.length) {
+    $("#tourNote").textContent = "Không thấy building nào có chiều cao trong khung nhìn. Thử kéo tới vùng khác.";
+    return;
+  }
+  const ctrl = (tour.ctrl = new AbortController());
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const home = { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() };
+  const selected = state.selected;
+  if (!$("#threeD").checked) $("#threeD").checked = true;
+  setTourUI(true, stops);
+  try {
+    await runTour(map, stops, {
+      signal: ctrl.signal,
+      reduced,
+      onStop: (s, i) => {
+        showTourStop(stops, i);
+        state.selected = s.id;
+        applyStyle(map);
+      },
+    });
+    await flyHome(map, home, ctrl.signal, reduced);
+  } catch (err) {
+    if (!ctrl.signal.aborted) throw err;
+    if (ctrl.signal.reason === "button") map.stop();
+  } finally {
+    tour.ctrl = null;
+    setTourUI(false);
+    state.selected = selected;
+    applyStyle(map);
+  }
+}
+
+function setTourUI(on, stops = []) {
+  $("#tourCard").hidden = !on;
+  $("#tourBtn").textContent = on ? "Dừng bay" : "Bay quanh toà cao nhất";
+  $("#tourBtn").setAttribute("aria-pressed", String(on));
+  if (!on) {
+    $("#tourNote").textContent = tour.hint;
+    return;
+  }
+  // The stops as a little skyline, tallest on the left, the current one lit like on the map.
+  const max = stops[0].height;
+  $("#tourSkyline").innerHTML = stops.map((s) => `<span style="height:${Math.max(12, (100 * s.height) / max)}%"></span>`).join("");
+  $("#tourNote").textContent = `${stops.length} toà, cao nhất ${fmtM(max)}. Esc hoặc chạm vào bản đồ để dừng.`;
+}
+
+function showTourStop(stops, i) {
+  const s = stops[i];
+  [...$("#tourSkyline").children].forEach((el, j) => el.classList.toggle("on", j === i));
+  $("#tourRank").textContent = `Cao thứ ${i + 1} / ${stops.length}`;
+  $("#tourName").textContent = s.name || "Chưa có tên";
+  $("#tourId").textContent = s.id;
+  $("#tourH").textContent = fmtM(s.height);
+}
+
+const fmtM = (h) => `${h.toLocaleString("vi-VN", { maximumFractionDigits: 1 })} m`;
 
 // ------------------------------------------------------------------ landmark workspace
 // Loads landmark-workspace.js (and three.js) once the building layers are up.
@@ -375,12 +455,15 @@ function selectLayer(map, meta, layerId) {
   const ts = (meta.tilestats?.layers || []).find((l) => l.layer === layerId);
   state.stats = Object.fromEntries((ts?.attributes || []).map((a) => [a.attribute, a]));
   state.heightAttr = HEIGHT_ATTRS.find((a) => a in state.fields) || null;
+  // Polygons without a height (e.g. buffered roads from an Excel sheet) are flat: start in 2D.
+  if (!state.heightAttr) $("#threeD").checked = false;
   state.baseAttr = BASE_ATTRS.find((a) => a in state.fields) || null;
   state.parentAttr = PARENT_ATTRS.find((a) => a in state.fields) || null;
   if (!state.idCol || !(state.idCol in state.fields)) {
     state.idCol = ["building_id", "id", "osm_id"].find((a) => a in state.fields) || null;
   }
   $("#hideParentsWrap").hidden = !("has_parts" in state.fields);
+  $("#tourBtn").disabled = !state.heightAttr;
 
   const options = [];
   if (state.heightAttr) options.push([`height`, `Chiều cao (${state.heightAttr})`]);
@@ -561,6 +644,7 @@ async function mainDiff(url, header, meta) {
   $("#meta").textContent = `Bản đồ diff A → B · building từ zoom ${header.minZoom}`;
   $("#colorField").hidden = true;
   $("#shadowControls").hidden = true;
+  $("#tourControls").hidden = true;
   $("#diffControls").hidden = false;
   $("#threeD").checked = false;
   $("#panelHint").textContent = "Click building hoặc ô lưới để xem chi tiết. Lưới mờ dần khi phóng to. Bản đồ nền cần internet.";

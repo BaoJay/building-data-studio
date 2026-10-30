@@ -139,6 +139,8 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
     except (KeyError, TypeError) as exc:
         raise ConfigError("Cấu hình thiếu phần 'input'.") from exc
 
+    if Path(str(inp.get("path", ""))).suffix.lower() in probe.SHEET_SUFFIXES:
+        raise ConfigError("File Excel cần bấm 'Tạo dữ liệu bản đồ' trước khi convert.")
     try:
         input_path = probe.resolve_input_path(str(inp.get("path", "")))
     except ProbeError as exc:

@@ -1,6 +1,6 @@
 # Building Data Studio
 
-App chạy local (trên trình duyệt) để chuyển dữ liệu building từ **Parquet / GeoPackage** sang:
+App chạy local (trên trình duyệt) để chuyển dữ liệu building từ **Parquet / GeoPackage** (hoặc một sheet **Excel**) sang:
 
 - **GeoPackage (.gpkg)**: mở bằng QGIS để kiểm tra chiều cao của khối building trong khu vực
 - **PMTiles (.pmtiles)**: publish và serve cho app mobile (MapLibre, dựng 3D bằng `fill-extrusion`)
@@ -14,6 +14,8 @@ Trang xem 3D (`/preview`) hiện building LoD1 cùng mọi **landmark 3D** (file
 **Base Hà Nội**: building OpenStreetMap của toàn thành phố, app tự tạo một lần. Trang xem 3D mở thẳng base này, không cần upload hay convert file (xem [Base Hà Nội](#base-hà-nội-building-osm-toàn-thành-phố)).
 
 ```
+.xlsx (một sheet) ── cột WKT / GeoJSON, hoặc way ID OSM ── Overpass + buffer ──► GeoPackage dựng sẵn ─┐
+                                                                                                    ▼
 input (.parquet / .gpkg / .fgb / .geojson)
   └─ ogr2ogr + SQL ──► GeoPackage chuẩn hoá (EPSG:4326, h_m, h_src, h_outlier)
        ├─ ogrinfo SQL ──► has_parts / is_part (toà nhà nhiều khối)
@@ -114,6 +116,20 @@ Dữ liệu OSM theo giấy phép ODbL. PMTiles của base ghi sẵn attribution
 6. **Báo cáo chiều cao** hiển thị ngay bên dưới. Bấm **Xem 3D** ở bảng outlier hoặc bảng toà cao nhất để bay thẳng tới building đó trên bản đồ.
 
 Kéo thả file `.pmtiles` có sẵn vào app để xem 3D mà không cần convert.
+
+### Convert một sheet Excel (.xlsx)
+
+File Excel không có geometry sẵn. Sau khi mở file, app hiện một form để dựng geometry trước:
+
+1. **Sheet**: app chọn sẵn sheet đầu tiên có cột hình học, đổi được.
+2. **Dòng header**: app tự dò, bỏ qua dòng tiêu đề và ghi chú phía trên bảng. Nếu bảng có một dòng nhãn tiếng Việt và ngay dưới là một dòng tên máy (`way_id`, `buffer_moi_ben_m`…), app lấy dòng tên máy làm tên cột. Bảng xem trước tô đậm dòng header; sửa số dòng nếu dò sai (0 = sheet không có header).
+3. **Nguồn hình học**, một trong hai:
+   - **Cột WKT / GeoJSON**: mỗi ô là một hình (`POLYGON ((…))` hoặc `{"type": "Polygon", …}`). Nhập CRS của toạ độ (mặc định `EPSG:4326`).
+   - **Cột way ID OpenStreetMap**: mỗi ô là một way ID (`123`, `w123`, `way/123` hoặc link openstreetmap.org/way/123). App tải hình đường từ **Overpass API** (cần internet, có thể mất 1–2 phút), rồi buffer **mỗi bên** theo cột buffer đã chọn thành polygon. Dòng không có số buffer dùng **Buffer mặc định**. Lưu ý chọn cột bề rộng *mỗi bên*, không phải cột mặt cắt cả đường.
+4. Bấm **Tạo dữ liệu bản đồ**. App ghi một GeoPackage vào `uploads/` (layer mang tên sheet, thêm cột `xlsx_row` = số dòng trong Excel, và với way ID thêm `osm_way_id`, `buffer_m`). Dòng không dựng được hình (ô trống, WKT lỗi, way đã bị xoá khỏi OSM) bị bỏ qua và được liệt kê trong cảnh báo.
+5. Phần còn lại giống file thường: chọn tuỳ chọn rồi **Chạy convert**. Sheet có cột chiều cao / số tầng thì dựng 3D như building. Không có thì ô **Chiều cao** tắt sẵn, output là polygon phẳng giữ mọi cột của sheet, và trang xem bản đồ mở ở chế độ 2D.
+
+Đổi máy chủ Overpass bằng biến môi trường `BDS_OVERPASS_URL` (mặc định `https://overpass-api.de/api/interpreter`).
 
 ### Về file Parquet không có metadata
 
@@ -258,6 +274,12 @@ Cả lượt convert có bóng (mọi building) mất khoảng 4,5 phút, RAM đ
 
 96,9% building của bản này đang dùng chiều cao mặc định 4 m (`h_src = default`), nên ngưỡng 4 m bỏ gần hết bóng của nhà "đoán chiều cao" và làm layer nhẹ đi khoảng 30 lần.
 
+### Bay quanh toà cao nhất
+
+Nút **Bay quanh toà cao nhất** trong panel trái của trang xem 3D lấy 6 building cao nhất trong khung nhìn (theo cột chiều cao, bỏ `h_outlier`, gộp khối con vào toà mẹ, hai toà cách nhau dưới 120 m tính là một điểm dừng), rồi lần lượt bay tới từng toà và lượn quanh nó một vòng. Toà đang xem được tô như khi click; thẻ dưới bản đồ hiện tên, `building_id`, chiều cao và một skyline nhỏ của các điểm dừng. Chạy hết thì camera bay về chỗ cũ. Bấm **Dừng**, Esc hoặc chạm vào bản đồ để dừng ở chỗ đang xem.
+
+Chỉ xét building đã tải trong khung nhìn: thu nhỏ bản đồ (vd zoom 13 với base Hà Nội) để tìm trong vùng rộng hơn. Máy bật "giảm chuyển động" (prefers-reduced-motion) thì camera nhảy thẳng tới từng toà, dừng 4 giây, không bay lượn.
+
 ### Landmark 3D trong trang xem 3D
 
 Trang xem 3D (`/preview`) là nơi duy nhất xem và quản lý landmark: panel bên trái điều khiển bản đồ (layer, tô màu, 2D/3D, bóng, bản đồ nền, chế độ ánh sáng), bản đồ ở giữa, drawer **Landmark** bên phải. Nút **Đóng** thu drawer lại để bản đồ rộng ra, nút **Landmark** trên bản đồ mở lại. Trên màn hình hẹp, drawer là một tấm trượt từ dưới lên và panel trái tự thu gọn.
@@ -370,6 +392,7 @@ Thời gian chạy trên máy dev: canonical v1 (369 nghìn) ↔ v2 (1,2 triệu
 | “Không tìm thấy cột geometry” | File Parquet thường: chọn cột WKB/WKT ở *Nguồn dữ liệu* |
 | Job lỗi giữa chừng | Mở **Log chi tiết**. File trung gian được giữ trong `_work/` của thư mục output |
 | Cổng 8765 đang bận | `./run.sh --port 9000` |
+| Excel: “Overpass trả lỗi HTTP 429/504” hoặc “Không tải được hình học từ Overpass” | Máy chủ Overpass đang bận hoặc không có mạng: đợi vài phút rồi bấm lại **Tạo dữ liệu bản đồ**, hoặc đặt `BDS_OVERPASS_URL` sang máy chủ khác |
 | Thẻ Base báo lỗi `Không tải được extension DuckDB` | Máy không vào được extensions.duckdb.org: `.venv/bin/pip install duckdb-extension-spatial duckdb-extension-httpfs` (cùng version với `duckdb`), rồi bấm **Tạo base** |
 | Thẻ Base báo lỗi `Không đọc được danh sách release Overture` / lỗi HTTP khi tải building | Kiểm tra internet / VPN (app đọc `overturemaps-us-west-2.s3.amazonaws.com`), rồi bấm **Tạo base**. Có thể đặt cố định `BDS_OVERTURE_RELEASE=2026-10-21.0` |
 | Trang 3D báo “Chưa có base Hà Nội” | Base chưa tạo, hoặc đã bị xoá khỏi `base/hanoi/`: bấm **Tạo base** ở trang chính |
@@ -405,5 +428,5 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |
 | `app/osmbase.py` | Base Hà Nội: ranh giới và building OSM từ Overture (DuckDB), chạy qua pipeline convert, ghi `base/hanoi/base.json` |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
-| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff (`preview.js`); `basemap.js` (bản đồ nền và chế độ ánh sáng); landmark trong trang xem 3D: `landmark-workspace.js` (state, thao tác, URL), `landmark-drawer.js` (giao diện drawer), `landmark-store.js` (tải GLB theo vùng nhìn, cache, filter extrusion; không phụ thuộc trình duyệt, test bằng Node), `landmark-model.js` (vẽ nhiều GLB trong một custom layer) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, chế độ diff không tải three.js) |
+| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff (`preview.js`); `basemap.js` (bản đồ nền và chế độ ánh sáng); landmark trong trang xem 3D: `landmark-workspace.js` (state, thao tác, URL), `landmark-drawer.js` (giao diện drawer), `landmark-store.js` (tải GLB theo vùng nhìn, cache, filter extrusion; không phụ thuộc trình duyệt, test bằng Node), `landmark-model.js` (vẽ nhiều GLB trong một custom layer) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); `tour.js` (bay quanh toà cao nhất: chọn điểm dừng, camera; test bằng Node); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, chế độ diff không tải three.js) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe); `tests/js/` chạy bằng Node |

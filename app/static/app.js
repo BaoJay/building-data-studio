@@ -5,6 +5,8 @@ import { initDiff, renderDiffReport, setDiffHealth } from "./diff.js";
 
 const GENERATED_HEIGHT = ["h_m", "h_src", "h_outlier"];
 const GENERATED_PARTS = ["has_parts", "is_part"];
+// Columns app/xlsx.py adds to a staged sheet; small, so they go into the tiles by default.
+const SHEET_TILE_ATTRS = ["xlsx_row", "osm_way_id", "buffer_m"];
 const CRS_PRESETS = [
   ["EPSG:4326", "EPSG:4326 — WGS 84 (mặc định)"],
   ["EPSG:3857", "EPSG:3857 — Web Mercator"],
@@ -29,6 +31,8 @@ const DEFAULTS = {
 const state = {
   health: null,
   probe: null,
+  sheet: null, // an Excel workbook being set up (kind "sheet"), before it is staged
+  staged: null, // the result of staging that sheet; state.probe is then the staged GeoPackage
   jobId: null,
   logSince: 0,
   pollTimer: null,
@@ -58,7 +62,7 @@ async function init() {
   try {
     state.health = await api("/api/health");
     if (!state.prefs.out_dir) state.prefs.out_dir = state.health.defaults.output_dir;
-    $("#fileInput").accept = state.health.accept.join(",");
+    $("#fileInput").accept = state.health.accept_convert.join(",");
     renderTools(state.health);
     setDiffHealth(state.health);
   } catch (e) {
@@ -203,7 +207,7 @@ function setupDropzone() {
 
 async function handleFile(file) {
   const ext = `.${file.name.split(".").pop().toLowerCase()}`;
-  if (state.health && !state.health.accept.includes(ext)) {
+  if (state.health && !state.health.accept_convert.includes(ext)) {
     toast(`Định dạng ${ext} chưa hỗ trợ.`);
     return;
   }
@@ -228,15 +232,30 @@ function openPath(raw) {
   probePath(path);
 }
 
-async function probePath(path, extra = {}) {
-  const box = $("#fileInfo");
+// `staged` is the result of staging an Excel sheet: the file then shows below the sheet form,
+// which stays so the sheet can be staged again.
+async function probePath(path, extra = {}, { staged = null } = {}) {
+  const box = staged ? $("#stagedInfo") : $("#fileInfo");
+  if (!staged) {
+    state.sheet = null;
+    $("#stagedInfo").innerHTML = "";
+  }
+  state.staged = staged;
   box.innerHTML = `<div class="upload-status"><div>Đang đọc file…</div><div class="progress indeterminate"><span></span></div></div>`;
   try {
-    const res = await api("/api/probe", { method: "POST", body: { path, ...extra } });
+    const res = await api("/api/probe", { method: "POST", body: { path, sheets: true, ...extra } });
+    if (res.kind === "sheet") {
+      state.probe = null;
+      state.sheet = res;
+      $("#optionsCard").hidden = true;
+      renderSheetForm(res);
+      return;
+    }
     state.probe = res;
-    renderFileInfo(res);
+    renderFileInfo(res, box);
     if (res.kind === "vector") {
-      state.tileAttrs = new Set(res.suggest.pmtiles_attrs);
+      const names = new Set(res.fields.map((f) => f.name));
+      state.tileAttrs = new Set([...res.suggest.pmtiles_attrs, ...(staged ? SHEET_TILE_ATTRS.filter((a) => names.has(a)) : [])]);
       state.catCols = new Set(res.suggest.category_cols);
       renderOptions(res);
       $("#optionsCard").hidden = false;
@@ -250,9 +269,9 @@ async function probePath(path, extra = {}) {
   }
 }
 
-function renderFileInfo(p) {
+function renderFileInfo(p, box = $("#fileInfo")) {
   const kv = (k, v) => `<div><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`;
-  const alerts = (p.warnings || []).map((w) => `<div class="alert warn"><span class="icon">!</span><div>${esc(w)}</div></div>`).join("");
+  const alerts = [...(state.staged?.warnings || []), ...(p.warnings || [])].map((w) => `<div class="alert warn"><span class="icon">!</span><div>${esc(w)}</div></div>`).join("");
   if (p.kind === "pmtiles") {
     const h = p.header || {};
     const layers = (p.vector_layers || []).map((l) => l.id).join(", ") || "—";
@@ -277,7 +296,12 @@ function renderFileInfo(p) {
     : esc(p.crs.label + (p.crs.name && p.crs.name !== p.crs.label ? ` (${p.crs.name})` : ""));
   const types = g.sampled_types?.length ? g.sampled_types.join("/") : g.type;
   const cols = p.fields.map((f) => `<span class="chip">${esc(f.name)} <em>${esc(f.subtype || f.type)}</em></span>`).join("");
-  $("#fileInfo").innerHTML = `
+  const st = state.staged;
+  const stagedNote = st
+    ? `<h3 class="staged-title">Dữ liệu bản đồ từ sheet <b>${esc(st.layer)}</b>: ${fmtInt(st.features)} feature${
+      st.skipped ? ` <span class="hint">(bỏ qua ${fmtInt(st.skipped)} dòng)</span>` : ""}</h3>`
+    : "";
+  box.innerHTML = `${stagedNote}
     <div class="info-grid">
       ${kv("Tên file", esc(p.name))}
       ${kv("Dung lượng", fmtBytes(p.size))}
@@ -290,7 +314,107 @@ function renderFileInfo(p) {
     </div>
     ${alerts}
     <div class="cols" aria-label="Các cột">${cols}</div>`;
-  $("#layerSelect")?.addEventListener("change", (e) => probePath(p.path, { layer: e.target.value }));
+  $("#layerSelect")?.addEventListener("change", (e) => probePath(p.path, { layer: e.target.value }, { staged: state.staged }));
+}
+
+// ------------------------------------------------------------------ Excel input
+// A sheet has no geometry of its own: this form picks the header row and where the geometry comes
+// from (a WKT / GeoJSON column, or OSM way ids fetched from Overpass and buffered). The server
+// stages it into a GeoPackage (app/xlsx.py) that then goes through the normal options and convert.
+function renderSheetForm(s) {
+  const kv = (k, v) => `<div><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`;
+  const sg = s.suggest;
+  const mode = sg.mode || "wkt";
+  const width = Math.max(1, ...s.preview.map(([, cells]) => cells.length));
+  const rows = s.preview.map(([n, cells]) => {
+    const tds = Array.from({ length: width }, (_, i) => `<td title="${esc(cells[i] || "")}">${esc(cells[i] || "")}</td>`).join("");
+    return `<tr class="${n === s.header_row ? "hdr" : ""}"><td class="rownum">${n}</td>${tds}</tr>`;
+  }).join("");
+  const sheets = s.sheets.map((sh) => `<option value="${esc(sh.name)}" ${sh.name === s.sheet ? "selected" : ""}>${esc(sh.name)}</option>`).join("");
+  const crsList = CRS_PRESETS.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join("");
+  const seg = (m, label) => `<button type="button" data-mode="${m}" aria-pressed="${m === mode}">${label}</button>`;
+
+  $("#fileInfo").innerHTML = `
+    <div class="info-grid">
+      ${kv("Tên file", esc(s.name))}
+      ${kv("Dung lượng", fmtBytes(s.size))}
+      ${kv("Định dạng", "Excel (.xlsx)")}
+      ${kv("Sheet", `<select id="sheetSelect">${sheets}</select>`)}
+      ${kv("Dòng header", `<input type="number" id="headerRow" min="0" step="1" value="${s.header_row}">`)}
+      ${kv("Dòng dữ liệu", `${fmtInt(s.data_rows)}`)}
+    </div>
+    <p class="hint">Dòng tô đậm là header (tự dò: dòng ${s.header_detected}; nhập 0 nếu sheet không có header). Các dòng dưới nó là dữ liệu.</p>
+    ${rows ? `<div class="tbl-wrap sheet-preview"><table><tbody>${rows}</tbody></table></div>` : `<p class="hint">Sheet trống.</p>`}
+    <form id="sheetForm" class="sheet-form" data-mode="${mode}" autocomplete="off">
+      <fieldset>
+        <legend>Nguồn hình học</legend>
+        <div class="seg" role="group" aria-label="Nguồn hình học">${seg("wkt", "Cột WKT / GeoJSON")}${seg("osm", "Cột way ID OpenStreetMap")}</div>
+        <div class="row2" data-for="wkt">
+          <label class="field"><span>Cột hình học (WKT / GeoJSON)</span><select name="wkt_col">${colOptions(s.columns, sg.wkt_col, "— chọn cột —")}</select></label>
+          <label class="field"><span>CRS của toạ độ</span><input type="text" name="crs" value="${esc(s.defaults.crs)}" list="sheetCrsList"></label>
+          <datalist id="sheetCrsList">${crsList}</datalist>
+        </div>
+        <div data-for="osm">
+          <div class="row3">
+            <label class="field"><span>Cột way ID</span><select name="osm_col">${colOptions(s.columns, sg.osm_col, "— chọn cột —")}</select></label>
+            <label class="field"><span>Cột buffer mỗi bên (m)</span><select name="buffer_col">${colOptions(s.columns, sg.buffer_col)}</select></label>
+            <label class="field"><span>Buffer mặc định (m)</span><input type="number" name="buffer_m" min="0.5" step="0.5" value="${s.defaults.buffer_m}"></label>
+          </div>
+          <span class="hint">Hình đường tải từ OpenStreetMap (Overpass API, cần internet), rồi buffer mỗi bên theo cột đã chọn thành polygon. Dòng không có số buffer dùng số mặc định.</span>
+        </div>
+      </fieldset>
+    </form>
+    <div class="run-row">
+      <button class="btn primary" id="stageBtn" type="button">Tạo dữ liệu bản đồ</button>
+      <span class="hint">Sau đó chọn tuỳ chọn và chạy convert như file thường. Có cột chiều cao / số tầng thì dựng 3D, không thì polygon phẳng.</span>
+    </div>
+    <div id="stageStatus"></div>`;
+
+  const form = $("#sheetForm");
+  const setMode = (m) => {
+    form.dataset.mode = m;
+    $$("[data-mode]", form).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+    $$("[data-for]", form).forEach((d) => { d.hidden = d.dataset.for !== m; });
+  };
+  setMode(mode);
+  form.addEventListener("click", (e) => { const b = e.target.closest("[data-mode]"); if (b) setMode(b.dataset.mode); });
+  form.addEventListener("submit", (e) => e.preventDefault());
+  $("#sheetSelect").addEventListener("change", (e) => probePath(s.path, { layer: e.target.value }));
+  $("#headerRow").addEventListener("change", (e) => {
+    const row = Number(e.target.value);
+    if (Number.isInteger(row) && row >= 0) probePath(s.path, { layer: s.sheet, header_row: row });
+    else toast("Dòng header phải là số nguyên ≥ 0.");
+  });
+  $("#stageBtn").addEventListener("click", stageSheet);
+}
+
+async function stageSheet() {
+  const s = state.sheet;
+  const form = $("#sheetForm");
+  const el = form.elements;
+  const mode = form.dataset.mode;
+  const geom = mode === "wkt"
+    ? { mode, column: el.wkt_col.value, crs: el.crs.value.trim() }
+    : { mode, column: el.osm_col.value, buffer_col: el.buffer_col.value || null, buffer_m: el.buffer_m.value };
+  if (!geom.column) { toast(mode === "wkt" ? "Chọn cột hình học." : "Chọn cột way ID."); return; }
+  const btn = $("#stageBtn");
+  const status = $("#stageStatus");
+  btn.disabled = true;
+  $("#stagedInfo").innerHTML = "";
+  $("#optionsCard").hidden = true;
+  status.innerHTML = `<div class="upload-status"><div>${mode === "osm"
+    ? `Đang tải hình học ${fmtInt(s.data_rows)} dòng way từ OpenStreetMap… (Overpass có thể mất 1–2 phút)`
+    : "Đang dựng geometry từ cột WKT / GeoJSON…"}</div><div class="progress indeterminate"><span></span></div></div>`;
+  try {
+    const res = await api("/api/xlsx/stage", { method: "POST", body: { path: s.path, sheet: s.sheet, header_row: s.header_row, geom } });
+    status.innerHTML = "";
+    await probePath(res.path, {}, { staged: res });
+    $("#stagedInfo").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    status.innerHTML = `<div class="alert bad"><span class="icon">!</span><div>${esc(e.message)}</div></div>`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ------------------------------------------------------------------ options form
@@ -337,7 +461,7 @@ function renderOptions(p) {
     </fieldset>
 
     <fieldset id="fsHeight">
-      <legend><label class="check">${chk("height_enabled", true)} Chiều cao <code>h_m</code></label></legend>
+      <legend><label class="check">${chk("height_enabled", !state.staged || Boolean(s.height_col || s.levels_col))} Chiều cao <code>h_m</code></label></legend>
       <div class="row2">
         <label class="field"><span>Cột chiều cao (m)</span><select name="height_col">${colOptions(valueCols, s.height_col)}</select></label>
         <label class="field"><span>Cột số tầng</span><select name="levels_col">${colOptions(valueCols, s.levels_col)}</select></label>
@@ -453,7 +577,7 @@ function renderOptions(p) {
     });
     onFormChange();
   };
-  form.elements.geom_column?.addEventListener("change", (e) => probePath(p.path, { geom_column: e.target.value, layer: p.layer }));
+  form.elements.geom_column?.addEventListener("change", (e) => probePath(p.path, { geom_column: e.target.value, layer: p.layer }, { staged: state.staged }));
   onFormChange();
 }
 

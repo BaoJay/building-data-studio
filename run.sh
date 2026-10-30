@@ -19,12 +19,21 @@ if [[ ! -f .venv/.installed || requirements.txt -nt .venv/.installed ]]; then
 fi
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+# Linux/WSL: GDAL của apt không có driver Parquet, nên dùng env conda-forge (README mục 1) nếu có.
+GDAL_ENV="${BDS_GDAL_ENV:-$HOME/micromamba/envs/gdal}"
+if [[ -x "$GDAL_ENV/bin/ogr2ogr" ]]; then
+  export PATH="$GDAL_ENV/bin:$PATH"
+fi
 missing=()
 for cmd in ogr2ogr ogrinfo tippecanoe; do
   command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 done
 if (( ${#missing[@]} )); then
-  echo "⚠ Thiếu: ${missing[*]} — cài bằng: brew install gdal tippecanoe pmtiles"
+  if [[ "$(uname)" == Darwin ]]; then
+    echo "⚠ Thiếu: ${missing[*]} — cài bằng: brew install gdal tippecanoe pmtiles"
+  else
+    echo "⚠ Thiếu: ${missing[*]} — xem README, mục 1 (Linux / WSL)"
+  fi
 fi
 
 exec .venv/bin/python -m app.server "$@"

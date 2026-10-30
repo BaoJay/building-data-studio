@@ -28,11 +28,53 @@ input (.parquet / .gpkg / .fgb / .geojson)
 
 ## 1. Cài đặt (làm một lần)
 
+Cần **GDAL ≥ 3.8 có driver Parquet**, **tippecanoe của felt** (ghi thẳng ra `.pmtiles`) và Python ≥ 3.11. `pmtiles` CLI không bắt buộc (dùng để `pmtiles verify` và đọc header). Lần chạy đầu, `run.sh` tự tạo `.venv` và cài các dependency đã pin trong `requirements.txt`.
+
+### macOS
+
 ```bash
 brew install gdal tippecanoe pmtiles
 ```
 
-Cần **GDAL ≥ 3.8** (để có driver Parquet), **tippecanoe của felt** (ghi thẳng ra `.pmtiles`) và Python ≥ 3.11. Lần chạy đầu, `run.sh` tự tạo `.venv` và cài các dependency đã pin trong `requirements.txt`.
+### Linux / WSL (Ubuntu 24.04)
+
+GDAL cài bằng `apt` **không có driver Parquet** (file `.parquet` sẽ báo `Unable to find driver 'Parquet'`), nên lấy GDAL và tippecanoe từ conda-forge qua micromamba.
+
+1. Python và venv:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y python3 python3-venv curl
+   ```
+
+2. Cài micromamba, chạy riêng lệnh này, bấm Enter để nhận mặc định ở mọi câu hỏi:
+
+   ```bash
+   "${SHELL}" <(curl -L micro.mamba.pm/install.sh)
+   ```
+
+   Sau đó **đóng terminal và mở terminal mới** (hoặc `source ~/.bashrc`). Nếu dán các lệnh sau vào cùng terminal cũ, micromamba sẽ báo `Shell not initialized`.
+
+3. Tạo env `gdal` có GDAL (kèm driver Parquet) và tippecanoe:
+
+   ```bash
+   micromamba create -y -n gdal -c conda-forge gdal libgdal-arrow-parquet tippecanoe
+   ~/micromamba/envs/gdal/bin/ogrinfo --formats | grep -i parquet   # phải thấy dòng "Parquet"
+   ```
+
+   Không cần `micromamba activate gdal` trước khi chạy app: `run.sh` tự dùng env `~/micromamba/envs/gdal` nếu có. Env ở chỗ khác thì đặt `BDS_GDAL_ENV=/đường/dẫn/env`.
+
+4. `pmtiles` CLI (không bắt buộc). Tên file trên GitHub có kèm số phiên bản, xem bản mới ở [go-pmtiles releases](https://github.com/protomaps/go-pmtiles/releases):
+
+   ```bash
+   cd /tmp
+   curl -fLO https://github.com/protomaps/go-pmtiles/releases/download/v1.31.2/go-pmtiles_1.31.2_Linux_x86_64.tar.gz
+   tar xzf go-pmtiles_1.31.2_Linux_x86_64.tar.gz pmtiles
+   sudo mv pmtiles /usr/local/bin/
+   pmtiles version
+   ```
+
+Trên WSL không cần cài trình duyệt hay trình quản lý file trong Ubuntu: app nhận ra WSL và dùng `explorer.exe` để mở trình duyệt Windows và nút **Mở thư mục**.
 
 ## 2. Chạy app
 
@@ -41,7 +83,7 @@ cd ~/dev/building-data-studio
 ./run.sh
 ```
 
-Hoặc double-click file **`Building Data Studio.command`** trong Finder. Trình duyệt sẽ tự mở http://127.0.0.1:8765. Có thể đổi cổng bằng `./run.sh --port 9000`. Bấm `Ctrl+C` trong terminal để dừng.
+Trên macOS có thể double-click file **`Building Data Studio.command`** trong Finder. Trình duyệt sẽ tự mở http://127.0.0.1:8765 (trên WSL là trình duyệt mặc định của Windows; nếu không tự mở thì mở link này trên Windows, hoặc chạy `./run.sh --no-browser`). Có thể đổi cổng bằng `./run.sh --port 9000`. Bấm `Ctrl+C` trong terminal để dừng.
 
 Server chỉ lắng nghe trên `127.0.0.1`, máy khác trong mạng không truy cập được.
 
@@ -387,7 +429,8 @@ Thời gian chạy trên máy dev: canonical v1 (369 nghìn) ↔ v2 (1,2 triệu
 
 | Hiện tượng | Cách xử lý |
 |---|---|
-| Chip `Thiếu ogr2ogr/tippecanoe` đỏ | `brew install gdal tippecanoe` rồi chạy lại `./run.sh` |
+| Chip `Thiếu ogr2ogr/tippecanoe` đỏ | macOS: `brew install gdal tippecanoe`. Linux / WSL: tạo env `gdal` như [mục 1](#linux--wsl-ubuntu-2404). Rồi chạy lại `./run.sh` |
+| `Unable to find driver 'Parquet'` | GDAL đang dùng không có driver Parquet (thường là GDAL của `apt`). Linux / WSL: tạo env `gdal` như [mục 1](#linux--wsl-ubuntu-2404) |
 | “File không khai báo CRS — hãy nhập CRS nguồn” | Nhập CRS ở ô **CRS nguồn**, ví dụ `EPSG:4326` |
 | “Không tìm thấy cột geometry” | File Parquet thường: chọn cột WKB/WKT ở *Nguồn dữ liệu* |
 | Job lỗi giữa chừng | Mở **Log chi tiết**. File trung gian được giữ trong `_work/` của thư mục output |

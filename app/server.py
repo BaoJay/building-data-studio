@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -630,12 +631,24 @@ async def landmarks_manifest(request: Request) -> Response:
     return JSONResponse(data, headers=headers)
 
 
+def _is_wsl() -> bool:
+    """WSL has no Linux desktop: xdg-open finds no browser or file manager there, so use Windows'."""
+    return sys.platform == "linux" and "WSL_DISTRO_NAME" in os.environ and shutil.which("explorer.exe") is not None
+
+
+def _windows_path(path: Path) -> str:
+    return subprocess.run(["wslpath", "-w", str(path)], capture_output=True, text=True, check=True).stdout.strip()
+
+
 def open_in_file_manager(path: Path) -> None:
-    """Finder on macOS, Explorer on Windows, xdg-open elsewhere."""
+    """Finder on macOS, Explorer on Windows and WSL, xdg-open elsewhere."""
     if sys.platform == "darwin":
         cmd = ["open", "-R", str(path)] if path.is_file() else ["open", str(path)]
     elif os.name == "nt":
         cmd = ["explorer", f"/select,{path}"] if path.is_file() else ["explorer", str(path)]
+    elif _is_wsl():
+        win = _windows_path(path)
+        cmd = ["explorer.exe", f"/select,{win}"] if path.is_file() else ["explorer.exe", win]
     else:
         cmd = ["xdg-open", str(path.parent if path.is_file() else path)]
     subprocess.Popen(cmd)  # noqa: S603 — fixed argv, no shell
@@ -735,7 +748,8 @@ def main() -> None:
 
     url = f"http://{HOST}:{args.port}/"
     if not args.no_browser:
-        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+        open_url = (lambda: subprocess.Popen(["explorer.exe", url])) if _is_wsl() else (lambda: webbrowser.open(url))
+        threading.Timer(1.0, open_url).start()
     print(f"\n  Building Data Studio đang chạy tại {url}  (Ctrl+C để dừng)\n", flush=True)
     uvicorn.run(app, host=HOST, port=args.port, log_level="warning")
 

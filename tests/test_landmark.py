@@ -270,6 +270,16 @@ def test_emissive_is_for_the_night_style_only():
     assert lit == {"dawn": False, "day": False, "dusk": False, "night": True, "dark": False}
 
 
+def test_emissive_mask_can_use_texcoord_1():
+    src = LIGHT_JS.read_text()
+    vert = src[src.index("export const VERTEX_SHADER"):src.index("export const FRAGMENT_SHADER")]
+    assert "in vec2 lmk_uv1;" in vert
+    assert "vec3(lmk_uv1, 1.0)" in vert
+    model = (LIGHT_JS.parent / "landmark-model.js").read_text()
+    assert 'setAttribute("lmk_uv1"' in model
+    assert "emissiveMap.channel === 1" in model
+
+
 def test_shader_uses_the_same_constants():
     src = LIGHT_JS.read_text()
     frag = src[src.index("export const FRAGMENT_SHADER"):]
@@ -305,6 +315,8 @@ console.log(JSON.stringify(cases.map((c) => {
     back: LL.modelToEnu(LL.enuToModel(c.n, c.heading), c.heading),
     shade: LL.shade(base, c.n, light, { bearing: c.bearing, heightM: 336, t: c.t }),
     night: LL.isNightStyle({ "tasco:light-preset": "night" }) && !LL.isNightStyle({ "tasco:style-variant": "dark" }),
+    levels: ["dawn", "day", "dusk", "night"].map((p) => LL.emissiveLevel({ "tasco:light-preset": p })).concat(LL.emissiveLevel({ "tasco:style-variant": "dark" }), LL.emissiveLevel(undefined)),
+    emissiveOn: LL.landmarkUniforms(light, { emissive: 0.6 }).u_emissive_on,
   };
 })));
 """ % BUILDING)
@@ -323,6 +335,8 @@ console.log(JSON.stringify(cases.map((c) => {
         expected = shade(rgb(BUILDING), c["n"], light, bearing=c["bearing"], height_m=336, t=c["t"])
         assert r["shade"] == pytest.approx(expected, abs=1e-12)
         assert r["night"] is True
+        assert r["levels"] == [0.3, 0, 0.6, 1, 0, 0]
+        assert r["emissiveOn"] == 0.6
 
 
 # ------------------------------------------------------------------ footprint lookup

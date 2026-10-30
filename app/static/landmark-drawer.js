@@ -420,7 +420,8 @@ function lightRows(ws) {
   const [r, az, polar] = l.position;
   const extra = l.anchor === "viewport" ? ` + bearing ${fmtNum(ws.map.getBearing(), 0)}°` : "";
   const warn = l.problems.length ? ` <span class="warn">Không dùng được ${l.problems.join(", ")} của light (expression?): dùng giá trị mặc định.</span>` : "";
-  const emissive = ws.layer.night ? "Emissive: bật (style ban đêm)." : "Emissive: tắt (chỉ bật với style ban đêm).";
+  const level = ws.layer.emissive;
+  const emissive = level > 0 ? `Emissive: mức ${fmtNum(level, 1)} theo preset (dawn 0,3 · day 0 · dusk 0,6 · night 1).` : "Emissive: tắt (day và nền tối; bật ở dawn 0,3 · dusk 0,6 · night 1).";
   return `<div>Light của style (anchor ${l.anchor}): màu ${rgb(l.color)}, cường độ ${l.intensity}, `
     + `[${r}, ${az}°${extra}, ${polar}°]. ${emissive}${warn}</div>`
     + `<div class="lmk-swatches">Màu mong đợi với màu so sánh ${esc(ws.host.referenceColor())}: ${expectedSwatches(ws)}</div>`;

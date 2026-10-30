@@ -43,9 +43,12 @@ export async function parseModel(buffer, name) {
     }
     triangles += Math.floor((obj.geometry.index ? obj.geometry.index.count : obj.geometry.attributes.position.count) / 3);
     const vertexColors = Boolean(obj.geometry.attributes.color);
+    // TEXCOORD_1 under its own name for the shader (an emissive mask with texCoord 1).
+    if (obj.geometry.attributes.uv1) obj.geometry.setAttribute("lmk_uv1", obj.geometry.attributes.uv1);
     const convert = (m) => {
-      const key = `${m.uuid}:${vertexColors}`;
-      if (!materials.has(key)) materials.set(key, landmarkMaterial(m, shared, vertexColors, textures));
+      const uv1 = Boolean(obj.geometry.attributes.uv1);
+      const key = `${m.uuid}:${vertexColors}:${uv1}`;
+      if (!materials.has(key)) materials.set(key, landmarkMaterial(m, shared, vertexColors, uv1, textures));
       return materials.get(key);
     };
     obj.material = Array.isArray(obj.material) ? obj.material.map(convert) : convert(obj.material);
@@ -122,7 +125,8 @@ export class LandmarkLayer {
     };
     this.light = LL.resolveLight(styleLight(map));
     this.night = false;  // read again on style.load
-    try { this.night = LL.isNightStyle(map.getStyle()?.metadata); } catch { /* style not loaded yet */ }
+    this.emissive = 0;
+    try { this.readPreset(map.getStyle()?.metadata); } catch { /* style not loaded yet */ }
     this.camera = new THREE.Camera();
     this.renderer = null;
     this.layer = { id: this.opts.id, type: "custom", renderingMode: "3d", onAdd: (m, gl) => this.onAdd(gl), render: (gl, args) => this.render(gl, args) };
@@ -147,10 +151,16 @@ export class LandmarkLayer {
 
   // ---------------------------------------------------------------- light
 
-  // The night switch lives in the style's metadata, which only changes with a new style.
+  // The preset (night switch, emissive level) lives in the style's metadata, which only
+  // changes with a new style.
   readNight() {
-    this.night = LL.isNightStyle(this.map.getStyle()?.metadata);
+    this.readPreset(this.map.getStyle()?.metadata);
     this.readLight(true);
+  }
+
+  readPreset(metadata) {
+    this.night = LL.isNightStyle(metadata);
+    this.emissive = LL.emissiveLevel(metadata);
   }
 
   readLight(force = false) {
@@ -163,7 +173,7 @@ export class LandmarkLayer {
 
   // The uniforms of the current light for a heading and the map bearing (also for readouts).
   uniforms(heading = 0) {
-    return LL.landmarkUniforms(this.light, { heading, bearing: this.map.getBearing(), night: this.night });
+    return LL.landmarkUniforms(this.light, { heading, bearing: this.map.getBearing(), emissive: this.emissive });
   }
 
   setUniforms(model, placement, flat) {
@@ -236,7 +246,7 @@ function sharedUniforms() {
 // colour factors linear (fine: the shader expects the glTF factors) and marks the base colour /
 // emissive textures sRGB, which would make WebGL linearise them on sampling: they are switched
 // to NoColorSpace so the shader gets the raw bytes.
-function landmarkMaterial(src, shared, vertexColors, textures) {
+function landmarkMaterial(src, shared, vertexColors, hasUv1, textures) {
   const tex = (t) => {
     if (!t) return null;
     t.colorSpace = THREE.NoColorSpace;
@@ -249,12 +259,17 @@ function landmarkMaterial(src, shared, vertexColors, textures) {
   const emissiveMap = tex(src.emissiveMap);
   const color = src.color || new THREE.Color(1, 1, 1);
   const emissive = src.emissive || new THREE.Color(0, 0, 0);
+  const defines = vertexColors ? { LMK_VERTEX_COLOR: "" } : {};
+  if (emissiveMap && emissiveMap.channel === 1) {
+    if (hasUv1) defines.LMK_EMISSIVE_UV1 = "";
+    else console.warn(`landmark: ${src.name || src.uuid}: emissiveTexture dùng TEXCOORD_1 nhưng mesh không có TEXCOORD_1, dùng TEXCOORD_0.`);
+  }
   return new THREE.ShaderMaterial({
     name: `landmark:${src.name || src.uuid}`,
     glslVersion: THREE.GLSL3,
     vertexShader: LL.VERTEX_SHADER,
     fragmentShader: LL.FRAGMENT_SHADER,
-    defines: vertexColors ? { LMK_VERTEX_COLOR: "" } : {},
+    defines,
     uniforms: {
       ...shared,
       u_base_factor: { value: new THREE.Vector4(color.r, color.g, color.b, src.opacity ?? 1) },

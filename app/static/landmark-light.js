@@ -53,9 +53,11 @@
 // Normal maps, metallic / roughness and occlusion are ignored on purpose: extrusions have none.
 //
 // Emissive (optional). emissiveFactor × emissiveTexture, in sRGB, × KHR_materials_emissive_strength,
-// added after the light and clamped. It is on only when the style's metadata
-// "tasco:light-preset" is "night" (the VMAP night style). The dark style is a UI theme, not a
-// time of day, so it stays off.
+// × the preset's emissive level, added after the light and clamped. emissiveTexture may read
+// TEXCOORD_1 (its texCoord: 1), e.g. a window mask spanning 4×4 facade modules while the base
+// colour tiles one module on TEXCOORD_0: keep texCoord in a port. The level comes from the
+// style's metadata "tasco:light-preset" (EMISSIVE_LEVEL: dawn 0.3, day 0, dusk 0.6, night 1).
+// The dark style has no preset (a UI theme, not a time of day), so it stays at 0.
 //
 // Reading the style's `light` (refresh on every style change, and also every frame when the
 // anchor is "viewport", since the bearing then moves the light):
@@ -170,21 +172,29 @@ export function modelToEnu([x, y, z], headingDeg = 0) {
 
 // Everything the shader needs from the style and the camera, for one frame.
 //   light: resolveLight(map.getLight());  heading: the model's heading_deg;  bearing: map bearing
-//   night: emissive on (style metadata "tasco:light-preset" === "night")
-export function landmarkUniforms(light, { heading = 0, bearing = 0, night = false } = {}) {
+//   emissive: emissive level 0..1 (emissiveLevel(style metadata))
+export function landmarkUniforms(light, { heading = 0, bearing = 0, emissive = 0 } = {}) {
   const enu = lightVectorENU(light, bearing);
   return {
     u_lightpos: enuToModel(enu, heading),
     u_lightcolor: light.color,
     u_lightintensity: light.intensity,
     u_north: enuToModel([0, 1, 0], heading),
-    u_emissive_on: night ? 1 : 0,
+    u_emissive_on: emissive,
     lightposEnu: enu,
   };
 }
 
 export function isNightStyle(metadata) {
   return (metadata || {})["tasco:light-preset"] === "night";
+}
+
+// Emissive level per VMAP light preset (relative; the app has the final say). Anything else,
+// the dark style included, is 0.
+export const EMISSIVE_LEVEL = Object.freeze({ dawn: 0.3, day: 0, dusk: 0.6, night: 1 });
+
+export function emissiveLevel(metadata) {
+  return EMISSIVE_LEVEL[(metadata || {})["tasco:light-preset"]] ?? 0;
 }
 
 // ------------------------------------------------------------------ colour (CPU mirror of the shader)
@@ -240,6 +250,9 @@ uniform float u_top;                // model-frame y of the top of the model
 in vec4 color;                      // glTF COLOR_0 (linear)
 out vec4 v_color;
 #endif
+#ifdef LMK_EMISSIVE_UV1
+in vec2 lmk_uv1;                    // glTF TEXCOORD_1, for an emissiveTexture with texCoord 1 (own name: three declares uv1 itself)
+#endif
 out vec3 v_normal;                  // glTF root frame
 out vec2 v_uv;
 out vec2 v_uv_emissive;
@@ -249,7 +262,11 @@ void main() {
   vec4 p = modelMatrix * vec4(position, 1.0);
   v_normal = normalMatrix * normal;
   v_uv = (u_map_transform * vec3(uv, 1.0)).xy;
+#ifdef LMK_EMISSIVE_UV1
+  v_uv_emissive = (u_emissive_transform * vec3(lmk_uv1, 1.0)).xy;
+#else
   v_uv_emissive = (u_emissive_transform * vec3(uv, 1.0)).xy;
+#endif
   v_t = clamp((p.y - u_ground) / max(u_top - u_ground, 1e-6), 0.0, 1.0);
 #ifdef LMK_VERTEX_COLOR
   v_color = color;
@@ -274,7 +291,7 @@ uniform vec3 u_emissive;            // glTF emissiveFactor (linear)
 uniform sampler2D u_emissive_map;
 uniform float u_has_emissive_map;
 uniform float u_emissive_intensity; // KHR_materials_emissive_strength
-uniform float u_emissive_on;        // 1 with the night style only
+uniform float u_emissive_on;        // emissive level of the preset (EMISSIVE_LEVEL), 0..1
 uniform float u_alpha_cutoff;       // alphaMode MASK, -1 otherwise
 uniform vec4 u_override;            // QA: rgb = flat colour (raw sRGB) used instead of the model's, a = 1 on
 

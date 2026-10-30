@@ -92,7 +92,7 @@ def test_field_names_are_checked():
 
 def test_every_sunny_preset_has_a_shadow_look():
     assert {p for p, v in vmap.PRESETS.items() if v.shadow} == {"dawn", "day", "dusk"}
-    assert vmap.PRESETS["night"].shadow is None and vmap.PRESETS["dark"].shadow is None
+    assert vmap.PRESETS["night"].shadow is None and "dark" not in vmap.PRESETS
 
 
 def test_read_margin_grows_as_the_sun_sinks():

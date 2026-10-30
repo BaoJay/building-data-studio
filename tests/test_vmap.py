@@ -7,15 +7,14 @@ import pytest
 
 from app import shadows, vmap
 
-PRESET_IDS = ["dawn", "day", "dusk", "night", "dark"]
+PRESET_IDS = ["dawn", "day", "dusk", "night"]
 
-# Root `light` of each published streets-v2 style, as seen on 2026-10-16 (repo copies).
+# Root `light` of each published streets-v2 style, as seen on 2026-10-30 (repo copies).
 PUBLISHED_LIGHTS = {
     "day": ("#ffffff", 0.2, [1.15, 180, 20]),
     "dawn": ("#feca8b", 0.365, [1.15, 120, 50]),
     "dusk": ("#fec286", 0.2, [1.15, 240, 80]),
     "night": ("#3f4455", 0.275, [1.15, 270, 20]),
-    "dark": ("#b0b9c9", 0.22, [1.15, 210, 35]),
 }
 
 
@@ -178,4 +177,4 @@ def test_presets_info_lists_the_published_presets_in_order():
     assert info["default"] == "day"
     assert {p["origin"] for p in info["presets"]} == {"mobile"}
     assert info["presets"][0]["url"] == "https://assets.vmaps.vn/styles/streets-v2-dawn/style.json"
-    assert [p["id"] for p in info["presets"] if p["dark"]] == ["dusk", "night", "dark"]
+    assert [p["id"] for p in info["presets"] if p["dark"]] == ["dusk", "night"]

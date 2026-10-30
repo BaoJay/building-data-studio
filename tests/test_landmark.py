@@ -15,7 +15,7 @@ from app import landmark, shadows, tools, vmap
 
 STATIC = Path(__file__).resolve().parent.parent / "app" / "static"
 LIGHT_JS = STATIC / "landmark-light.js"
-PRESET_IDS = ["dawn", "day", "dusk", "night", "dark"]
+PRESET_IDS = ["dawn", "day", "dusk", "night"]
 BUILDING = "#ddcca9"  # the inferred mobile building colour (vmap.INFERRED_BUILDING)
 
 needs_gdal = pytest.mark.skipif(tools.which("ogr2ogr") is None, reason="needs GDAL (ogr2ogr)")
@@ -235,8 +235,6 @@ MEASURED = {
     "dusk": {"roof": (191, 135, 78), "S0.5": (200, 141, 82), "S0.85": (206, 145, 84), "N0.5": (175, 124, 71),
              "N0.85": (180, 127, 73), "E": (182, 129, 74)},
     "night": {"roof": (58, 56, 59), "S0.5": (58, 56, 51), "N0.5": (58, 56, 51), "E": (58, 56, 51)},
-    "dark": {"roof": (156, 152, 137), "S0.5": (137, 133, 121), "S0.85": (141, 137, 125), "N0.5": (118, 115, 104),
-             "N0.85": (122, 118, 107), "E": (123, 120, 109)},
 }
 FACES = {"roof": [0, 0, 1], "S": [0, -1, 0], "N": [0, 1, 0], "E": [1, 0, 0]}
 
@@ -267,7 +265,7 @@ def test_night_floors_every_wall_to_the_light_colour():
 def test_emissive_is_for_the_night_style_only():
     lit = {p: json.loads(vmap.PRESETS[p].local_copy.read_text()).get("metadata", {}).get("tasco:light-preset") == "night"
            for p in PRESET_IDS}
-    assert lit == {"dawn": False, "day": False, "dusk": False, "night": True, "dark": False}
+    assert lit == {"dawn": False, "day": False, "dusk": False, "night": True}
 
 
 def test_emissive_mask_can_use_texcoord_1():

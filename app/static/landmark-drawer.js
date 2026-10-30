@@ -412,7 +412,7 @@ function shadowRow(ws) {
   if (ws.layer.night) return `<div>Bóng mặt đất: không có (ban đêm không đổ bóng).</div>`;
   if (!rec || rec.in_use === null) return `<div>Bóng mặt đất: theo hộp LoD1 của building (chưa có version đang dùng).</div>`;
   const viewing = ws.preview?.kind === "version" && ws.preview.n === rec.in_use && !ws.isDirty() ? "" : ` <span class="warn">Bản đang xem chưa đổ bóng: bóng đi theo v${rec.in_use} với placement đã lưu.</span>`;
-  return `<div>Bóng mặt đất: theo mesh GLB v${rec.in_use} (${sun}), gộp với bóng LoD1 xung quanh. Ban đêm và nền tối không đổ bóng.${viewing}</div>`;
+  return `<div>Bóng mặt đất: theo mesh GLB v${rec.in_use} (${sun}), gộp với bóng LoD1 xung quanh. Ban đêm không đổ bóng.${viewing}</div>`;
 }
 
 function lightRows(ws) {
@@ -421,7 +421,7 @@ function lightRows(ws) {
   const extra = l.anchor === "viewport" ? ` + bearing ${fmtNum(ws.map.getBearing(), 0)}°` : "";
   const warn = l.problems.length ? ` <span class="warn">Không dùng được ${l.problems.join(", ")} của light (expression?): dùng giá trị mặc định.</span>` : "";
   const level = ws.layer.emissive;
-  const emissive = level > 0 ? `Emissive: mức ${fmtNum(level, 1)} theo preset (dawn 0,3 · day 0 · dusk 0,6 · night 1).` : "Emissive: tắt (day và nền tối; bật ở dawn 0,3 · dusk 0,6 · night 1).";
+  const emissive = level > 0 ? `Emissive: mức ${fmtNum(level, 1)} theo preset (dawn 0,3 · day 0 · dusk 0,6 · night 1).` : "Emissive: tắt (day; bật ở dawn 0,3 · dusk 0,6 · night 1).";
   return `<div>Light của style (anchor ${l.anchor}): màu ${rgb(l.color)}, cường độ ${l.intensity}, `
     + `[${r}, ${az}°${extra}, ${polar}°]. ${emissive}${warn}</div>`
     + `<div class="lmk-swatches">Màu mong đợi với màu so sánh ${esc(ws.host.referenceColor())}: ${expectedSwatches(ws)}</div>`;

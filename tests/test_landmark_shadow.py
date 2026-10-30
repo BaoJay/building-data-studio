@@ -161,12 +161,11 @@ def test_shadow_is_cached_per_placement(library):
     assert second != first and second.is_file() and not first.exists()
 
 
-@pytest.mark.parametrize("preset", ["night", "dark"])
-def test_presets_without_sun_cast_nothing(library, preset):
+def test_night_casts_nothing(library):
     library, lid, _ = library
     rec = library.read(lid)
     with pytest.raises(shadows.ShadowError):
-        landmark_shadow.for_version(library.folder(lid), rec, rec["versions"][0], preset)
+        landmark_shadow.for_version(library.folder(lid), rec, rec["versions"][0], "night")
 
 
 @needs_gdal

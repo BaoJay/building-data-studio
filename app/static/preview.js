@@ -21,7 +21,7 @@ const landmark = { ws: null, failed: false };
 // Ground shadows precomputed on the server (app/shadows.py) for the area around the view,
 // cast along the sun of the light preset (day sun on the other basemaps). Drawn as one
 // dissolved fill under the labels and the buildings. A landmark with a version in use casts from
-// its GLB mesh instead of its LoD1 box (app/landmark_shadow.py); night and dark cast none.
+// its GLB mesh instead of its LoD1 box (app/landmark_shadow.py); night casts none.
 const SHADOW_MINZOOM = 15;
 // A convert output with shadows carries them as this layer (one set per preset, `preset` field).
 const SHADOW_LAYER = "shadows";

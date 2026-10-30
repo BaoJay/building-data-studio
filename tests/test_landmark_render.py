@@ -264,9 +264,8 @@ def test_shadow_route_casts_presets_with_sun_only(app_state, monkeypatch):
     assert status == 200 and headers["content-type"].startswith("application/geo+json")
     assert json.loads(body)["type"] == "FeatureCollection"
     assert (app_state["library"].folder(lid) / "shadows").is_dir()
-    for preset in ("night", "dark"):
-        status, _, _ = call("GET", f"/api/landmarks/{lid}/versions/1/shadow", f"preset={preset}")
-        assert status == 404, preset
+    status, _, _ = call("GET", f"/api/landmarks/{lid}/versions/1/shadow", "preset=night")
+    assert status == 404
     status, _ = get_json(f"/api/landmarks/{lid}/versions/9/shadow", "preset=day")
     assert status == 404
 

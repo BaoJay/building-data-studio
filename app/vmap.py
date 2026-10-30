@@ -215,13 +215,6 @@ PRESETS: dict[str, Preset] = {
             dark=True,
             note="Nền xanh than, ánh trăng xanh xám.",
         ),
-        Preset(
-            id="dark",
-            label="Nền tối",
-            style="streets-v2-dark",
-            dark=True,
-            note="Biến thể giao diện tối của style, không gắn với giờ nào trong ngày.",
-        ),
     )
 }
 DEFAULT_PRESET = "day"

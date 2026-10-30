@@ -3,7 +3,7 @@
 // One formula for every renderer that draws a landmark (GLB in this preview and in MapOps, LMK3
 // in the mobile app) among MapLibre fill-extrusions: MapLibre's own, fed by the style's root
 // `light`. A landmark is then lit like the buildings around it in every VMAP preset (dawn, day,
-// dusk, night, dark). The module has no dependencies: the preview imports it, the tests run it
+// dusk, night). The module has no dependencies: the preview imports it, the tests run it
 // under Node, other teams port it line by line.
 //
 // Source: MapLibre GL JS 5.13 (app/static/vendor/maplibre-gl.js): the fill-extrusion vertex
@@ -57,7 +57,7 @@
 // TEXCOORD_1 (its texCoord: 1), e.g. a window mask spanning 4×4 facade modules while the base
 // colour tiles one module on TEXCOORD_0: keep texCoord in a port. The level comes from the
 // style's metadata "tasco:light-preset" (EMISSIVE_LEVEL: dawn 0.3, day 0, dusk 0.6, night 1).
-// The dark style has no preset (a UI theme, not a time of day), so it stays at 0.
+// A style without a preset stays at 0.
 //
 // Reading the style's `light` (refresh on every style change, and also every frame when the
 // anchor is "viewport", since the bearing then moves the light):
@@ -189,8 +189,8 @@ export function isNightStyle(metadata) {
   return (metadata || {})["tasco:light-preset"] === "night";
 }
 
-// Emissive level per VMAP light preset (relative; the app has the final say). Anything else,
-// the dark style included, is 0.
+// Emissive level per VMAP light preset (relative; the app has the final say). Anything else
+// is 0.
 export const EMISSIVE_LEVEL = Object.freeze({ dawn: 0.3, day: 0, dusk: 0.6, night: 1 });
 
 export function emissiveLevel(metadata) {

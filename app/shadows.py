@@ -21,7 +21,7 @@ a translucent fill. Shadows land on the ground only (not on roofs or walls of ne
 
 A landmark with a version in use casts from its GLB mesh instead (app/landmark_shadow.py): in
 compute(), its shadow polygon replaces its LoD1 building and parts, inside the same dissolve,
-and their footprints do not cut it: the shadow covers the ground around the model. Presets without sun (night, dark) cast nothing.
+and their footprints do not cut it: the shadow covers the ground around the model. Presets without sun (night) cast nothing.
 """
 
 from __future__ import annotations

@@ -19,7 +19,7 @@ once and kept next to the GLB:
     landmarks/<id>/shadows/v<n>-<preset>-<hash>.geojson
 
 Only versions in use cast (a landmark without one keeps its LoD1 shadow), and only presets with
-sun (app/vmap.py Preset.shadow): night and dark cast none.
+sun (app/vmap.py Preset.shadow): night casts none.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ class LandmarkShadow:
 
 
 def preset_sun(preset_id: str) -> shadows.Sun | None:
-    """The sun of a preset, None when it casts no shadow (night, dark)."""
+    """The sun of a preset, None when it casts no shadow (night)."""
     preset = vmap.PRESETS.get(preset_id)
     if preset is None or preset.shadow is None:
         return None

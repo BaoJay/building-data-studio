@@ -35,7 +35,8 @@ const lmUrl = (lid) => `/api/landmarks/${encodeURIComponent(lid)}`;
 const glbUrl = (lid, n) => `${lmUrl(lid)}/versions/${n}/glb`;
 
 // host (preview.js): map, token, params, state (layer, idCol, parentAttr, heightAttr, baseAttr,
-// maxzoom), name(), threeD(), referenceColor(), buildingFilter(id), select(id) (the building lit
+// maxzoom), name(), threeD(), modelsShown() (false: the landmarks are seen as their LoD1 boxes,
+// the models not drawn), referenceColor(), buildingFilter(id), select(id) (the building lit
 // up in the LoD1 colours), syncExtrusions() (bldg-3d filter, which reads hidden()), restyle()
 // (LoD1 colours, which read pending()), syncShadows() (ground shadows, which read released()),
 // palette(),
@@ -67,7 +68,7 @@ class Workspace {
     this.layer = new LandmarkLayer(this.map, {
       before: () => "bldg-3d",
       models: () => this.store.shown().map(({ entry, model }) => ({ model, placement: entry.placement, flat: entry.flat })),
-      visible: () => host.threeD(),
+      visible: () => host.threeD() && host.modelsShown(),
       referenceColor: () => host.referenceColor(),
       onLight: () => ui.renderQa(this),
     });

@@ -1,7 +1,7 @@
 // node --test "tests/js/*.test.mjs"   (also run by tests/test_preview_js.py)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ModelStore, extrusionFilter, intersects, matchBuildings, padBbox, renderable } from "../../app/static/landmark-store.js";
+import { ModelStore, extrusionFilter, intersects, landmarkFilters, landmarkView, matchBuildings, padBbox, renderable } from "../../app/static/landmark-store.js";
 
 // A landmark every 0.001° east of (105.8, 21), footprint 0.0002° wide.
 function entry(i, extra = {}) {
@@ -212,6 +212,24 @@ test("the extrusion filter leaves out buildings and their parts", () => {
       ["in", ["to-string", ["get", "parent_building_id"]], ["literal", ["7", "8"]]]]],
   ]);
   assert.deepEqual(matchBuildings(["1"], "id"), ["any", ["in", ["to-string", ["get", "id"]], ["literal", ["1"]]]]);
+});
+
+test("landmark view: the model alone, its LoD1 box alone, or both", () => {
+  const parts = ["!", ["==", ["get", "has_parts"], true]];
+  const opts = { parts, hidden: ["7"], idCol: "building_id" };
+  const under = ["any", ["in", ["to-string", ["get", "building_id"]], ["literal", ["7"]]]];
+  assert.deepEqual(landmarkFilters("glb", opts), { extrusion: ["all", parts, ["!", under]], overlay: null });
+  // LoD1: the extrusion comes back, the model is not drawn.
+  assert.deepEqual(landmarkFilters("lod1", opts), { extrusion: parts, overlay: null });
+  // Both: the extrusion stays out of bldg-3d, drawn see-through by the overlay instead.
+  assert.deepEqual(landmarkFilters("both", opts), { extrusion: ["all", parts, ["!", under]], overlay: ["all", parts, under] });
+  assert.deepEqual(landmarkFilters("both", { hidden: ["7"], idCol: "building_id" }).overlay, under);
+  // No model loaded, or no id column: nothing to overlay.
+  assert.equal(landmarkFilters("both", { parts, idCol: "building_id" }).overlay, null);
+  assert.equal(landmarkFilters("both", { hidden: ["7"] }).overlay, null);
+  assert.equal(landmarkView("lod1"), "lod1");
+  assert.equal(landmarkView("nope"), "glb");
+  assert.equal(landmarkView(null), "glb");
 });
 
 test("landmarks of another layer or id column are not drawn", () => {

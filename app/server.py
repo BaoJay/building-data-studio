@@ -358,8 +358,11 @@ async def building_shadows(request: Request) -> Response:
             raise shadows.ShadowError("Style không có khối light để lấy hướng nắng.")
         zoom = _zoom(q, path)
         layer = shadows.check_field(q.get("layer"), "layer") or ""
-        # Released landmarks of this file cast from their GLB instead of their LoD1 box.
-        landmarks, fallbacks = await _in_thread(landmark_shadow.released, library, path, preset)
+        # Released landmarks of this file cast from their GLB instead of their LoD1 box, unless
+        # the preview shows them as their LoD1 box (?landmarks=0).
+        landmarks, fallbacks = [], []
+        if q.get("landmarks") != "0":
+            landmarks, fallbacks = await _in_thread(landmark_shadow.released, library, path, preset)
         req = shadows.Request(
             path=path,
             layer=layer,

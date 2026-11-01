@@ -2,7 +2,7 @@
 // landmark workspace: every landmark of this PMTiles drawn over its building, the library
 // in the drawer on the right (landmark-workspace.js, not loaded in diff mode).
 /* global maplibregl, pmtiles */
-import { extrusionFilter, matchBuildings } from "/static/landmark-store.js";
+import { landmarkFilters, landmarkView, matchBuildings } from "/static/landmark-store.js";
 import { $, esc, fetchOk } from "/static/util.js";
 import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, recall, remember, vmap, vmapPreset } from "/static/basemap.js";
 import { flyHome, runTour, tallest } from "/static/tour.js";
@@ -16,6 +16,10 @@ const PARENT_ATTRS = ["parent_building_id", "parent_id"];
 const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
 // The landmark workspace (landmark-workspace.js), once loaded.
 const landmark = { ws: null, failed: false };
+// How a landmark with its GLB loaded is drawn (landmark-store.js LANDMARK_VIEWS), kept in the
+// URL (?lm3d=) so a link opens on the same comparison.
+state.lmView = landmarkView(params.get("lm3d"));
+const LMK_LOD1 = "lmk-lod1";  // the see-through LoD1 boxes over the models ("both")
 
 // ------------------------------------------------------------------ shadows (prototype)
 // Ground shadows precomputed on the server (app/shadows.py) for the area around the view,
@@ -69,7 +73,8 @@ async function updateShadows(map) {
     ["bldg-shadow", "lmk-shadow"].forEach((id) => { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none"); });
     return;
   }
-  const released = landmark.ws ? landmark.ws.released() : [];
+  // Seen as LoD1 boxes, the landmarks cast the shadow of their box like any building.
+  const released = landmark.ws && state.lmView !== "lod1" ? landmark.ws.released() : [];
   if (state.bakedShadows) {
     // Shadows shipped in the PMTiles: the same layer + filter the mobile app would use.
     if (!map.getLayer("bldg-shadow")) {
@@ -82,7 +87,8 @@ async function updateShadows(map) {
     map.setLayoutProperty("bldg-shadow", "visibility", "visible");
     note(`Bóng có sẵn trong file (layer ${SHADOW_LAYER}, z${state.bakedShadows.minzoom ?? "?"}–${state.bakedShadows.maxzoom ?? "?"}), lọc theo preset = "${shadowPresetId()}" như trên app.`
       + (released.length ? ` ${released.length} landmark đổ bóng theo GLB đè lên, bóng hộp LoD1 của chúng trong file vẫn nằm dưới.` : ""));
-    showLandmarkShadows(map, look, released);
+    if (released.length) showLandmarkShadows(map, look, released);
+    else if (map.getLayer("lmk-shadow")) map.setLayoutProperty("lmk-shadow", "visibility", "none");
     return;
   }
 
@@ -92,6 +98,7 @@ async function updateShadows(map) {
   // Not read by the server (it finds the released landmarks itself): a release or a placement
   // saved changes the key, so the shadows are asked for again.
   if (landmark.ws) params.set("lm", landmark.ws.shadowRev());
+  if (state.lmView === "lod1") params.set("landmarks", "0");
   const key = params.toString();
   const [w, s, e, n] = viewBbox(map, 0, 0.6);
   const have = shadow.key === key && shadow.bbox && shadow.bbox[0] <= w && shadow.bbox[1] <= s && shadow.bbox[2] >= e && shadow.bbox[3] >= n;
@@ -263,6 +270,10 @@ async function main() {
   $("#layerSel").addEventListener("change", (e) => selectLayer(map, meta, e.target.value));
   $("#colorSel").addEventListener("change", (e) => { state.colorBy = e.target.value; applyStyle(map); });
   $("#threeD").addEventListener("change", () => applyStyle(map));
+  $("#lmViewSeg").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-view]");
+    if (btn && btn.dataset.view !== state.lmView) setLandmarkView(map, btn.dataset.view);
+  });
   $("#hideParents").addEventListener("change", () => applyStyle(map));
   $("#collapseBtn").addEventListener("click", () => setPanelCollapsed(!$("#panel").classList.contains("collapsed")));
   bindDrawer(map);
@@ -359,6 +370,7 @@ async function openWorkspace(map) {
       state,
       name: () => state.name,
       threeD: () => $("#threeD").checked,
+      modelsShown: () => state.lmView !== "lod1",
       palette: () => palette(mapTheme()),
       buildingFilter: (id) => ["all", partsFilter() || true, matchBuilding(id)],
       referenceColor: () => (state.colorBy === "mobile" && mobileBuilding() ? mobileBuilding().color : palette(mapTheme()).plain),
@@ -381,6 +393,8 @@ async function openWorkspace(map) {
     });
     window.lmWorkspace = landmark.ws;
     await landmark.ws.start();
+    $("#lmViewControls").hidden = false;
+    syncExtrusions(map);
   } catch (err) {
     landmark.failed = true;
     $("#lmBody").innerHTML = `<div class="alert bad"><span class="icon">!</span><div>Không tải được phần landmark: ${esc(err.message)}</div></div>`;
@@ -487,10 +501,13 @@ function selectLayer(map, meta, layerId) {
 
 function addBuildingLayers(map) {
   const layerId = state.layer;
-  ["bldg-3d", "bldg-2d", "bldg-line"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
+  ["bldg-3d", LMK_LOD1, "bldg-2d", "bldg-line"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
   map.addLayer({ id: "bldg-2d", type: "fill", source: "bldg", "source-layer": layerId, paint: { "fill-opacity": 0.85 } });
   map.addLayer({ id: "bldg-line", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-color": palette(mapTheme()).outline, "line-opacity": 0.3, "line-width": 0.5 } });
   map.addLayer({ id: "bldg-3d", type: "fill-extrusion", source: "bldg", "source-layer": layerId, paint: { "fill-extrusion-opacity": 0.92, "fill-extrusion-vertical-gradient": true } });
+  // Above the models (their custom layer goes under bldg-3d) and sharing their depth: the faces
+  // of the box in front of the model tint it, the parts of the model out of the box stay plain.
+  map.addLayer({ id: LMK_LOD1, type: "fill-extrusion", source: "bldg", "source-layer": layerId, layout: { visibility: "none" }, paint: { "fill-extrusion-opacity": 0.4, "fill-extrusion-vertical-gradient": true } });
 }
 
 function colorExpression() {
@@ -546,11 +563,40 @@ function item(color, label) {
 }
 
 // The LoD1 extrusions: outlines with parts hidden (has_parts), and the buildings a landmark model
-// stands on (parts included) left out once its GLB has loaded.
+// stands on (parts included) left out once its GLB has loaded, unless the landmarks are seen as
+// LoD1 ("lod1"); with "both" those boxes are drawn see-through over the models.
 function syncExtrusions(map) {
   if (!map.getLayer("bldg-3d")) return;
   const hidden = landmark.ws ? landmark.ws.hidden() : [];
-  map.setFilter("bldg-3d", extrusionFilter({ parts: partsFilter(), hidden, idCol: state.idCol, parentAttr: state.parentAttr }));
+  const { extrusion, overlay } = landmarkFilters(state.lmView, { parts: partsFilter(), hidden, idCol: state.idCol, parentAttr: state.parentAttr });
+  map.setFilter("bldg-3d", extrusion);
+  if (map.getLayer(LMK_LOD1)) {
+    if (overlay) map.setFilter(LMK_LOD1, overlay);
+    map.setLayoutProperty(LMK_LOD1, "visibility", overlay && $("#threeD").checked ? "visible" : "none");
+  }
+  syncLandmarkViewNote(hidden.length);
+}
+
+function syncLandmarkViewNote(loaded) {
+  $("#lmViewSeg").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === state.lmView)));
+  let text = {
+    glb: "Model GLB thay khối LOD1 của building.",
+    lod1: "GLB ẩn, building hiện lại khối LOD1; bóng đổ theo hộp LOD1.",
+    both: "GLB đặc, khối LOD1 tô màu trong suốt chồng lên: phần LOD1 cao/rộng hơn GLB nổi màu, phần GLB nhô ra khỏi hộp giữ nguyên.",
+  }[state.lmView];
+  if (!$("#threeD").checked) text = "Bật “Dựng 3D” để so sánh GLB với LOD1.";
+  else if (!loaded) text += " Chưa có GLB nào tải xong trong khung nhìn.";
+  $("#lmViewNote").textContent = text;
+}
+
+function setLandmarkView(map, view) {
+  state.lmView = landmarkView(view);
+  const q = new URLSearchParams(location.search);
+  if (state.lmView === "glb") q.delete("lm3d"); else q.set("lm3d", state.lmView);
+  history.replaceState(history.state, "", `${location.pathname}${q.size ? `?${q}` : ""}`);
+  syncExtrusions(map);
+  map.triggerRepaint();
+  syncShadows(map);
 }
 
 function applyStyle(map) {
@@ -571,6 +617,11 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-2d", "fill-color", expr);
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
+  if (map.getLayer(LMK_LOD1)) {
+    map.setPaintProperty(LMK_LOD1, "fill-extrusion-color", palette(mapTheme()).ochre);
+    map.setPaintProperty(LMK_LOD1, "fill-extrusion-height", height);
+    map.setPaintProperty(LMK_LOD1, "fill-extrusion-base", base);
+  }
   // A landmark model replaces the extrusion of its building (parts included). With a version
   // in use its ground shadow is cast from the GLB, else it keeps its LoD1 box's (syncShadows).
   syncExtrusions(map);

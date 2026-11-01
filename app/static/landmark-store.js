@@ -251,6 +251,25 @@ export function extrusionFilter({ parts = null, hidden = [], idCol = null, paren
   return all.length > 1 ? ["all", ...all] : all[0] || null;
 }
 
+// How the preview shows a landmark whose GLB has loaded, to compare it with the LoD1 box of its
+// building: "glb" the model alone, "lod1" the extrusion alone (the model not drawn), "both" the
+// model with the extrusion see-through over it.
+export const LANDMARK_VIEWS = ["glb", "lod1", "both"];
+
+export function landmarkView(value) {
+  return LANDMARK_VIEWS.includes(value) ? value : "glb";
+}
+
+// Filters of the LoD1 extrusions (bldg-3d) and of the see-through overlay of the buildings under
+// a landmark model (null: no overlay) for one landmark view. hidden: the buildings a loaded model
+// stands on (ModelStore.hiddenBuildings()).
+export function landmarkFilters(view, { parts = null, hidden = [], idCol = null, parentAttr = null } = {}) {
+  const extrusion = extrusionFilter({ parts, hidden: view === "lod1" ? [] : hidden, idCol, parentAttr });
+  if (view !== "both" || !hidden.length || !idCol) return { extrusion, overlay: null };
+  const under = matchBuildings(hidden, idCol, parentAttr);
+  return { extrusion, overlay: parts ? ["all", parts, under] : under };
+}
+
 // Landmarks that can stand on the layer being viewed: registered on the same layer, with the
 // same id column (older records without them are taken as is).
 export function renderable(items, { layer, idCol }) {

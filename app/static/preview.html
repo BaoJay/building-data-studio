@@ -48,6 +48,15 @@
       <label class="check"><input type="checkbox" id="showGrid" checked> Hiện lưới thống kê</label>
     </div>
     <label class="check"><input type="checkbox" id="threeD" checked> Dựng 3D</label>
+    <div class="field" id="lmViewControls" hidden>
+      <span id="lmViewLabel">Landmark hiển thị</span>
+      <div class="seg" id="lmViewSeg" role="group" aria-labelledby="lmViewLabel">
+        <button type="button" data-view="glb" aria-pressed="true" title="Model GLB thay khối LOD1 của building">GLB</button>
+        <button type="button" data-view="lod1" aria-pressed="false" title="Ẩn GLB, hiện lại khối LOD1 của building">LOD1</button>
+        <button type="button" data-view="both" aria-pressed="false" title="GLB đặc, khối LOD1 trong suốt chồng lên">Chồng</button>
+      </div>
+      <div class="hint" id="lmViewNote"></div>
+    </div>
     <div class="field" id="shadowControls">
       <label class="check"><input type="checkbox" id="shadows" checked> Đổ bóng (vẽ sẵn, thử nghiệm)</label>
       <div class="hint" id="shadowNote"></div>

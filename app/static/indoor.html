@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Indoor Map Editor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%232f5f4c'/%3E%3Cpath fill='none' stroke='%23fbf6ea' stroke-width='2.4' d='M6 6h20v20H6zM6 16h9m4 0h7M15 6v6m0 4v10'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="/static/fonts/fonts.css">
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/indoor.css">
+</head>
+<body class="ws-page indoor-page">
+  <div class="ws-map" id="mapWrap">
+    <div id="map"></div>
+
+    <aside class="panel" id="panel">
+      <div class="head">
+        <div><h1 id="title">Indoor Map Editor</h1><div class="meta" id="meta">PoC · OGC IndoorGML 2.0</div></div>
+        <a class="btn small" href="/" title="Về trang chính Building Data Studio">Studio</a>
+      </div>
+
+      <section class="pgroup">
+        <h2>Toà nhà</h2>
+        <div class="btn-row">
+          <button class="btn small" id="pickBtn" type="button" title="Click một building của base Hà Nội làm outline toà nhà">Chọn toà từ base</button>
+          <button class="btn small" id="footBtn" type="button" title="Vẽ tay outline toà nhà (phím B)">Vẽ outline</button>
+          <button class="btn small" id="demoBtn" type="button" title="Sinh layout TTTM mẫu: hầm xe + 3 tầng thương mại">Tạo layout mẫu</button>
+        </div>
+        <div class="hint" id="baseHint"></div>
+      </section>
+
+      <section class="pgroup">
+        <div class="list-head"><h2>Tầng</h2>
+          <div class="btn-row">
+            <button class="btn small" id="addAbove" type="button" title="Thêm tầng trên cùng, copy thang máy / thang bộ / thang cuốn của tầng đang chọn">+ Trên</button>
+            <button class="btn small" id="addBelow" type="button" title="Thêm tầng dưới cùng, copy thang của tầng đang chọn">+ Dưới</button>
+            <button class="btn small" id="dupLevel" type="button" title="Thêm tầng trên cùng là bản sao toàn bộ tầng đang chọn">Nhân bản</button>
+          </div>
+        </div>
+        <ol class="levels" id="levelList"></ol>
+      </section>
+
+      <section class="pgroup">
+        <h2>Hiển thị</h2>
+        <label class="check"><input type="checkbox" id="showGraph" checked> Đồ thị điều hướng (dual space: Node / Edge)</label>
+        <label class="check"><input type="checkbox" id="showLabels" checked> Tên không gian</label>
+        <label class="check"><input type="checkbox" id="showGhost" checked> Tầng dưới mờ phía sau (căn thẳng thang)</label>
+        <label class="check"><input type="checkbox" id="threeD"> 3D xếp tầng</label>
+        <label class="field" id="explodeField" hidden><span>Giãn tầng: <b id="explodeVal"></b></span><input type="range" id="explode" min="1" max="5" step="0.5" value="2.5"></label>
+      </section>
+
+      <section class="pgroup">
+        <h2>Ảnh mặt bằng <span class="hint">tầng đang chọn</span></h2>
+        <div class="btn-row">
+          <label class="btn small" for="planFile">Chọn ảnh…</label>
+          <input type="file" id="planFile" accept="image/png,image/jpeg,image/webp" hidden>
+          <button class="btn small" id="planFit" type="button" disabled title="Đặt ảnh vừa outline toà nhà">Vừa outline</button>
+          <button class="btn small" id="planMove" type="button" disabled aria-pressed="false" title="Kéo ảnh trên bản đồ">Kéo ảnh</button>
+          <button class="btn small danger" id="planDrop" type="button" disabled>Bỏ</button>
+        </div>
+        <div id="planControls" class="plan-controls" hidden>
+          <label class="field"><span>Độ mờ</span><input type="range" id="planOpacity" min="0.1" max="1" step="0.05"></label>
+          <label class="field"><span>Xoay: <b id="planRotVal"></b></span><input type="range" id="planRot" min="-180" max="180" step="0.5"></label>
+          <label class="field"><span>Rộng (m)</span><input type="number" id="planWidth" min="5" max="2000" step="0.5"></label>
+        </div>
+        <div class="hint">Ảnh bản vẽ / sơ đồ tầng làm nền để vẽ đè (số hoá). Chỉ lưu trong trình duyệt này.</div>
+      </section>
+
+      <section class="pgroup">
+        <h2>File</h2>
+        <div class="btn-row">
+          <button class="btn small" id="saveBtn" type="button" title="Project của editor (mở lại được)">Lưu project</button>
+          <label class="btn small" for="openFile">Mở project…</label>
+          <input type="file" id="openFile" accept=".json,application/json" hidden>
+        </div>
+        <div class="btn-row">
+          <button class="btn small primary" id="exGml" type="button" title="IndoorGML 2.0 GML (bản nháp, chưa validate XSD)">IndoorGML (.gml)</button>
+          <button class="btn small" id="exJson" type="button" title="Cấu trúc IndoorGML 2.0 dạng JSON">IndoorGML JSON</button>
+          <button class="btn small" id="exGeo" type="button" title="GeoJSON phẳng để đưa vào tippecanoe → PMTiles hoặc PostGIS → Martin">GeoJSON (tiles)</button>
+        </div>
+        <div class="btn-row"><button class="btn small danger" id="resetBtn" type="button">Xoá project</button></div>
+      </section>
+
+      <section class="pgroup">
+        <h2>Bản đồ nền</h2>
+        <label class="field"><span class="sr">Bản đồ nền</span>
+          <select id="baseSel">
+            <option value="vmap">VMAP streets-v2 (nền app Mobile)</option>
+            <option value="positron">Sáng (OpenFreeMap Positron)</option>
+            <option value="dark">Tối (OpenFreeMap Dark)</option>
+            <option value="liberty">Chi tiết (OpenFreeMap Liberty)</option>
+            <option value="osm">OpenStreetMap (raster)</option>
+            <option value="none">Không nền (offline)</option>
+          </select>
+        </label>
+        <div class="field" id="vmapControls" hidden>
+          <span id="presetLabel">Ánh sáng bản đồ</span>
+          <div class="seg" id="presetSeg" role="group" aria-labelledby="presetLabel"></div>
+          <div class="hint" id="presetNote"></div>
+          <div class="btn-row" hidden><a class="btn small" id="presetDownload" href="#" download>Tải style.json</a></div>
+        </div>
+        <div class="hint" id="baseNote" style="color:var(--warn-ink)"></div>
+      </section>
+    </aside>
+
+    <div class="toolbar" id="toolbar" role="toolbar" aria-label="Công cụ vẽ">
+      <button type="button" data-tool="select" title="Chọn, kéo đỉnh, kéo cả hình (V)"><b>V</b>Chọn</button>
+      <button type="button" data-tool="polygon" title="Vẽ không gian đa giác (P)"><b>P</b>Đa giác</button>
+      <button type="button" data-tool="rect" title="Vẽ không gian chữ nhật theo trục toà nhà (R)"><b>R</b>Chữ nhật</button>
+      <select id="typeSel" title="Loại không gian sẽ vẽ" aria-label="Loại không gian sẽ vẽ"></select>
+      <span class="tsep"></span>
+      <button type="button" data-tool="door" title="Đặt cửa lên tường (D)"><b>D</b>Cửa</button>
+      <button type="button" data-tool="poi" title="Đặt điểm POI (I)"><b>I</b>POI</button>
+      <select id="poiSel" title="Loại POI" aria-label="Loại POI"></select>
+      <span class="tsep"></span>
+      <button type="button" id="undoBtn" title="Hoàn tác (Ctrl+Z)">↶</button>
+      <button type="button" id="redoBtn" title="Làm lại (Ctrl+Shift+Z)">↷</button>
+    </div>
+
+    <div class="levelbar" id="levelBar" role="group" aria-label="Chọn tầng"></div>
+    <div class="zoomnote" id="toolNote" hidden></div>
+    <div class="zbadge" id="zBadge"></div>
+  </div>
+
+  <aside class="drawer" id="drawer" aria-label="Chi tiết">
+    <div class="drawer-head">
+      <nav class="dtabs" role="tablist">
+        <button type="button" role="tab" data-dtab="props" aria-selected="true">Thuộc tính</button>
+        <button type="button" role="tab" data-dtab="route" aria-selected="false">Tìm đường</button>
+        <button type="button" role="tab" data-dtab="check" aria-selected="false">Kiểm tra <span id="issueCount"></span></button>
+      </nav>
+    </div>
+    <div class="drawer-body" id="dBody" aria-live="polite"></div>
+  </aside>
+
+  <script src="/static/vendor/maplibre-gl.js"></script>
+  <script src="/static/vendor/pmtiles.js"></script>
+  <script type="module" src="/static/indoor.js"></script>
+</body>
+</html>

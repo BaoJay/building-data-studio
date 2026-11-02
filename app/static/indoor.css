@@ -1,0 +1,111 @@
+/* /indoor: indoor map editor. Panel, drawer, seg, zoomnote, zbadge come from app.css. */
+html, body { height: 100%; }
+body { overflow: hidden; }
+#map { position: absolute; inset: 0; background: var(--map-ground); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.indoor-page .panel { width: 310px; gap: var(--space-4); }
+.pgroup { display: grid; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.pgroup h2 { margin: 0; font: 600 14px/20px var(--font-serif); }
+.pgroup h2 .hint { font: 400 12px var(--font-sans); }
+.pgroup .list-head h2 { flex: none; }
+.plan-controls { display: grid; gap: var(--space-2); }
+.plan-controls input[type="range"], #explode { width: 100%; accent-color: var(--accent); }
+
+/* levels, top floor first */
+.levels { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.levels li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: var(--space-2);
+  padding: 4px var(--space-2); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
+.levels li:hover { background: var(--surface-2); }
+.levels li.on { border-color: var(--accent); background: var(--accent-soft); }
+.levels .short { font: 600 13px/20px var(--font-mono); text-align: center; background: var(--surface-2); border: 1px solid var(--line); }
+.levels li.on .short { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.levels .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.levels .sub { font-size: 11.5px; color: var(--muted); }
+.levels .linkbtn { font-size: 12px; }
+
+/* tool bar over the map */
+.toolbar {
+  position: absolute; top: var(--space-3); left: calc(310px + 2 * var(--space-3)); right: 60px; z-index: 5; width: max-content; max-width: calc(100% - 310px - 84px);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 3px; background: var(--surface);
+  border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
+}
+.toolbar button {
+  appearance: none; border: 1px solid transparent; background: none; color: var(--ink-2); border-radius: var(--radius-sm);
+  font: 500 12.5px/18px var(--font-sans); padding: 4px 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+}
+.toolbar button b { font: 500 10.5px/14px var(--font-mono); color: var(--muted); border: 1px solid var(--line); padding: 0 3px; }
+.toolbar button:hover { background: var(--surface-2); color: var(--ink); }
+.toolbar button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.toolbar button[aria-pressed="true"] b { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent-ink) 50%, transparent); }
+.toolbar button:disabled { opacity: 0.4; cursor: default; background: none; }
+.toolbar button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.toolbar select { padding: 3px 4px; font-size: 12.5px; max-width: 132px; }
+.toolbar .tsep { width: 1px; align-self: stretch; background: var(--line); margin: 2px 4px; }
+
+/* level switcher, like the indoor picker of a map app */
+.levelbar {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 5;
+  display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
+}
+.levelbar button {
+  appearance: none; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink-2);
+  font: 600 13px/18px var(--font-mono); width: 40px; padding: 8px 0; cursor: pointer;
+}
+.levelbar button:last-child { border-bottom: 0; }
+.levelbar button:hover { background: var(--surface-2); color: var(--ink); }
+.levelbar button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.levelbar button.route { box-shadow: inset 3px 0 0 var(--map-highlight); }
+.levelbar button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* drawer */
+.indoor-page .drawer { width: 380px; }
+.dtabs { display: flex; gap: var(--space-1); width: 100%; }
+.dtabs button {
+  appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; padding: 4px var(--space-2);
+  font: 600 13.5px/20px var(--font-sans); color: var(--ink-2); cursor: pointer;
+}
+.dtabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.dtabs button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+#issueCount:not(:empty) { font: 600 11px/16px var(--font-mono); padding: 0 5px; margin-left: 2px; background: var(--bad-soft); color: var(--bad); }
+#issueCount.ok { background: var(--good-soft); color: var(--good); }
+.dsec { display: grid; gap: var(--space-3); }
+.dsec h3 { margin: 0; font: 600 16px/22px var(--font-serif); display: flex; gap: var(--space-2); align-items: baseline; flex-wrap: wrap; }
+.dsec h3 .hint { font: 400 12px var(--font-mono); }
+.dsec input[type="text"], .dsec input[type="number"], .dsec select { width: 100%; }
+.tag { font: 500 11px/16px var(--font-mono); padding: 1px 6px; border: 1px solid var(--line-strong); color: var(--ink-2); background: var(--surface-2); white-space: nowrap; }
+.swatch { display: inline-block; width: 12px; height: 12px; border: 1px solid color-mix(in srgb, var(--ink) 25%, transparent); vertical-align: -1px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--space-3); font-size: 12.5px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.typelegend { display: grid; grid-template-columns: 1fr 1fr; gap: 3px var(--space-3); font-size: 12px; }
+.typelegend span.n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.model-box { border: 1px solid var(--line); background: var(--surface-2); padding: var(--space-3); display: grid; gap: var(--space-2); font-size: 12.5px; }
+.model-box .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.model-box b { font-family: var(--font-mono); font-weight: 500; }
+.levelchecks { display: flex; flex-wrap: wrap; gap: 6px; }
+.levelchecks label { display: inline-flex; gap: 5px; align-items: center; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12.5px; cursor: pointer; }
+.levelchecks label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.levelchecks label.self { opacity: 0.55; cursor: default; }
+
+.issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.issues button {
+  width: 100%; text-align: left; display: grid; grid-template-columns: 16px 1fr; gap: var(--space-2); align-items: start;
+  background: none; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 5px var(--space-2); font: inherit; font-size: 12.5px; color: inherit; cursor: pointer;
+}
+.issues button:hover { background: var(--surface-2); border-color: var(--line); }
+.issues .ic { width: 9px; height: 9px; margin-top: 5px; transform: rotate(45deg); background: var(--warn); }
+.issues .error .ic { background: var(--bad); }
+
+.steps-route { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 13px; }
+.steps-route li::marker { color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
+.route-km { font: 600 26px/1 var(--font-serif); color: var(--map-highlight); }
+
+@media (max-width: 900px) {
+  .toolbar { left: var(--space-3); top: auto; bottom: 44px; max-width: calc(100% - 24px); }
+  .indoor-page .drawer { width: 320px; }
+}
+@media (max-width: 640px) {
+  .indoor-page .panel { width: auto; }
+  .indoor-page .drawer { position: absolute; bottom: 0; left: 0; right: 0; width: auto; max-width: none; height: 45%; }
+}

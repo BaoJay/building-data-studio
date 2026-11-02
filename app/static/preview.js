@@ -618,7 +618,7 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
   if (map.getLayer(LMK_LOD1)) {
-    map.setPaintProperty(LMK_LOD1, "fill-extrusion-color", palette(mapTheme()).ochre);
+    map.setPaintProperty(LMK_LOD1, "fill-extrusion-color", palette(mapTheme()).lime);
     map.setPaintProperty(LMK_LOD1, "fill-extrusion-height", height);
     map.setPaintProperty(LMK_LOD1, "fill-extrusion-base", base);
   }
@@ -675,7 +675,7 @@ function updateZoomUI(map) {
 
 // ------------------------------------------------------------------ diff mode
 // Building colours come from the tokens, like the swatches of the report: added = cat-1
-// (street-sign blue), removed = map-outlier, changed = cat-2 (ochre). Blue / red / ochre
+// (street-sign blue), removed = map-outlier, changed = cat-2 (amber/ochre). Blue / red / amber
 // stay apart for red-green colour blindness too.
 const DIFF_KINDS = [
   ["added", (pal) => pal.cat[0], "Thêm mới (chỉ có ở B)"],

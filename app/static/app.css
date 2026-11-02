@@ -1,4 +1,4 @@
-/* Studio Indochine: stylesheet của Building Data Studio (= components/bundle.css của design system).
+/* VMAP (mặc định) / Studio Indochine (data-style="indochine"): stylesheet của Building Data Studio (= components/bundle.css của design system).
    Nạp sau fonts/fonts.css và tokens.css; mọi màu, khoảng cách, góc bo đến từ token. */
 
 * { box-sizing: border-box; }
@@ -20,13 +20,13 @@ code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
 .topbar {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap;
   padding: var(--space-3) var(--space-6); background: var(--surface);
-  border-bottom: 3px double var(--line-strong);
+  border-bottom: var(--rule-double);
   position: sticky; top: 0; z-index: 10;
 }
 .brand { display: flex; align-items: center; gap: var(--space-3); font: 700 20px/26px var(--font-serif); }
 .brand .mark {
   width: 30px; height: 30px; display: grid; place-items: center; flex: none;
-  background: var(--ochre); color: var(--on-ochre);
+  background: var(--mark-bg); color: var(--mark-fg);
 }
 .brand .mark svg { width: 18px; height: 18px; }
 .brand .sub { font: 400 12.5px/18px var(--font-sans); color: var(--muted); }
@@ -45,10 +45,10 @@ code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
   max-width: 1120px; margin: 0 auto; padding: var(--space-6) var(--space-4) 80px; display: grid; gap: var(--space-4);
   grid-template-columns: minmax(0, 1fr);
 }
-/* viền đôi: nét ngoài là border, nét trong là outline lùi vào rule-gap */
+/* VMAP: viền 2px + rule lime 8px trên đầu; Indochine: viền đôi (border + outline lùi vào rule-gap) */
 .card {
-  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-none);
-  outline: 1px solid var(--line); outline-offset: calc(-1px - var(--rule-gap));
+  background: var(--surface); border: var(--card-border); border-top: var(--card-top); border-radius: var(--radius-none);
+  outline: var(--card-outline); outline-offset: calc(-1px - var(--rule-gap));
   padding: var(--space-5) var(--space-6) var(--space-6);
 }
 .card h2 {
@@ -66,7 +66,7 @@ code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
   font: 600 14px/1 var(--font-serif); color: var(--ink);
 }
 .num::before {
-  content: ""; position: absolute; inset: 5px; border: 1px solid var(--ornament); transform: rotate(45deg);
+  content: ""; position: absolute; inset: 5px; border: 1px solid var(--rule); transform: rotate(45deg);
 }
 
 /* ---------- buttons ---------- */
@@ -165,7 +165,7 @@ label.check input[type="checkbox"] { vertical-align: -2px; margin-right: 8px; }
 .sheet-form { margin-top: var(--space-4); }
 .sheet-form [hidden] { display: none; }
 .sheet-form .seg { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
-#stagedInfo:not(:empty) { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 3px double var(--line-strong); }
+#stagedInfo:not(:empty) { margin-top: var(--space-5); padding-top: var(--space-4); border-top: var(--rule-double); }
 .staged-title { font: 600 15px/22px var(--font-serif); margin: 0; }
 
 /* ---------- alert ---------- */
@@ -255,8 +255,8 @@ details.log pre {
 
 /* ---------- report ---------- */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
-.kpi { border: 1px solid var(--line); border-top: 3px double var(--line-strong); padding: var(--space-3) 14px; }
-.kpi .label { font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2); }
+.kpi { border: 1px solid var(--line); border-top: var(--kpi-top); padding: var(--space-3) 14px; }
+.kpi .label { font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--eyebrow); }
 .kpi .value { font: 600 30px/36px var(--font-serif); font-variant-numeric: lining-nums tabular-nums; margin-top: var(--space-1); }
 .kpi .sub { font-size: 12px; color: var(--muted); }
 .accounting { margin: var(--space-3) 0 0; font-size: 13px; color: var(--ink-2); }
@@ -285,7 +285,7 @@ table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th {
   font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--ink-2); background: var(--surface-2); border-bottom: 3px double var(--line-strong); position: sticky; top: 0;
+  color: var(--ink-2); background: var(--table-head); border-bottom: var(--rule-double); position: sticky; top: 0;
 }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: var(--surface-2); }
@@ -416,7 +416,7 @@ td.up { color: var(--bad); }
 .panel {
   position: absolute; top: var(--space-3); left: var(--space-3); z-index: 5; width: var(--panel-w, 300px); max-height: calc(100% - 24px); overflow: auto;
   background: var(--surface); border: 1px solid var(--line-strong);
-  outline: 1px solid var(--line); outline-offset: calc(-1px - var(--rule-gap));
+  outline: var(--card-outline); outline-offset: calc(-1px - var(--rule-gap));
   box-shadow: var(--shadow-float); padding: 14px var(--space-4); display: grid; gap: var(--space-3);
 }
 /* Drag handle on the panel's right edge (a sibling, so it stays put while the panel scrolls). */
@@ -491,7 +491,7 @@ body.resizing-panel { cursor: ew-resize; user-select: none; }
   position: absolute; bottom: 36px; left: 50%; transform: translateX(-50%); z-index: 6;
   width: min(480px, calc(100% - 32px)); display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center;
   gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--surface); color: var(--ink);
-  border: 1px solid var(--line-strong); outline: 1px solid var(--line); outline-offset: calc(-1px - var(--rule-gap));
+  border: 1px solid var(--line-strong); outline: var(--card-outline); outline-offset: calc(-1px - var(--rule-gap));
   box-shadow: var(--shadow-float);
 }
 .tour-card[hidden] { display: none; }
@@ -559,7 +559,7 @@ details.lmk-uniforms pre { margin: var(--space-1) 0 0; font: 11.5px/1.45 var(--f
 
 /* điểm neo: hình thoi như số mục, kéo được */
 .lm-anchor {
-  width: 16px; height: 16px; background: var(--brick); border: 2px solid var(--surface); transform: rotate(45deg);
+  width: 16px; height: 16px; background: var(--signal); border: 2px solid var(--surface); transform: rotate(45deg);
   box-shadow: 0 0 0 1px var(--ink); cursor: grab;
 }
 .lm-anchor:active { cursor: grabbing; }

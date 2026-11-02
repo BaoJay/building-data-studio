@@ -283,7 +283,7 @@ class Workspace {
     if (!map.getLayer(LINE_LAYER_ID)) return;
     const pal = this.host.palette();
     const sel = ["==", ["get", "id"], this.sel?.kind === "landmark" ? this.sel.rec.id : ""];
-    map.setPaintProperty(LINE_LAYER_ID, "line-color", ["case", sel, pal.highlight, pal.ochre]);
+    map.setPaintProperty(LINE_LAYER_ID, "line-color", ["case", sel, pal.highlight, pal.lime]);
     map.setPaintProperty(LINE_LAYER_ID, "line-width", ["case", sel, 3, 1.4]);
     map.setLayoutProperty(HIT_LAYER_ID, "visibility", this.host.threeD() ? "visible" : "none");
     this.syncReference();

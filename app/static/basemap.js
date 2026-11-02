@@ -4,8 +4,8 @@
 
 import { $, esc } from "/static/util.js";
 
-// Map colours are the Studio Indochine tokens in tokens.css: height-1…9 sit on these
-// breaks (paper yellow → roof brown), cat-1…8 are the categorical slots (anything past
+// Map colours are the tokens in tokens.css (VMAP; tokens-indochine.css for the old style): height-1…9 sit on these
+// breaks (light → dark), cat-1…8 are the categorical slots (anything past
 // 8 values folds into map-neutral "khác").
 const HEIGHT_BREAKS = [0, 6, 12, 20, 35, 60, 100, 200, 400];
 const CAT_COUNT = 8;
@@ -143,7 +143,7 @@ export function palette(theme) {
     plain: v("height-4"),
     ground: v("map-ground"),
     outline: v("ink"),
-    ochre: v("ochre"),
+    lime: v("map-lime"),
     accent: v("accent"),
   };
   probe.remove();

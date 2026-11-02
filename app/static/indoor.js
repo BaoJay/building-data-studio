@@ -169,7 +169,7 @@ function installLayers() {
       "circle-stroke-color": c.outline, "circle-stroke-width": 1.2 } });
   map.addLayer({ id: "ind-door", type: "line", source: "ind-doors", filter: ["==", ["geometry-type"], "LineString"],
     layout: { "line-cap": "butt" },
-    paint: { "line-color": ["case", ["==", ["get", "sel"], 1], c.highlight, ["==", ["get", "bad"], 1], c.outlier, ["==", ["get", "exterior"], 1], c.ochre, c.accent],
+    paint: { "line-color": ["case", ["==", ["get", "sel"], 1], c.highlight, ["==", ["get", "bad"], 1], c.outlier, ["==", ["get", "exterior"], 1], c.lime, c.accent],
       "line-width": 5 } });
   map.addLayer({ id: "ind-door-pt", type: "circle", source: "ind-doors", filter: ["==", ["geometry-type"], "Point"],
     paint: { "circle-radius": 3, "circle-color": ["case", ["==", ["get", "bad"], 1], c.outlier, c.accent], "circle-stroke-color": c.ground, "circle-stroke-width": 1 } });
@@ -182,7 +182,7 @@ function installLayers() {
   map.addLayer({ id: "ind-route", type: "line", source: "ind-route", filter: ["all", ["==", ["get", "on"], 1], ["==", ["geometry-type"], "LineString"]],
     layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": c.outline, "line-width": 5 } });
   map.addLayer({ id: "ind-route-pt", type: "circle", source: "ind-route", filter: ["all", ["==", ["get", "on"], 1], ["==", ["geometry-type"], "Point"]],
-    paint: { "circle-radius": 7, "circle-color": ["match", ["get", "role"], "start", c.accent, "end", c.highlight, c.ochre],
+    paint: { "circle-radius": 7, "circle-color": ["match", ["get", "role"], "start", c.accent, "end", c.highlight, c.lime],
       "circle-stroke-color": c.ground, "circle-stroke-width": 2 } });
   map.addLayer({ id: "ind-poi", type: "circle", source: "ind-pois",
     paint: { "circle-radius": 6, "circle-color": c.cat[1], "circle-stroke-color": ["case", ["==", ["get", "sel"], 1], c.highlight, c.outline],
@@ -208,7 +208,7 @@ function installLayers() {
     paint: { "line-color": c.highlight, "line-width": 2, "line-dasharray": [2, 1] } });
   map.addLayer({ id: "ind-draft-pt", type: "circle", source: "ind-draft", filter: ["==", ["geometry-type"], "Point"],
     paint: { "circle-radius": ["match", ["get", "kind"], "vertex", 6, "edge", 5, "door", 6, 4],
-      "circle-color": ["match", ["get", "kind"], "vertex", c.highlight, "edge", c.ochre, "door", c.accent, c.ground],
+      "circle-color": ["match", ["get", "kind"], "vertex", c.highlight, "edge", c.lime, "door", c.accent, c.ground],
       "circle-stroke-color": c.outline, "circle-stroke-width": 1.5 } });
   map.addLayer({ id: "ind-handle", type: "circle", source: "ind-handles",
     paint: { "circle-radius": ["case", ["==", ["get", "mid"], 1], 3.5, 5.5], "circle-color": ["case", ["==", ["get", "mid"], 1], c.ground, c.highlight],

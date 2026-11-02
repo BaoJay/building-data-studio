@@ -89,6 +89,8 @@ Trên macOS có thể double-click file **`Building Data Studio.command`** trong
 
 Server chỉ lắng nghe trên `127.0.0.1`, máy khác trong mạng không truy cập được.
 
+**Style UI**: mặc định là style VMAP (palette deck BOD Routing & ETA: nền xám nhạt, nhấn xanh `#357A00`, rule lime `#BDFF3E`). Nút **Style: VMAP / Style: Indochine** trên thanh điều hướng (trang chính, trang 3D, trang Indoor) chuyển về style cũ Studio Indochine; lựa chọn lưu trong trình duyệt, trang tải lại để bản đồ lấy màu mới. Token ở `app/static/tokens.css` (VMAP) và `app/static/tokens-indochine.css` (cũ).
+
 ### Demo nhanh: 3D building Hà Nội, không cần file
 
 1. Chạy `./run.sh`. Lần đầu, terminal báo `Chưa có base Hà Nội: đang tạo…`. Thẻ **Base Hà Nội** ở đầu trang chính hiện từng bước. Đợi khoảng 3–5 phút, cần internet.
@@ -334,7 +336,7 @@ Trang xem 3D (`/preview`) là nơi duy nhất xem và quản lý landmark: panel
 - File GLB chỉ được tải khi landmark ở trong vùng đang xem (cộng thêm 25% mỗi phía), tối đa 3 file cùng lúc, và giữ trong bộ nhớ tối đa 24 mô hình. Đổi bản đồ nền hay chế độ ánh sáng không tải lại file.
 - Extrusion của building, gồm các khối con (`parent_building_id`), chỉ bị ẩn khi file GLB đã tải xong. File lỗi (ví dụ nén Draco) thì extrusion vẫn giữ, lỗi hiện trong drawer. Bóng: landmark có version đang dùng đổ bóng theo mesh GLB của version đó (Bình minh, Ban ngày, Hoàng hôn; Ban đêm không đổ bóng), gộp chung với bóng building xung quanh nên không đậm lên ở chỗ chồng nhau. Landmark chưa có version đang dùng, hoặc file GLB không đọc được hình học (nén Draco / meshopt), giữ bóng hộp LoD1. Bóng đi theo placement đã lưu: đang kéo thử placement hay xem version khác thì bóng chưa đổi. Mỗi tam giác của GLB được đặt như mô hình trên bản đồ (heading, tỉ lệ, điểm neo), chiếu xuống mặt đất theo tia nắng rồi gộp lại. Khác bóng LoD1, bóng landmark không bị footprint của chính building đó cắt đi: mô hình thường không phủ kín footprint LoD1, nên bóng phủ cả phần đất trống quanh mô hình trong footprint (dưới thân mô hình thì bị mô hình che). Kết quả tính một lần cho mỗi (file GLB, placement, chế độ) và lưu ở `landmarks/<id>/shadows/`. Với PMTiles có sẵn layer `shadows`, bóng GLB được vẽ đè lên, bóng hộp LoD1 trong file vẫn nằm dưới.
 - Click mô hình hoặc footprint của landmark để mở nó trong drawer. Click building thường để xem thuộc tính và đăng ký. Nếu click vào một khối con, drawer hỏi chọn cả building cha hay chỉ khối đó.
-- **Landmark hiển thị** (panel trái, dưới *Dựng 3D*) so sánh model GLB với khối LoD1 của building trên toàn bản đồ: **GLB** (mặc định, model thay extrusion), **LOD1** (ẩn mọi model, hiện lại extrusion; bóng đổ theo hộp LoD1, server bỏ bóng GLB qua `/api/shadows?landmarks=0`, file có sẵn layer `shadows` thì ẩn lớp bóng GLB đè lên) và **Chồng** (model đặc, khối LoD1 cùng chiều cao/đáy tô màu ochre trong suốt đè lên: phần LoD1 cao/rộng hơn model nổi màu, phần model nhô khỏi hộp giữ nguyên; bóng vẫn theo GLB). Lựa chọn nằm trong URL (`lm3d=lod1` / `lm3d=both`) để gửi link so sánh.
+- **Landmark hiển thị** (panel trái, dưới *Dựng 3D*) so sánh model GLB với khối LoD1 của building trên toàn bản đồ: **GLB** (mặc định, model thay extrusion), **LOD1** (ẩn mọi model, hiện lại extrusion; bóng đổ theo hộp LoD1, server bỏ bóng GLB qua `/api/shadows?landmarks=0`, file có sẵn layer `shadows` thì ẩn lớp bóng GLB đè lên) và **Chồng** (model đặc, khối LoD1 cùng chiều cao/đáy tô màu lime trong suốt (ochre ở style Indochine) đè lên: phần LoD1 cao/rộng hơn model nổi màu, phần model nhô khỏi hộp giữ nguyên; bóng vẫn theo GLB). Lựa chọn nằm trong URL (`lm3d=lod1` / `lm3d=both`) để gửi link so sánh.
 - URL giữ landmark đang mở (`lm=<id>`) hoặc building vừa click (`id=`), cùng `f`, `name`, `idcol`, `lon`, `lat`, `z` (và `lm3d`). Tải lại trang, hoặc Back / Forward, trở về đúng file, vị trí và landmark. Ô **Building từ PMTiles** ở panel trái chuyển sang base hoặc các file đã có landmark.
 
 **Trong drawer**:
@@ -392,7 +394,7 @@ A, B ─ ogr2ogr ─► FlatGeobuf ─ ogr2ogr + SpatiaLite ─► Parquet (+ di
 3. **Khớp**: khớp / thêm mới / bị xoá, ID trùng, ID rỗng, building đổi ID.
 4. **Building khớp có thay đổi**: geometry (diện tích lệch %, tâm dịch m), chiều cao (Δh, mặc định ↔ có số đo), số building đổi theo từng cột.
 5. **Chất lượng A và B**: % có chiều cao thật, outlier, phân bố provenance và tier, khối con mồ côi, `superseded_by` trỏ tới ID không tồn tại.
-6. **Theo khu vực**: lưới (mặc định 0,05° ≈ 5,5 km) đếm A / B / thêm / xoá / đổi cho từng ô, và bản đồ diff: lam = thêm (`cat-1`), đỏ = xoá (`map-outlier`), hoàng thổ = đổi (`cat-2`), màu lấy từ token của design system.
+6. **Theo khu vực**: lưới (mặc định 0,05° ≈ 5,5 km) đếm A / B / thêm / xoá / đổi cho từng ô, và bản đồ diff: lam = thêm (`cat-1`), đỏ = xoá (`map-outlier`), vàng = đổi (`cat-2`), màu lấy từ token (`app/static/tokens.css`).
 7. **Release gate**: so với các ngưỡng bên dưới.
 
 ### Release gate (mặc định, chỉnh được trên UI)

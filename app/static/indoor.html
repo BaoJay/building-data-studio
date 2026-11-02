@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
   <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/tokens-indochine.css">
+  <script src="/static/style-toggle.js"></script>
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/indoor.css">
 </head>
@@ -18,7 +20,8 @@
     <aside class="panel" id="panel">
       <div class="head">
         <div><h1 id="title">Indoor Map Editor</h1><div class="meta" id="meta">PoC · OGC IndoorGML 2.0</div></div>
-        <a class="btn small" href="/" title="Về trang chính Building Data Studio">Studio</a>
+        <div class="btn-row"><button class="btn small" type="button" data-style-toggle>Style: VMAP</button>
+<a class="btn small" href="/" title="Về trang chính Building Data Studio">Studio</a></div>
       </div>
 
       <section class="pgroup">

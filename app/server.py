@@ -116,6 +116,10 @@ async def preview_page(request: Request) -> Response:
     return FileResponse(STATIC_DIR / "preview.html", headers=NO_CACHE)
 
 
+async def indoor_page(request: Request) -> Response:
+    return FileResponse(STATIC_DIR / "indoor.html", headers=NO_CACHE)
+
+
 async def health(request: Request) -> Response:
     versions = tools.tool_versions()
     missing = [name for name in tools.REQUIRED_TOOLS if not versions[name]["path"]]
@@ -697,6 +701,7 @@ async def _in_thread(fn, *args):
 routes = [
     Route("/", index),
     Route("/preview", preview_page),
+    Route("/indoor", indoor_page),
     Route("/api/health", health),
     Route("/api/upload", upload, methods=["PUT", "POST"]),
     Route("/api/probe", probe_file, methods=["POST"]),

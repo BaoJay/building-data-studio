@@ -9,6 +9,8 @@ Có giao diện kéo thả, nút tải file và nút mở thư mục output. App
 
 Tab **So sánh 2 file** so sánh bản production (A) với bản sắp release (B) và đưa ra kết luận **Pass / Warn / Fail** trước khi release (xem [mục 9](#9-so-sánh-2-file-trước-release)).
 
+Trang **Indoor map** (`/indoor`, bản PoC) vẽ bản đồ trong nhà cho một toà được chọn (TTTM, siêu thị) theo chuẩn **OGC IndoorGML 2.0**: tầng, không gian, cửa, thang, tự sinh đồ thị điều hướng, tìm đường nhiều tầng và xuất IndoorGML / GeoJSON (xem [mục 10](#10-indoor-map-poc-theo-indoorgml-20)).
+
 Trang xem 3D (`/preview`) hiện building LoD1 cùng mọi **landmark 3D** (file GLB) đang dùng trên file PMTiles đó. Drawer **Landmark** bên phải quản lý file GLB của từng building theo `building_id` và footprint, cùng các version đã dùng. Mỗi version có hướng và toạ độ neo riêng (xem [Landmark 3D trong trang xem 3D](#landmark-3d-trong-trang-xem-3d)).
 
 **Base Hà Nội**: building OpenStreetMap của toàn thành phố, app tự tạo một lần. Trang xem 3D mở thẳng base này, không cần upload hay convert file (xem [Base Hà Nội](#base-hà-nội-building-osm-toàn-thành-phố)).
@@ -419,14 +421,55 @@ Trên QGIS: mở `changed` và `changed_before` cùng lúc để thấy hình d�
 
 Thời gian chạy trên máy dev: canonical v1 (369 nghìn) ↔ v2 (1,2 triệu) khoảng 50 giây; PMTiles vmap (1,27 triệu, z17) ↔ canonical v2 khoảng 50 giây.
 
-## 10. Lưu ý
+## 10. Indoor map (PoC) theo IndoorGML 2.0
+
+Trang `/indoor` (nút **Indoor map (PoC)** trên trang chính) là tool vẽ bản đồ trong nhà cho các toà VMAP chọn làm indoor (TTTM, siêu thị). Dữ liệu theo mô hình [OGC IndoorGML 2.0](https://docs.ogc.org/is/22-045r5/22-045r5.html):
+
+| Trên editor | IndoorGML 2.0 |
+|---|---|
+| Không gian (phòng, gian hàng, hành lang, thang…) | **CellSpace** trong **PrimalSpaceLayer**; loại đi được ghi lớp Navigation: `GeneralSpace` (gian hàng, WC, bãi xe), `TransitionSpace` (hành lang, thang máy, thang bộ, thang cuốn), `AnchorSpace` (lối vào, nối ra ngoài trời); giếng trời / kết cấu là `CellSpace` thường (không đi được) |
+| Cửa / lối mở | **CellBoundary** (`ConnectionBoundary`) nằm trên bức tường chung của hai không gian; lối mở không cánh ghi `isVirtual = true` |
+| Tự sinh, không vẽ tay | **DualSpaceLayer** (Node-Relation Graph): mỗi không gian đi được ↔ một **Node**, mỗi cửa nối hai không gian ↔ một **Edge**, các thang cùng *nhóm thang* (`vgroup`) ở hai tầng liền nhau ↔ một **Edge** đứng. Quan hệ `duality` hai chiều giữa Cell ↔ Node và Boundary ↔ Edge |
+| Tầng | thuộc tính `level` của CellSpace; tầng có thứ tự (`ordinal`, 0 = tầng trệt, âm = hầm), cao độ sàn và chiều cao |
+
+**Quy trình demo** (3 phút):
+
+1. Zoom tới một TTTM trên base Hà Nội, bấm **Chọn toà từ base** rồi click toà: outline, tên và `building_id` lấy từ base (toà có `num_floors` thì tự tạo đủ số tầng). Chưa có base thì **Vẽ outline** bằng tay.
+2. **Tạo layout mẫu**: sinh một TTTM 4 tầng (hầm xe B1, tầng 1 có siêu thị và 2 lối vào, tầng 2, tầng 3 ăn uống) quanh một hành lang, có 2 lõi thang máy + thang bộ + WC và thang cuốn giữa sảnh. Layout tự co lại cho vừa trong outline; toà lớn thì đặt một khối ≤ 160 × 64 m, phần còn lại vẽ tiếp.
+3. Tab **Tìm đường**: chọn *Từ* bãi xe B1, *Đến* một quán ở tầng 3 → đường đi qua các cửa và thang, các bước chỉ đường, độ dài. Tick **Tránh thang bộ và thang cuốn** để thấy tuyến đổi sang thang máy (xe lăn, xe đẩy). Thanh chọn tầng bên phải đánh dấu các tầng tuyến đi qua.
+4. **3D xếp tầng**: các tầng chồng theo cao độ (kéo *Giãn tầng* để tách ra), tuyến đường là dải tối trên từng tầng và cột ở chỗ đi thang.
+5. Tab **Kiểm tra** và nút xuất **IndoorGML (.gml)** / **IndoorGML JSON** / **GeoJSON (tiles)**.
+
+**Vẽ** (thanh công cụ trên bản đồ, phím tắt trong ngoặc): **Chọn** (V) để chọn, kéo đỉnh, kéo điểm giữa cạnh để thêm đỉnh, Alt+click đỉnh để xoá đỉnh, kéo cả hình, Del để xoá; **Đa giác** (P) và **Chữ nhật** (R, theo trục dài của toà nhà) vẽ không gian loại đang chọn ở ô bên cạnh; **Cửa** (D) click sát tường, cửa nối mọi không gian chung bức tường đó; **POI** (I). Con trỏ bắt vào đỉnh rồi cạnh có sẵn để các phòng khít tường nhau; Shift khoá hướng theo trục toà mỗi 45°, Alt tắt bắt điểm. Ctrl+Z / Ctrl+Shift+Z hoàn tác / làm lại, PageUp / PageDown đổi tầng.
+
+**Tầng**: **+ Trên** / **+ Dưới** thêm tầng và copy sẵn thang máy, thang bộ, thang cuốn (cùng hình, cùng cửa, cùng nhóm thang) của tầng đang chọn để các tầng thẳng hàng; **Nhân bản** copy toàn bộ tầng. Với một thang, drawer bên phải có các ô tick tầng để thêm / bỏ thang đó ở tầng khác. Tầng dưới hiện mờ (nét đứt) phía sau tầng đang vẽ để căn thẳng.
+
+**Ảnh mặt bằng**: chọn ảnh bản vẽ của tầng (PNG / JPG), **Vừa outline** đặt ảnh theo trục toà, chỉnh độ mờ, góc xoay, độ rộng (m), **Kéo ảnh** để dịch; rồi vẽ đè lên ảnh (số hoá). Ảnh chỉ lưu trong trình duyệt.
+
+**Kiểm tra** trước khi xuất: không gian nằm ngoài outline, hai không gian chồng nhau, polygon tự cắt hoặc quá nhỏ, cửa không nằm trên tường nào, cửa chỉ chạm một không gian (cửa ra ngoài), thang chưa nối sang tầng khác, gian hàng chưa có tên, không gian không đi tới được từ lối vào. Click một dòng để tới đối tượng.
+
+**Tìm đường**: Dijkstra trên đồ thị dual space. Trọng số là mét đi bộ (tâm không gian → cửa → tâm không gian kế tiếp); đi thang quy đổi theo chiều cao: thang máy 25 m chờ + 1 m mỗi mét cao, thang cuốn 2,5 m/m, thang bộ 4 m/m.
+
+**Lưu và xuất**: project tự lưu trong trình duyệt (localStorage); **Lưu project** / **Mở project…** để chuyển máy hoặc gửi người khác (`*.indoor-project.json`, schema `bds-indoor/1`). Ba định dạng xuất:
+
+- `*.indoorgml.gml`: IndoorGML 2.0 GML (namespace `core` / `navi`, toạ độ EPSG:4326 thứ tự lat lon). **Bản nháp**: viết tay theo mô hình khái niệm, chưa validate với XSD chính thức.
+- `*.indoorgml.json`: cùng cấu trúc `IndoorFeatures > ThematicLayer > PrimalSpaceLayer / DualSpaceLayer` dạng JSON, geometry GeoJSON.
+- `*.indoor.geojson`: GeoJSON phẳng cho tile, mỗi feature có `feature_type` (`venue`, `level`, `unit`, `opening`, `poi`, `node`, `edge`) cùng `level_id`, `ordinal`. Đưa vào tippecanoe ra PMTiles, hoặc nạp PostGIS rồi serve bằng Martin; app Mobile lọc theo `ordinal` để hiện từng tầng:
+
+  ```bash
+  tippecanoe -o indoor.pmtiles -l indoor -Z15 -z22 --no-feature-limit --no-tile-size-limit toa-nha.indoor.geojson
+  ```
+
+Giới hạn của PoC: không gian là polygon không lỗ (giếng trời vẽ thành không gian riêng), một ThematicLayer (Physical), chưa có InterLayerConnection, chưa có cửa một chiều, chưa có backend lưu chung (mỗi người một project trong trình duyệt).
+
+## 11. Lưu ý
 
 - **Bản đồ nền** trong trang xem 3D lấy từ VMAP / OpenFreeMap / OpenStreetMap, nên cần internet. Khi offline thì chọn *Không nền*, building vẫn hiển thị bình thường. Lựa chọn nền và chế độ ánh sáng được nhớ trong trình duyệt.
 - File kéo thả được copy vào `uploads/` và **không tự xoá**. Hãy dọn thư mục này khi cần.
 - Lịch sử chạy trong app chỉ giữ trong phiên hiện tại. File output vẫn còn trên đĩa sau khi tắt app.
 - Tuỳ chọn chung (zoom, khoảng hợp lệ, thư mục output…) được nhớ trong trình duyệt. Nút **Khôi phục mặc định** đưa chúng về như ban đầu.
 
-## 11. Lỗi thường gặp
+## 12. Lỗi thường gặp
 
 | Hiện tượng | Cách xử lý |
 |---|---|
@@ -443,7 +486,7 @@ Thời gian chạy trên máy dev: canonical v1 (369 nghìn) ↔ v2 (1,2 triệu
 | Không muốn app tự tạo base khi khởi động | `./run.sh --no-base` hoặc `BDS_BASE_AUTOBUILD=0` |
 | Landmark có trong danh sách nhưng không hiện trên bản đồ | Landmark đăng ký trên file PMTiles khác (drawer ghi *PMTiles khác*, có link mở đúng file), chưa có version **đang dùng**, hoặc file GLB lỗi (drawer ghi lỗi, ví dụ nén Draco: xuất lại GLB không nén) |
 
-## 12. Phát triển
+## 13. Phát triển
 
 ```bash
 .venv/bin/pip install -r requirements-dev.txt
@@ -472,5 +515,5 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |
 | `app/osmbase.py` | Base Hà Nội: ranh giới và building OSM từ Overture (DuckDB), chạy qua pipeline convert, ghi `base/hanoi/base.json` |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
-| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff (`preview.js`); `basemap.js` (bản đồ nền và chế độ ánh sáng); landmark trong trang xem 3D: `landmark-workspace.js` (state, thao tác, URL), `landmark-drawer.js` (giao diện drawer), `landmark-store.js` (tải GLB theo vùng nhìn, cache, filter extrusion; không phụ thuộc trình duyệt, test bằng Node), `landmark-model.js` (vẽ nhiều GLB trong một custom layer) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); `tour.js` (bay quanh toà cao nhất: chọn điểm dừng, camera; test bằng Node); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, chế độ diff không tải three.js) |
+| `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff (`preview.js`); `basemap.js` (bản đồ nền và chế độ ánh sáng); landmark trong trang xem 3D: `landmark-workspace.js` (state, thao tác, URL), `landmark-drawer.js` (giao diện drawer), `landmark-store.js` (tải GLB theo vùng nhìn, cache, filter extrusion; không phụ thuộc trình duyệt, test bằng Node), `landmark-model.js` (vẽ nhiều GLB trong một custom layer) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); `tour.js` (bay quanh toà cao nhất: chọn điểm dừng, camera; test bằng Node); indoor map PoC: `indoor.js` (editor, bản đồ, drawer) và `indoor-model.js` (mô hình IndoorGML, đồ thị, tìm đường, kiểm tra, xuất file; không phụ thuộc trình duyệt, test bằng Node); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, chế độ diff không tải three.js) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe); `tests/js/` chạy bằng Node |

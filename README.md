@@ -148,6 +148,33 @@ Dữ liệu nằm trong `base/hanoi/` cạnh `output/` và không commit vào gi
 
 Lần đầu, DuckDB tự tải extension `spatial` và `httpfs` từ extensions.duckdb.org. Nếu máy không vào được địa chỉ đó, cài bằng pip: `.venv/bin/pip install duckdb-extension-spatial duckdb-extension-httpfs`. Hai gói này phải cùng version với `duckdb`.
 
+#### Lấy thẳng từ OpenStreetMap (không qua Overture)
+
+Overture chỉ cập nhật OSM mỗi tháng. Muốn dữ liệu mới theo ngày, tạo base trực tiếp từ OSM (`app/osmdirect.py`), có hai nguồn:
+
+| Nguồn | Độ mới | Dùng khi |
+|---|---|---|
+| **Overpass API** | khoảng 1 phút sau OSM | Cập nhật nhanh. App chia ranh giới thành ô 0,05°, mỗi ô một truy vấn; máy chủ báo quá tải thì tự chia ô nhỏ hơn. Hà Nội cần vài trăm truy vấn, nên nên trỏ tới Overpass riêng (`BDS_OVERPASS_URL`) nếu chạy thường xuyên |
+| **File `.osm.pbf` / `.osm`** | theo ngày tải file (Geofabrik cập nhật hằng ngày) | Máy chủ Overpass công cộng không đủ sức, hoặc chạy offline. Cần GDAL (đã có sẵn cho app) |
+
+```bash
+.venv/bin/python -m app.osmdirect hanoi                                  # Overpass
+.venv/bin/python -m app.osmdirect hanoi --file vietnam-latest.osm.pbf     # file OSM
+.venv/bin/python -m app.osmdirect hanoi --overpass https://my-host/api/interpreter --tile 0.1
+```
+
+Hoặc `POST /api/base/build` với `{"source": "overpass"}` hay `{"source": "file", "osm_file": "/đường/dẫn/vietnam.osm.pbf"}`. Kết quả ghi vào cùng `base/hanoi/base.json` (có thêm `source_kind`) nên trang 3D, landmark và GeoPackage dùng như bình thường. `osm_snapshot` là thời điểm dữ liệu OSM của Overpass; với file, là lần sửa mới nhất của một building trong file.
+
+App tự làm những việc Overture đã làm sẵn:
+
+- **Chiều cao** (`app/osmtags.py`): đọc `height` ở dạng `12`, `12,5`, `12 m`, `40'`, `12'6"`. Từ chối khoảng (`10-12`), chữ, số âm, và giá trị trên 1.000 m. `building:levels` chấp nhận `3;4` (lấy số lớn hơn). `min_height` trống thì dùng `building:min_level × 3,5 m`. `height_m` vẫn do pipeline convert quyết định như cũ.
+- **`building:part`** (chuẩn Simple 3D Buildings): `building:part=*` (khác `no`) là khối con. Khối con nhận làm cha **building outline nhỏ nhất chứa một điểm của nó** (OSM không có liên kết tường minh). Khối con không có outline vẫn là building thường nên không bị ẩn. Outline có khối con nhận `has_parts` và bị ẩn khi dựng 3D.
+- **Multipolygon**: ghép các way `outer`/`inner` thành vòng; relation thiếu member (way không khép kín) bị bỏ và đếm trong log.
+- **Tag lỗi**: tag số không dùng được (`height=tall`, `building:levels=0`…) được ghi vào `*_tag_issues.csv` (kèm link OSM) để sửa trực tiếp trên OSM.
+- Bỏ building `location=underground` / `tunnel=*`. Ranh giới lấy từ relation OSM có `ISO3166-2=VN-HN`.
+
+So với Overture: không có footprint Google / Microsoft (vốn đã bị loại ở base này), nhưng cũng không có bước chuẩn hoá `class` và `roof_*` đã được Overture xử lý; các cột này lấy nguyên từ tag OSM.
+
 Dữ liệu OSM theo giấy phép ODbL. PMTiles của base ghi sẵn attribution `© OpenStreetMap contributors (ODbL) · Overture Maps <release>`; giữ dòng này khi đưa base lên app.
 
 ### Convert một file
@@ -535,6 +562,7 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/landmark.py` | Neo landmark trong trang xem 3D: footprint của một `building_id` trong PMTiles (ghép mảnh tile, tâm, diện tích, chiều cao) |
 | `app/landmark_library.py` | Thư viện landmark: version GLB, placement của từng version, version đang dùng và lịch sử (thư mục `landmarks/`), landmark đang dùng của một file PMTiles |
 | `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |
+| `app/osmdirect.py`, `app/osmtags.py`, `app/osmgeom.py` | Base lấy thẳng từ OSM (Overpass hoặc file `.osm.pbf`): chuẩn hoá height / `building:part`, ghép multipolygon, cùng `base.json` với `osmbase` |
 | `app/osmbase.py` | Base Hà Nội: ranh giới và building OSM từ Overture (DuckDB), chạy qua pipeline convert, ghi `base/hanoi/base.json` |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
 | `schemas/` | Schema PMTiles đã thống nhất với VMAP (`vmap-buildings.json`): layer, zoom, field và kiểu |

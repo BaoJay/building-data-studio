@@ -404,7 +404,8 @@ class BasePipeline(Pipeline):
             "area": a.key,
             "label": a.label,
             "name": f"{a.label} · OSM buildings",
-            "source": f"OpenStreetMap qua Overture Maps {self.release}",
+            "source": self.source_label,
+            "source_kind": self.source_kind,
             "attribution": self.attribution,
             "release": self.release,
             "osm_snapshot": self.extract.get("osm_snapshot"),
@@ -423,6 +424,12 @@ class BasePipeline(Pipeline):
         self.job.add_log(f"Base {a.label} đang dùng: {self.out_dir.name} ({path})")
 
     # ---------------------------------------------------------------- helpers
+    source_kind = "overture"
+
+    @property
+    def source_label(self) -> str:
+        return f"OpenStreetMap qua Overture Maps {self.release}"
+
     @property
     def attribution(self) -> str:
         return f"© OpenStreetMap contributors (ODbL) · Overture Maps {self.release}"
@@ -447,6 +454,11 @@ class BasePipeline(Pipeline):
 
 def execute(job: Job, registry: FileRegistry, base_dir: Path | None = None) -> None:
     """Entry point used by the JobManager worker thread."""
+    if job.config.get("source") in ("overpass", "file"):
+        from . import osmdirect  # imports this module: not at the top
+
+        osmdirect.execute(job, registry, base_dir)
+        return
 
     def build() -> BasePipeline:
         area = AREAS.get(str(job.config.get("area") or DEFAULT_AREA))

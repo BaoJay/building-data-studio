@@ -30,13 +30,16 @@ export async function parseModel(buffer, name) {
   root.updateMatrixWorld(true);
   const shared = sharedUniforms();
   const materials = new Map();
+  const sources = new Map();  // glTF material uuid -> what the drawer lists of it
   const textures = new Set();
   let meshes = 0;
   let triangles = 0;
+  let flatNormals = 0;  // meshes without NORMAL (normals computed)
   root.traverse((obj) => {
     if (!obj.isMesh) return;
     meshes++;
     if (!obj.geometry.attributes.normal) {
+      flatNormals++;
       // glTF: no normals means flat shading.
       obj.geometry = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry;
       obj.geometry.computeVertexNormals();
@@ -49,6 +52,10 @@ export async function parseModel(buffer, name) {
       const uv1 = Boolean(obj.geometry.attributes.uv1);
       const key = `${m.uuid}:${vertexColors}:${uv1}`;
       if (!materials.has(key)) materials.set(key, landmarkMaterial(m, shared, vertexColors, uv1, textures));
+      const info = sources.get(m.uuid) || { ...materials.get(key).lmk, meshes: 0, uv1: true };
+      info.meshes++;
+      info.uv1 = info.uv1 && uv1;
+      sources.set(m.uuid, info);
       return materials.get(key);
     };
     obj.material = Array.isArray(obj.material) ? obj.material.map(convert) : convert(obj.material);
@@ -58,7 +65,12 @@ export async function parseModel(buffer, name) {
   const scene = new THREE.Scene();
   scene.add(root);
   const bounds = new THREE.Box3().setFromObject(root);
-  return { root, scene, shared, bounds, name, materials: [...materials.values()], textures: [...textures], meshes, triangles };
+  return {
+    root, scene, shared, bounds, name, materials: [...materials.values()], textures: [...textures], meshes, triangles,
+    asset: gltf.asset || {},  // asset.extras: anchor, lod_zoom, zoom_range
+    materialInfo: [...sources.values()],
+    flatNormals,
+  };
 }
 
 export function disposeModel(model) {
@@ -125,7 +137,7 @@ export class LandmarkLayer {
     };
     this.light = LL.resolveLight(styleLight(map));
     this.night = false;  // read again on style.load
-    this.emissive = 0;
+    this.preset = null;  // VMAP light preset of the style: emissive gains and glass
     try { this.readPreset(map.getStyle()?.metadata); } catch { /* style not loaded yet */ }
     this.camera = new THREE.Camera();
     this.renderer = null;
@@ -151,8 +163,8 @@ export class LandmarkLayer {
 
   // ---------------------------------------------------------------- light
 
-  // The preset (night switch, emissive level) lives in the style's metadata, which only
-  // changes with a new style.
+  // The preset (night switch, emissive gains, glass sky) lives in the style's metadata, which
+  // only changes with a new style.
   readNight() {
     this.readPreset(this.map.getStyle()?.metadata);
     this.readLight(true);
@@ -160,7 +172,7 @@ export class LandmarkLayer {
 
   readPreset(metadata) {
     this.night = LL.isNightStyle(metadata);
-    this.emissive = LL.emissiveLevel(metadata);
+    this.preset = LL.lightPreset(metadata);
   }
 
   readLight(force = false) {
@@ -173,7 +185,7 @@ export class LandmarkLayer {
 
   // The uniforms of the current light for a heading and the map bearing (also for readouts).
   uniforms(heading = 0) {
-    return LL.landmarkUniforms(this.light, { heading, bearing: this.map.getBearing(), emissive: this.emissive });
+    return LL.landmarkUniforms(this.light, { heading, bearing: this.map.getBearing(), preset: this.preset });
   }
 
   setUniforms(model, placement, flat) {
@@ -183,13 +195,21 @@ export class LandmarkLayer {
     s.u_lightcolor.value.fromArray(u.u_lightcolor);
     s.u_lightintensity.value = u.u_lightintensity;
     s.u_north.value.fromArray(u.u_north);
-    s.u_emissive_on.value = u.u_emissive_on;
+    s.u_glass_reflect.value = u.u_glass_reflect;
+    s.u_sky_zenith.value.fromArray(u.u_sky_zenith);
+    s.u_sky_horizon.value.fromArray(u.u_sky_horizon);
+    s.u_sky_ground.value.fromArray(u.u_sky_ground);
     s.u_vertical_gradient.value = this.map.getLayer("bldg-3d") && this.map.getPaintProperty("bldg-3d", "fill-extrusion-vertical-gradient") === false ? 0 : 1;
     s.u_ground.value = anchorPoint(model, placement).y;
     s.u_top.value = model.bounds.max.y;
     s.u_height_m.value = modelHeight(model, placement);
     const ref = LL.parseColor(this.opts.referenceColor()) || [1, 1, 1, 1];
     s.u_override.value.set(ref[0], ref[1], ref[2], flat ? 1 : 0);
+    // Emissive gain per material: its group under the preset.
+    for (const m of model.materials) {
+      const e = LL.materialEmissive(this.preset, m.userData, m.lmk.factor, m.lmk.khrStrength);
+      m.uniforms.u_emissive_gain.value = e.gain;
+    }
   }
 
   // ---------------------------------------------------------------- custom layer
@@ -213,6 +233,9 @@ export class LandmarkLayer {
     for (const { model, placement, flat } of models) {
       this.setUniforms(model, placement, flat);
       this.camera.projectionMatrix = main.clone().multiply(placementMatrix(model, placement));
+      // Glass: the camera in the glTF root frame, from the inverse of this model's MVP.
+      const eye = LL.cameraInModel(this.camera.projectionMatrix.elements);
+      if (eye) model.shared.u_camera_pos.value.fromArray(eye);
       this.renderer.render(model.scene, this.camera);
     }
   }
@@ -237,7 +260,11 @@ function sharedUniforms() {
     u_north: { value: new THREE.Vector3(0, 0, -1) },
     u_ground: { value: 0 },
     u_top: { value: 1 },
-    u_emissive_on: { value: 0 },
+    u_glass_reflect: { value: 0 },
+    u_sky_zenith: { value: new THREE.Vector3() },
+    u_sky_horizon: { value: new THREE.Vector3() },
+    u_sky_ground: { value: new THREE.Vector3() },
+    u_camera_pos: { value: new THREE.Vector3(0, 1e4, 0) },
     u_override: { value: new THREE.Vector4() },
   };
 }
@@ -245,7 +272,8 @@ function sharedUniforms() {
 // glTF material (as three's GLTFLoader built it) -> the landmark ShaderMaterial. three keeps
 // colour factors linear (fine: the shader expects the glTF factors) and marks the base colour /
 // emissive textures sRGB, which would make WebGL linearise them on sampling: they are switched
-// to NoColorSpace so the shader gets the raw bytes.
+// to NoColorSpace so the shader gets the raw bytes. The glTF material.extras (emissive_group,
+// surface_type, emissive_strength…) stay in userData; material.lmk holds what was made of them.
 function landmarkMaterial(src, shared, vertexColors, hasUv1, textures) {
   const tex = (t) => {
     if (!t) return null;
@@ -255,16 +283,24 @@ function landmarkMaterial(src, shared, vertexColors, hasUv1, textures) {
     textures.add(t);
     return t;
   };
+  const extras = { ...(src.userData || {}) };
   const map = tex(src.map);
-  const emissiveMap = tex(src.emissiveMap);
   const color = src.color || new THREE.Color(1, 1, 1);
   const emissive = src.emissive || new THREE.Color(0, 0, 0);
+  const factor = [emissive.r, emissive.g, emissive.b];
+  const khrStrength = src.emissiveIntensity ?? 1;
+  const em = LL.materialEmissive(null, extras, factor, khrStrength);
+  // A material that never glows does not sample its emissive texture.
+  const emissiveMap = em.mode ? tex(src.emissiveMap) : null;
+  const glass = LL.isGlass(extras);
   const defines = vertexColors ? { LMK_VERTEX_COLOR: "" } : {};
+  if (emissiveMap) defines.LMK_EMISSIVE_MAP = "";
   if (emissiveMap && emissiveMap.channel === 1) {
     if (hasUv1) defines.LMK_EMISSIVE_UV1 = "";
     else console.warn(`landmark: ${src.name || src.uuid}: emissiveTexture dùng TEXCOORD_1 nhưng mesh không có TEXCOORD_1, dùng TEXCOORD_0.`);
   }
-  return new THREE.ShaderMaterial({
+  if (glass) defines.LMK_GLASS = "";
+  const material = new THREE.ShaderMaterial({
     name: `landmark:${src.name || src.uuid}`,
     glslVersion: THREE.GLSL3,
     vertexShader: LL.VERTEX_SHADER,
@@ -276,15 +312,38 @@ function landmarkMaterial(src, shared, vertexColors, hasUv1, textures) {
       u_base_map: { value: map },
       u_has_base_map: { value: map ? 1 : 0 },
       u_map_transform: { value: map ? map.matrix : new THREE.Matrix3() },
-      u_emissive: { value: new THREE.Vector3(emissive.r, emissive.g, emissive.b) },
+      u_emissive_mode: { value: em.mode },
+      u_emissive_gain: { value: 0 },
+      u_emissive_factor: { value: new THREE.Vector3().fromArray(em.u_emissive_factor) },
       u_emissive_map: { value: emissiveMap },
-      u_has_emissive_map: { value: emissiveMap ? 1 : 0 },
       u_emissive_transform: { value: emissiveMap ? emissiveMap.matrix : new THREE.Matrix3() },
-      u_emissive_intensity: { value: src.emissiveIntensity ?? 1 },
       u_alpha_cutoff: { value: src.alphaTest > 0 ? src.alphaTest : -1 },
     },
     side: src.side ?? THREE.FrontSide,
     transparent: Boolean(src.transparent),
     depthWrite: src.depthWrite ?? true,
   });
+  material.userData = extras;
+  material.lmk = {
+    name: src.name || "",
+    group: em.group,
+    mode: em.mode,
+    strength: em.strength,
+    factor,
+    khrStrength,
+    surfaceType: typeof extras.surface_type === "string" ? extras.surface_type : "",
+    glass,
+    emissiveMap: Boolean(src.emissiveMap),
+    texCoord: src.emissiveMap ? src.emissiveMap.channel || 0 : null,
+    hasUv1,
+    baseMap: Boolean(map),
+    alphaMask: src.alphaTest > 0,
+    doubleSided: src.side === THREE.DoubleSide,
+    transform: [map, src.emissiveMap].some((t) => t && (t.updateMatrix(), !isIdentity3(t.matrix))),
+  };
+  return material;
+}
+
+function isIdentity3(m) {
+  return m.elements.every((v, i) => Math.abs(v - (i % 4 === 0 ? 1 : 0)) < 1e-9);
 }

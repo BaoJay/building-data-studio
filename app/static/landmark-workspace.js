@@ -15,13 +15,17 @@
 // and dissolved with the LoD1 shadows (preview.js asks again when released() changes). A draft
 // placement or a version not in use keeps the shadow of the LoD1 box.
 //
+// A version may hold one file per zoom range (asset.extras.zoom_range, the pipeline's z15 / z16 /
+// z17): the map draws the one of its zoom (landmark-store.js), the set is tried and uploaded
+// together. A GLB that says where it stands (asset.extras.anchor) is placed there, heading 0.
+//
 // The drawer (landmark-drawer.js) carries everything of the library: list and search, building
 // attributes and registration, GLB upload, versions, version in use, placement, history,
-// manifest and trash. The URL keeps the landmark open (?lm=) or the building clicked (?id=) and
+// manifest and trash, and the GLB values the renderer reads (the contract for the app). The URL keeps the landmark open (?lm=) or the building clicked (?id=) and
 // the view (lon, lat, z), so reload and back / forward come back to them.
 /* global maplibregl */
 import { $, api, esc, fetchOk, reveal, toast, uploadFile } from "/static/util.js";
-import { ModelStore, renderable } from "/static/landmark-store.js";
+import { ModelStore, glbInfo, overlappingLods, renderable, zoomLabel } from "/static/landmark-store.js";
 import { LandmarkLayer, disposeModel, parseModel } from "/static/landmark-model.js";
 import * as ui from "/static/landmark-drawer.js";
 
@@ -33,6 +37,37 @@ const PLACEMENT_KEYS = ["heading", "scale", "anchor", "lon", "lat"];
 const round7 = (v) => Math.round(v * 1e7) / 1e7;
 const lmUrl = (lid) => `/api/landmarks/${encodeURIComponent(lid)}`;
 const glbUrl = (lid, n) => `${lmUrl(lid)}/versions/${n}/glb`;
+
+// The files of a version per zoom range, most detailed first (null: one file for every zoom).
+// Keys are the URLs /api/landmarks/render gives, so both share the models loaded.
+export function versionFiles(lid, v) {
+  const own = v?.model?.lod;
+  if (!own) return null;
+  const url = glbUrl(lid, v.version);
+  return [{ ...own, key: url, url, name: v.original_name, label: `${v.original_name} (v${v.version})` },
+    ...(v.lods || []).map((x) => ({ lod_zoom: x.lod_zoom, zoom_range: x.zoom_range, key: `${url}?z=${x.lod_zoom}`, url: `${url}?z=${x.lod_zoom}`,
+      name: x.original_name, label: `${x.original_name} (v${v.version})` }))]
+    .sort((a, b) => b.zoom_range[0] - a.zoom_range[0]);
+}
+
+// Local .glb files (a FileList) read and checked: one file, or a set whose files each say their
+// zoom range, without overlaps. Most detailed first. Throws with a readable message.
+async function readGlbFiles(list) {
+  const files = await Promise.all([...list].map(async (file) => {
+    const buffer = await file.arrayBuffer();
+    return { name: file.name, file, buffer, info: glbInfo(buffer) };
+  }));
+  if (files.length > 1) {
+    const missing = files.filter((f) => !f.info.lod).map((f) => f.name);
+    if (missing.length) throw new Error(`${missing.join(", ")} không có asset.extras.zoom_range: chọn nhiều file thì mỗi file phải ghi zoom của nó.`);
+    const clash = overlappingLods(files.map((f) => ({ ...f.info.lod, name: f.name })))[0];
+    if (clash) throw new Error(`Zoom của ${clash[0].name} (${zoomLabel(clash[0].zoom_range)}) và ${clash[1].name} (${zoomLabel(clash[1].zoom_range)}) chồng nhau.`);
+  }
+  return files.sort((a, b) => (b.info.lod?.zoom_range[0] ?? Infinity) - (a.info.lod?.zoom_range[0] ?? Infinity));
+}
+
+// Placement of a GLB that says where it stands: its origin at the anchor, no turn.
+const anchorPlacement = (a) => ({ heading: 0, scale: 1, anchor: "origin", lon: round7(a.lon), lat: round7(a.lat) });
 
 // host (preview.js): map, token, params, state (layer, idCol, parentAttr, heightAttr, baseAttr,
 // maxzoom), name(), threeD(), modelsShown() (false: the landmarks are seen as their LoD1 boxes,
@@ -54,17 +89,17 @@ class Workspace {
     this.byBuilding = new Map();  // building_id -> landmark of this PMTiles
     this.items = [];  // /api/landmarks/render: what is drawn
     this.sel = null;  // { kind: "landmark", rec } | { kind: "candidate", c: { id, parent, target, lngLat, props } }
-    this.preview = null;  // what the open landmark shows: { kind: "version", n } | { kind: "local", name, file, buffer, seq }
+    this.preview = null;  // what the open landmark shows: { kind: "version", n } | { kind: "local", name, files: [{ name, file, buffer, info }], seq }
     this.draft = null;  // its placement, as being edited
     this.place = null;  // building clicked: footprint read by /api/building, once a local file is tried on it
     this.overrideId = null;
     this.localSeq = 0;
     this.pendingSig = "";  // pending() when the LoD1 colours were last set
     this.shadowSig = "";  // shadowRev() when the shadows were last asked for
-    Object.assign(this, { search: "", picking: false, confirmUse: undefined, editing: false, uploading: false, compare: false, flat: false, qaOpen: false });
+    Object.assign(this, { search: "", picking: false, confirmUse: undefined, editing: false, uploading: false, compare: false, flat: false, qaOpen: false, contractOpen: false });
     this.marker = null;
     this.urlTimer = null;
-    this.store = new ModelStore({ load: (e, signal) => this.loadModel(e, signal), dispose: disposeModel, onChange: () => this.onModels() });
+    this.store = new ModelStore({ load: (e, signal, file) => this.loadModel(e, signal, file), dispose: disposeModel, onChange: () => this.onModels() });
     this.layer = new LandmarkLayer(this.map, {
       before: () => "bldg-3d",
       models: () => this.store.shown().map(({ entry, model }) => ({ model, placement: entry.placement, flat: entry.flat })),
@@ -92,6 +127,7 @@ class Workspace {
     const map = this.map;
     map.on("moveend", () => {
       this.viewChanged();
+      if (this.draft) ui.syncPlacement(this);  // zoom readout: which file is drawn
       clearTimeout(this.urlTimer);
       this.urlTimer = setTimeout(() => this.writeUrl(false), 400);
     });
@@ -105,7 +141,10 @@ class Workspace {
     body.addEventListener("click", (e) => this.onDrawerClick(e));
     body.addEventListener("input", (e) => this.onDrawerInput(e));
     body.addEventListener("change", (e) => this.onDrawerChange(e));
-    body.addEventListener("toggle", (e) => { if (e.target.id === "qaSec") this.qaOpen = e.target.open; }, true);
+    body.addEventListener("toggle", (e) => {
+      if (e.target.id === "qaSec") this.qaOpen = e.target.open;
+      if (e.target.id === "contractSec") this.contractOpen = e.target.open;
+    }, true);
     $("#srcSel").addEventListener("change", (e) => this.openSource(e.target.value));
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && this.picking) {
@@ -156,6 +195,8 @@ class Workspace {
     this.store.setItems(renderable(this.items, s).map((l) => ({
       id: l.id, building_id: l.building_id, bbox: l.bbox, centroid: l.centroid, key: l.glb, url: l.glb,
       label: `${l.original_name} (v${l.version})`, placement: l.placement,
+      lods: l.lods?.length ? l.lods.map((x) => ({ key: x.glb, url: x.glb, lod_zoom: x.lod_zoom, zoom_range: x.zoom_range,
+        name: x.original_name, label: `${x.original_name} (v${l.version})` })) : null,
     })));
     this.syncFootprints();
     if (this.shadowRev() !== this.shadowSig) {
@@ -183,10 +224,11 @@ class Workspace {
     this.ensureLayers();
   }
 
-  async loadModel(entry, signal) {
-    if (entry.buffer) return parseModel(entry.buffer.slice(0), entry.label);
-    const res = await fetchOk(entry.url, { signal });
-    return parseModel(await res.arrayBuffer(), entry.label);
+  // file: the file of the zoom (ModelStore.lodOf), or the entry itself.
+  async loadModel(entry, signal, file = entry) {
+    if (file.buffer) return parseModel(file.buffer.slice(0), file.label);
+    const res = await fetchOk(file.url, { signal });
+    return parseModel(await res.arrayBuffer(), file.label);
   }
 
   // The models drawn changed (one loaded, failed or left the cache).
@@ -208,7 +250,7 @@ class Workspace {
   viewChanged() {
     const b = this.map.getBounds();
     const c = this.map.getCenter();
-    this.store.setView([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], [c.lng, c.lat]);
+    this.store.setView([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], [c.lng, c.lat], this.map.getZoom());
   }
 
   sameSource(rec) {
@@ -440,10 +482,30 @@ class Workspace {
       if (!this.place) return null;
       base = { id: `cand:${s.c.target}`, building_id: s.c.target, bbox: this.place.bbox, centroid: this.place.centroid };
     }
-    const src = p.kind === "version"
-      ? { key: glbUrl(base.id, p.n), url: glbUrl(base.id, p.n), label: `${this.previewVersion()?.original_name || "GLB"} (v${p.n})` }
-      : { key: `local:${p.seq}`, buffer: p.buffer, label: p.name };
+    let src;
+    if (p.kind === "version") {
+      src = { key: glbUrl(base.id, p.n), url: glbUrl(base.id, p.n), label: `${this.previewVersion()?.original_name || "GLB"} (v${p.n})`,
+        lods: versionFiles(base.id, this.previewVersion()) };
+    } else {
+      const lods = p.files.filter((f) => f.info.lod).map((f, i) => ({ key: `local:${p.seq}:${i}`, buffer: f.buffer, label: f.name, name: f.name, ...f.info.lod }));
+      src = { key: `local:${p.seq}:0`, buffer: p.files[0].buffer, label: p.files[0].name, lods: lods.length ? lods : null };
+    }
     return { ...base, ...src, placement: { ...this.draft }, flat: this.flat };
+  }
+
+  // The file of the landmark being edited drawn at this zoom, and every file of it (null: one
+  // file for every zoom).
+  editedFiles() {
+    const e = this.overrideId && this.store.entry(this.overrideId);
+    if (!e) return null;
+    const shown = this.store.shown().find((s) => s.entry === e);
+    return { lods: e.lods, file: this.store.lodOf(e), shown: shown?.file || null };
+  }
+
+  // asset.extras.anchor of the GLB being edited, or null.
+  glbAnchor() {
+    if (this.preview?.kind === "local") return this.preview.files[0]?.info.anchor || null;
+    return this.previewVersion()?.model?.anchor || null;
   }
 
   syncOverride() {
@@ -465,7 +527,9 @@ class Workspace {
   loadNote() {
     if (!this.overrideId) return null;
     const st = this.store.status(this.overrideId);
-    const what = this.preview?.kind === "version" ? `v${this.preview.n}` : this.preview?.name;
+    const e = this.store.entry(this.overrideId);
+    const f = e?.lods ? this.store.lodOf(e) : null;
+    const what = (this.preview?.kind === "version" ? `v${this.preview.n}` : this.preview?.name) + (f ? ` (z${f.lod_zoom})` : "");
     if (st.state === "error") return { text: st.error, warn: true };
     if (st.state === "loading" || st.state === "queued") return { text: `Đang tải ${what}…` };
     return null;
@@ -521,14 +585,15 @@ class Workspace {
     $("#pickNote").hidden = true;
   }
 
-  // A .glb from this computer, drawn on the landmark (or the building clicked) and not uploaded.
-  async tryLocal(file) {
-    if (!file) return;
-    let buffer;
+  // .glb files from this computer (one, or a set per zoom range), drawn on the landmark (or the
+  // building clicked) and not uploaded.
+  async tryLocal(list) {
+    if (!list?.length) return;
+    let files;
     try {
-      buffer = await file.arrayBuffer();
+      files = await readGlbFiles(list);
     } catch (err) {
-      toast(`Không đọc được ${file.name}: ${err.message}`);
+      toast(`Không dùng được file đã chọn: ${err.message}`);
       return;
     }
     const s = this.sel;
@@ -543,10 +608,14 @@ class Workspace {
     }
     if (this.sel !== s) return;
     const fp = this.footprint();
-    const start = this.draft || (s.kind === "landmark" && this.baseVersion()?.placement)
+    // A GLB that says where it stands goes there, heading 0 (a placement turned by hand for an
+    // older model would be wrong for it).
+    const anchor = files[0].info.anchor;
+    const start = (anchor && anchorPlacement(anchor)) || this.draft || (s.kind === "landmark" && this.baseVersion()?.placement)
       || { heading: 0, scale: 1, anchor: "origin", lon: fp.centroid[0], lat: fp.centroid[1] };
     this.stopPicking();
-    Object.assign(this, { preview: { kind: "local", name: file.name, file, buffer, seq: ++this.localSeq }, draft: { ...start } });
+    const name = files.map((f) => f.name).join(", ");
+    Object.assign(this, { preview: { kind: "local", name, files, seq: ++this.localSeq }, draft: { ...start } });
     this.syncOverride();
     this.syncMarker();
     ui.render(this);
@@ -724,6 +793,13 @@ class Workspace {
         ui.syncPlacement(this);
         break;
       }
+      case "glb-anchor": {
+        const a = this.glbAnchor();
+        if (a) this.setDraft(anchorPlacement(a));
+        ui.syncPlacement(this);
+        break;
+      }
+      case "copy-contract": ui.copyContract(this); break;
       case "save-place": this.savePlacement(); break;
       case "reset-place":
         this.setDraft({ ...this.previewVersion().placement });
@@ -759,7 +835,7 @@ class Workspace {
       this.clearEdit();
       this.afterSelect(false);
     } else if (t.id === "lmFile" && this.sel && (this.sel.kind === "candidate" || this.sameSource(this.sel.rec))) {
-      this.tryLocal(t.files[0]);
+      this.tryLocal(t.files);
     } else if (t.id === "lmkCompare") {
       this.compare = t.checked;
       this.syncReference();
@@ -806,25 +882,52 @@ class Workspace {
     toast(`Đã đăng ký ${rec.name || rec.building_id}.`);
   }
 
+  // The file(s) tried (or chosen) become the next version: the most detailed first, then the
+  // other zoom ranges added to it.
   async upload() {
-    const file = this.preview?.kind === "local" ? this.preview.file : $("#lmFile")?.files[0];
-    if (!file) {
-      toast("Chọn một file .glb trước.");
-      return;
+    let files = this.preview?.kind === "local" ? this.preview.files : null;
+    if (!files) {
+      const list = $("#lmFile")?.files;
+      if (!list?.length) {
+        toast("Chọn file .glb trước.");
+        return;
+      }
+      try {
+        files = await readGlbFiles(list);
+      } catch (err) {
+        toast(`Không dùng được file đã chọn: ${err.message}`);
+        return;
+      }
     }
     const lid = this.sel.rec.id;
-    const q = new URLSearchParams({ name: file.name, note: $("#upNote")?.value.trim() || "" });
+    const note = $("#upNote")?.value.trim() || "";
     this.uploading = true;
     document.querySelector('[data-act="upload"]').disabled = true;
     $("#upBar").hidden = false;
-    const progress = (pct) => {
+    const total = files.reduce((a, f) => a + f.file.size, 0) || 1;
+    let done = 0;
+    const progress = (i) => (pct) => {
       if (!$("#upBar")) return;
-      $("#upBar > span").style.width = `${pct}%`;
-      $("#upStatus").textContent = pct < 100 ? `${Math.round(pct)}%` : "Đang kiểm tra GLB…";
+      const all = (100 * (done + (files[i].file.size * pct) / 100)) / total;
+      $("#upBar > span").style.width = `${all}%`;
+      const which = files.length > 1 ? ` ${files[i].name} (${i + 1}/${files.length})` : "";
+      $("#upStatus").textContent = pct < 100 ? `${Math.round(all)}%${which}` : `Đang kiểm tra GLB${which}…`;
     };
     let rec;
+    let failed = null;
     try {
-      rec = await uploadFile(file, progress, `${lmUrl(lid)}/versions?${q}`);
+      rec = await uploadFile(files[0].file, progress(0), `${lmUrl(lid)}/versions?${new URLSearchParams({ name: files[0].name, note })}`);
+      done += files[0].file.size;
+      const n = rec.versions.at(-1).version;
+      for (let i = 1; i < files.length; i++) {
+        try {
+          rec = await uploadFile(files[i].file, progress(i), `${lmUrl(lid)}/versions/${n}/lods?${new URLSearchParams({ name: files[i].name })}`);
+        } catch (err) {
+          failed = `${files[i].name}: ${err.message}`;
+          break;
+        }
+        done += files[i].file.size;
+      }
     } catch (err) {
       this.uploading = false;
       toast(`Upload thất bại: ${err.message}`);
@@ -837,7 +940,8 @@ class Workspace {
     const draft = this.draft;
     this.sel.rec = rec;
     const v = rec.versions.at(-1);
-    toast(`Đã lưu v${v.version}${v.same_as ? ` (trùng file với v${v.same_as})` : ""}.`);
+    const lods = v.lods?.length ? ` cùng ${v.lods.length} file theo zoom` : "";
+    toast(failed ? `Đã lưu v${v.version}${lods}, nhưng không thêm được ${failed}` : `Đã lưu v${v.version}${lods}${v.same_as ? ` (trùng file với v${v.same_as})` : ""}.`);
     if (this.sameSource(rec)) {
       this.showVersion(v.version, { render: false });
       // The placement tried on the local file stays, unsaved, on the new version.

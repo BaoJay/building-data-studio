@@ -516,6 +516,8 @@ async def render_landmarks(request: Request) -> Response:
     items = await _in_thread(library.render, path)
     for item in items:
         item["glb"] = f"/api/landmarks/{item['id']}/versions/{item['version']}/glb"
+        for lod in item["lods"]:  # one file per zoom range: ?z= picks it
+            lod["glb"] = item["glb"] if lod["own"] else f"{item['glb']}?z={lod['lod_zoom']:g}"
     return JSONResponse({"source": {"name": path.name, "token": request.query_params["f"]}, "landmarks": items},
                         headers=NO_CACHE)
 
@@ -568,8 +570,8 @@ async def delete_landmark(request: Request) -> Response:
     return JSONResponse({"ok": True, "moved_to": str(dest)})
 
 
-async def upload_landmark_version(request: Request) -> Response:
-    """Stream a .glb into the landmark folder and keep it as the next version."""
+async def _receive_glb(request: Request, keep) -> Response:
+    """Stream a .glb (?name=) into the landmark folder, then keep(tmp path, name) -> record."""
     lid = request.path_params["lid"]
     raw_name = Path(request.query_params.get("name", "")).name
     if Path(raw_name).suffix.lower() != ".glb":
@@ -581,21 +583,41 @@ async def upload_landmark_version(request: Request) -> Response:
     tmp = folder / f".upload-{secrets.token_hex(4)}.glb"
     try:
         size = await _save_stream(request, tmp, MAX_GLB_BYTES)
-        rec = await _in_thread(lambda: library.add_version(lid, tmp, original_name=raw_name,
-                                                           note=request.query_params.get("note", "")))
+        rec = await _in_thread(lambda: keep(tmp, raw_name))
     except ValueError as exc:  # LibraryError, GlbError
         return _library_error(exc)
     except OSError as exc:
         return _error(f"Không ghi được file GLB: {exc}", 500)
     finally:
         tmp.unlink(missing_ok=True)
-    log.info("Landmark %s: new version from %s (%d bytes)", lid, raw_name, size)
+    log.info("Landmark %s: %s from %s (%d bytes)", lid, request.url.path.rsplit("/", 1)[-1], raw_name, size)
     return _landmark_json(rec, 201)
 
 
+async def upload_landmark_version(request: Request) -> Response:
+    """Stream a .glb into the landmark folder and keep it as the next version."""
+    note = request.query_params.get("note", "")
+    return await _receive_glb(request, lambda tmp, name: library.add_version(
+        request.path_params["lid"], tmp, original_name=name, note=note))
+
+
+async def upload_landmark_lod(request: Request) -> Response:
+    """Stream a .glb into the landmark folder and keep it as the file of another zoom range
+    (asset.extras.zoom_range) of version n."""
+    return await _receive_glb(request, lambda tmp, name: library.add_lod(
+        request.path_params["lid"], request.path_params["n"], tmp, original_name=name))
+
+
 async def landmark_glb(request: Request) -> Response:
+    """The .glb of a version; ?z=<lod_zoom> the file of one of its zoom ranges."""
+    z = None
+    if request.query_params.get("z"):
+        try:
+            z = float(request.query_params["z"])
+        except ValueError:
+            return _error("Sai zoom.")
     try:
-        path, version = await _in_thread(library.glb_path, request.path_params["lid"], request.path_params["n"])
+        path, version = await _in_thread(library.glb_path, request.path_params["lid"], request.path_params["n"], z)
     except ValueError as exc:
         return _library_error(exc)
     if request.query_params.get("download"):
@@ -747,6 +769,7 @@ routes = [
     Route("/api/landmarks/{lid}", edit_landmark, methods=["PATCH"]),
     Route("/api/landmarks/{lid}", delete_landmark, methods=["DELETE"]),
     Route("/api/landmarks/{lid}/versions", upload_landmark_version, methods=["PUT", "POST"]),
+    Route("/api/landmarks/{lid}/versions/{n:int}/lods", upload_landmark_lod, methods=["PUT", "POST"]),
     Route("/api/landmarks/{lid}/versions/{n:int}/glb", landmark_glb, methods=["GET", "HEAD"]),
     Route("/api/landmarks/{lid}/versions/{n:int}/shadow", landmark_shadow_file, methods=["GET"]),
     Route("/api/landmarks/{lid}/versions/{n:int}/placement", set_landmark_placement, methods=["PUT"]),

@@ -2,9 +2,9 @@
    Nguồn: https://claude.ai/artifact/CaqioHmNPqdHmZ5fAZKZ3N
    Light: nền #F1F2F3, card #FFFFFF, chữ #18191B / #646B73, nhấn xanh đậm #357A00,
    viền #D6DCE3, lime #BDFF3E chỉ làm nét viền/rule, header bảng #E0FDB5.
-   Dark: nền #18191B, chữ #FFFFFF / #9BA1A8, lime #BDFF3E làm chữ nhấn và rule, divider #34373B.
+   Chỉ có chế độ light (không theo prefers-color-scheme).
    Style cũ (Studio Indochine) nằm ở tokens-indochine.css, bật bằng html[data-style="indochine"].
-   Chế độ tối theo prefers-color-scheme; [data-theme] ép một chế độ cho một phần tử. */
+   [data-theme="dark"] bên dưới chỉ chứa màu bản đồ cho basemap tối. */
 
 :root, [data-theme="light"] {
   color-scheme: light;
@@ -69,108 +69,15 @@
   --focus-ring: 0 0 0 2px #FFFFFF, 0 0 0 4px #357A00;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --page: #18191B;
-    --surface: #202225;
-    --surface-2: #2A2D31;
-    --line: #34373B;
-    --line-strong: #5A6068;
-    --ink: #FFFFFF;
-    --ink-2: #D3D7DC;
-    --muted: #9BA1A8;
-    --lime: #BDFF3E;
-    --lime-soft: #2C3A12;
-    --on-lime: #18191B;
-    --green: #BDFF3E;
-    --green-strong: #D4FF7A;
-    --green-soft: #26330F;
-    --on-green: #18191B;
-    --signal: #FF8A4C;
-    --mark-bg: #BDFF3E;
-    --mark-fg: #18191B;
-    --accent: var(--green);
-    --accent-hover: var(--green-strong);
-    --accent-soft: var(--green-soft);
-    --accent-ink: var(--on-green);
-    --eyebrow: var(--lime);
-    --focus: var(--lime);
-    --rule: var(--lime);
-    --good: var(--lime);
-    --good-soft: var(--green-soft);
-    --warn: #FFC93E;
-    --warn-soft: #3A2F0E;
-    --warn-ink: #FFD66B;
-    --bad: #FF7B66;
-    --bad-soft: #3F1C17;
-    --bar: var(--lime);
-    --bar-track: var(--surface-2);
-    --table-head: var(--lime-soft);
-    --map-ground: #202225;
-    --map-neutral: #44484E;
-    --map-lime: #BDFF3E;
-    --map-outlier: var(--bad);
-    --map-highlight: var(--signal);
-    --height-1: #26360F;
-    --height-2: #344D12;
-    --height-3: #456615;
-    --height-4: #5A8418;
-    --height-5: #72A51C;
-    --height-6: #8DC424;
-    --height-7: #A8E033;
-    --height-8: #C6F56A;
-    --height-9: #E0FDB5;
-    --cat-1: #7AB0EB;
-    --cat-2: #FFC93E;
-    --cat-3: #BDFF3E;
-    --cat-4: #FF8A5C;
-    --cat-5: #B98BE0;
-    --cat-6: #6FD3CC;
-    --cat-7: #9BA1A8;
-    --cat-8: #F2A0C2;
-    --shadow-float: 0 12px 32px -8px #000000B3;
-    --focus-ring: 0 0 0 2px #202225, 0 0 0 4px #BDFF3E;
-  }
-}
-
+/* VMAP chỉ có light. Khối này chỉ là màu bản đồ cho basemap tối (dark, VMAP night): basemap.js
+   đọc qua phần tử probe [data-theme="dark"]; UI không dùng. */
 [data-theme="dark"] {
-  color-scheme: dark;
-  --page: #18191B;
-  --surface: #202225;
-  --surface-2: #2A2D31;
-  --line: #34373B;
-  --line-strong: #5A6068;
   --ink: #FFFFFF;
-  --ink-2: #D3D7DC;
-  --muted: #9BA1A8;
   --lime: #BDFF3E;
-  --lime-soft: #2C3A12;
-  --on-lime: #18191B;
   --green: #BDFF3E;
-  --green-strong: #D4FF7A;
-  --green-soft: #26330F;
-  --on-green: #18191B;
   --signal: #FF8A4C;
-  --mark-bg: #BDFF3E;
-  --mark-fg: #18191B;
   --accent: var(--green);
-  --accent-hover: var(--green-strong);
-  --accent-soft: var(--green-soft);
-  --accent-ink: var(--on-green);
-  --eyebrow: var(--lime);
-  --focus: var(--lime);
-  --rule: var(--lime);
-  --good: var(--lime);
-  --good-soft: var(--green-soft);
-  --warn: #FFC93E;
-  --warn-soft: #3A2F0E;
-  --warn-ink: #FFD66B;
   --bad: #FF7B66;
-  --bad-soft: #3F1C17;
-  --bar: var(--lime);
-  --bar-track: var(--surface-2);
-  --table-head: var(--lime-soft);
   --map-ground: #202225;
   --map-neutral: #44484E;
   --map-lime: #BDFF3E;
@@ -193,8 +100,6 @@
   --cat-6: #6FD3CC;
   --cat-7: #9BA1A8;
   --cat-8: #F2A0C2;
-  --shadow-float: 0 12px 32px -8px #000000B3;
-  --focus-ring: 0 0 0 2px #202225, 0 0 0 4px #BDFF3E;
 }
 
 :root {

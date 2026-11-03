@@ -479,8 +479,8 @@ body.resizing-panel { cursor: ew-resize; user-select: none; }
   background: var(--surface); border-color: var(--ink-2); color: var(--ink-2); font: 11px/1.4 var(--font-mono);
 }
 @media (prefers-color-scheme: dark) {
-  /* icon của MapLibre vẽ sẵn màu tối */
-  .maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(0.88); }
+  /* icon của MapLibre vẽ sẵn màu tối; chỉ Indochine có chế độ tối */
+  :root[data-style="indochine"] .maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(0.88); }
 }
 .props { border-collapse: collapse; font-size: 12px; }
 .props td { padding: 2px var(--space-2) 2px 0; border: 0; white-space: normal; word-break: break-all; vertical-align: top; }

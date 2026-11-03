@@ -89,7 +89,7 @@ Trên macOS có thể double-click file **`Building Data Studio.command`** trong
 
 Server chỉ lắng nghe trên `127.0.0.1`, máy khác trong mạng không truy cập được.
 
-**Style UI**: mặc định là style VMAP (palette deck BOD Routing & ETA: nền xám nhạt, nhấn xanh `#357A00`, rule lime `#BDFF3E`). Nút **Style: VMAP / Style: Indochine** trên thanh điều hướng (trang chính, trang 3D, trang Indoor) chuyển về style cũ Studio Indochine; lựa chọn lưu trong trình duyệt, trang tải lại để bản đồ lấy màu mới. Token ở `app/static/tokens.css` (VMAP) và `app/static/tokens-indochine.css` (cũ).
+**Style UI**: mặc định là style VMAP, chỉ có chế độ sáng (palette deck BOD Routing & ETA: nền xám nhạt, nhấn xanh `#357A00`, rule lime `#BDFF3E`). Nút **Style: VMAP / Style: Indochine** trên thanh điều hướng (trang chính, trang 3D, trang Indoor) chuyển về style cũ Studio Indochine (có chế độ tối theo hệ điều hành); lựa chọn lưu trong trình duyệt, trang tải lại để bản đồ lấy màu mới. Token ở `app/static/tokens.css` (VMAP) và `app/static/tokens-indochine.css` (cũ).
 
 ### Demo nhanh: 3D building Hà Nội, không cần file
 

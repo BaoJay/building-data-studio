@@ -28,8 +28,10 @@ SHEET_SUFFIXES = frozenset({".xlsx"})
 CONVERT_SUFFIXES = ALLOWED_SUFFIXES | SHEET_SUFFIXES
 PARQUET_SUFFIXES = frozenset({".parquet", ".geoparquet"})
 
-# Columns this app writes; on re-processing they are recomputed, not copied.
-GENERATED_FIELDS = ("h_m", "h_src", "h_outlier", "has_parts", "is_part")
+# Columns this app writes; on re-processing they are recomputed, not copied. The derived height
+# height_m is not one of them: canonical files carry their measured height under that name, and
+# it is read as the height column. h_m is the derived height of files written before height_m.
+GENERATED_FIELDS = ("h_src", "h_outlier", "h_raw", "has_parts", "is_part", "h_m")
 
 NUMERIC_TYPES = frozenset({"Integer", "Integer64", "Real"})
 TEXT_TYPES = frozenset({"String"})
@@ -364,7 +366,7 @@ def suggest_mapping(fields: list[Field]) -> dict[str, Any]:
 
     style = [c for c in categories if any(h in c.lower() for h in STYLE_HINTS)]
     pmtiles_attrs = [
-        a for a in (id_col, "h_m", min_height, "has_parts", "is_part", parent, *style) if a
+        a for a in (id_col, "height_m", min_height, "has_parts", "is_part", parent, *style) if a
     ]
 
     return {

@@ -19,11 +19,11 @@ Trang xem 3D (`/preview`) hiện building LoD1 cùng mọi **landmark 3D** (file
 .xlsx (một sheet) ── cột WKT / GeoJSON, hoặc way ID OSM ── Overpass + buffer ──► GeoPackage dựng sẵn ─┐
                                                                                                     ▼
 input (.parquet / .gpkg / .fgb / .geojson)
-  └─ ogr2ogr + SQL ──► GeoPackage chuẩn hoá (EPSG:4326, h_m, h_src, h_outlier)
+  └─ ogr2ogr + SQL ──► GeoPackage chuẩn hoá (EPSG:4326, height_m, h_src, h_outlier)
        ├─ ogrinfo SQL ──► has_parts / is_part (toà nhà nhiều khối)
        ├─ ogr2ogr ──► GeoPackage ở CRS khác (tuỳ chọn, vd VN-2000 / UTM)
        ├─ báo cáo chiều cao ──► report.md / report.json
-       └─ FlatGeobuf (tạm) ── tippecanoe ──► PMTiles ── pmtiles verify
+       └─ FlatGeobuf (tạm) ── tippecanoe ──► PMTiles (theo schema VMAP) ── pmtiles verify + kiểm tra schema
 ```
 
 ---
@@ -93,7 +93,7 @@ Server chỉ lắng nghe trên `127.0.0.1`, máy khác trong mạng không truy 
 
 1. Chạy `./run.sh`. Lần đầu, terminal báo `Chưa có base Hà Nội: đang tạo…`. Thẻ **Base Hà Nội** ở đầu trang chính hiện từng bước. Đợi khoảng 3–5 phút, cần internet.
 2. Khi thẻ hiện số building (vd *212.373 building + 1.517 khối con*), bấm **Xem bản đồ 3D**, hoặc mở thẳng http://127.0.0.1:8765/preview. Bản đồ mở ở Hồ Gươm, zoom 15,5.
-   - Click một building: drawer **Landmark** bên phải hiện thuộc tính của nó: `building_id` (id OSM, vd `way/1327061631`), `name`, `h_m`, `h_src`.
+   - Click một building: drawer **Landmark** bên phải hiện thuộc tính của nó: `building_id` (id OSM, vd `way/1327061631`), `name`, `height_m`, `h_src`.
    - Ô **Bản đồ nền** chọn VMAP để xem như app Mobile, rồi đổi 5 chế độ ánh sáng.
 3. Để thêm một landmark, ngay trên trang này:
    1. Click building trên bản đồ.
@@ -112,7 +112,7 @@ Base chỉ tạo một lần. Từ lần chạy sau, app mở base có sẵn nga
 Lần đầu chạy `./run.sh`, app tự tạo **base Hà Nội**: mọi building OpenStreetMap trong ranh giới Thành phố Hà Nội, khoảng 3–5 phút, cần internet. Thẻ **Base Hà Nội** ở đầu trang chính hiện tiến trình. Khi xong:
 
 - **Xem bản đồ 3D** (`/preview`) mở file PMTiles của base, tại Hồ Gươm. Landmark đăng ký ngay trên base, nên landmark và building LoD1 luôn dùng cùng `building_id` và cùng footprint. Vẫn mở được file `.pmtiles` khác như trước.
-- **Tải GeoPackage** tải `hanoi_osm_buildings.gpkg` để xem trên QGIS. File có layer `buildings` (đã qua pipeline convert: `h_m`, `h_src`, `h_outlier`, `has_parts`, `is_part`) và layer `boundary` (ranh giới thành phố).
+- **Tải GeoPackage** tải `hanoi_osm_buildings.gpkg` để xem trên QGIS. File có layer `buildings` (đã qua pipeline convert: `height_m`, `h_src`, `h_outlier`, `has_parts`, `is_part`) và layer `boundary` (ranh giới thành phố).
 - **Cập nhật** tạo lại từ release Overture mới nhất. Base cũ vẫn được dùng cho tới khi bản mới chạy xong.
 
 Nguồn dữ liệu là [Overture Maps](https://docs.overturemaps.org/) (theme `buildings` và `divisions`), đọc trực tiếp từ bucket S3 công khai bằng DuckDB. Overture phát hành lại OSM mỗi tháng với schema cố định, và ghi nguồn geometry của từng feature. App **chỉ giữ feature có geometry từ OpenStreetMap**: footprint Google Open Buildings / Microsoft ML Buildings mà Overture thêm vào đều bị bỏ.
@@ -128,7 +128,7 @@ Overture (S3, GeoParquet) ─ DuckDB ─┬─ divisions: ranh giới VN-HN ─�
 | `building_id` | id OSM: `way/123` hoặc `relation/456` (mở được tại `openstreetmap.org/way/123`) |
 | `parent_building_id` | với khối con (`building:part`): id OSM của building chứa nó |
 | `name`, `class`, `subtype` | tên, loại building (`apartments`, `school`…). Khối con lấy `class` của building cha |
-| `height`, `num_floors` | chiều cao (m) và số tầng từ tag OSM. `h_m` lấy `height`, rồi `num_floors × 3,5 m`, rồi 4 m |
+| `height`, `num_floors` | chiều cao (m) và số tầng từ tag OSM. `height_m` lấy `height`, rồi `num_floors × 3,5 m`, rồi 4 m |
 | `min_height`, `min_floor` | đáy khối (m) / tầng bắt đầu. `min_height` trống thì tính `min_floor × 3,5 m` |
 | `roof_*`, `facade_*` | mái và mặt ngoài (hình dạng, màu, vật liệu) từ tag OSM |
 | `osm_version`, `osm_timestamp`, `overture_id` | phiên bản và thời điểm sửa cuối của way / relation trên OSM, GERS id của Overture |
@@ -182,7 +182,7 @@ Một số file Parquet lưu geometry ở cột WKB/WKT (ví dụ `geometry_wkb`
 - tự nhận cột geometry (có thể đổi trong phần *Nguồn dữ liệu*)
 - **không tự âm thầm gán CRS**: nếu extent là kinh/vĩ độ, app *đề xuất* `EPSG:4326` và hiện cảnh báo để bạn xác nhận. Nếu dữ liệu ở hệ khác (VN-2000…), hãy sửa ô **CRS nguồn**.
 
-## 4. Chiều cao `h_m`
+## 4. Chiều cao `height_m`
 
 Mỗi building lấy **giá trị hợp lệ đầu tiên** theo thứ tự:
 
@@ -197,19 +197,22 @@ Mỗi building lấy **giá trị hợp lệ đầu tiên** theo thứ tự:
   - *Bỏ qua* (khuyên dùng): dùng số tầng hoặc giá trị mặc định
   - *Kẹp về max*
   - *Giữ nguyên*: chỉ đánh dấu
-- Muốn chỉ convert mà không tính `h_m` thì bỏ tick **Chiều cao h_m**.
+- File canonical đo chiều cao ngay ở cột `height_m`. App đọc giá trị gốc của cột này rồi ghi giá trị đã xử lý vào chính `height_m`, nên giá trị hợp lệ giữ nguyên, chỉ dòng ngoài khoảng hợp lệ bị thay theo cách xử lý outlier. Giá trị gốc được giữ ở cột `h_raw` (chỉ trong GeoPackage), để bảng outlier trong báo cáo hiện đúng số gốc (vd 49.380 m, −8 m).
+- Muốn chỉ convert mà không tính chiều cao thì bỏ tick **Chiều cao height_m**. Khi đó `height_m` của file (nếu có) được chuyển nguyên.
+- File tạo trước khi app đổi sang `height_m` (base Hà Nội cũ, output cũ, bản production đang serve) có cột `h_m`. Trang xem 3D và tab **So sánh 2 file** vẫn đọc được cột này. Bấm **Cập nhật** ở thẻ Base để tạo lại base với `height_m`.
 
 ## 5. Các cột app thêm vào
 
 | Cột | Kiểu | Ý nghĩa |
 |---|---|---|
-| `h_m` | real | Chiều cao dùng để dựng 3D (m) |
-| `h_src` | text | Nguồn của `h_m`: `height` / `levels` / `clamped` / `default` |
+| `height_m` | real | Chiều cao dùng để dựng 3D (m). Nếu file có sẵn `height_m`, giá trị đã xử lý thay giá trị gốc |
+| `h_raw` | real | Giá trị gốc của `height_m`. Chỉ có khi cột chiều cao chính là `height_m` |
+| `h_src` | text | Nguồn của `height_m`: `height` / `levels` / `clamped` / `default` |
 | `h_outlier` | int 0/1 | 1 = giá trị gốc bất thường, cần kiểm tra |
 | `has_parts` | boolean | Outline có khối con trỏ về (nên **ẩn** khi dựng 3D) |
 | `is_part` | boolean | Là khối con (có `parent_building_id` khác chính nó) |
 
-Mọi cột gốc được giữ nguyên trong GeoPackage, trừ khi bạn bỏ tick. PMTiles chỉ chứa các thuộc tính được chọn, mặc định là: `building_id, h_m, min_height, has_parts, is_part, parent_building_id, building_tier`.
+Mọi cột gốc được giữ nguyên trong GeoPackage, trừ khi bạn bỏ tick. PMTiles chỉ chứa các thuộc tính được chọn, mặc định là: `building_id, height_m, min_height, has_parts, is_part, parent_building_id, building_tier`. Khi bật **Theo schema** (tự bật với parquet canonical), PMTiles chứa đúng các field của schema VMAP, xem [Schema PMTiles của VMAP](#schema-pmtiles-của-vmap).
 
 ## 6. Output
 
@@ -232,12 +235,30 @@ Kéo file `.gpkg` vào QGIS, chuột phải layer → **Filter…**:
 |---|---|
 | Building có chiều cao bất thường | `"h_outlier" = 1` |
 | Building đang dùng chiều cao mặc định | `"h_src" = 'default'` |
-| Building cao trên 100 m | `"h_m" > 100` |
+| Building cao trên 100 m | `"height_m" > 100` |
 | Toàn bộ khối của một toà nhà | `"parent_building_id" = '<id>' OR "building_id" = '<id>'` |
 
-Để xem 3D: **Layer Properties → 3D View → Single Symbol**, ở ô **Extrusion** bấm nút data-defined và đặt biểu thức `"h_m"`. Sau đó mở **View → 3D Map Views → New 3D Map View**.
+Để xem 3D: **Layer Properties → 3D View → Single Symbol**, ở ô **Extrusion** bấm nút data-defined và đặt biểu thức `"height_m"`. Sau đó mở **View → 3D Map Views → New 3D Map View**.
 
 ## 8. Dùng PMTiles trên app mobile (MapLibre)
+
+### Schema PMTiles của VMAP
+
+PMTiles publish cho app Mobile / web theo schema đã thống nhất với VMAP. Schema lưu ở [`schemas/vmap-buildings.json`](schemas/vmap-buildings.json), lấy từ `vector_layers` của TileJSON `building_v7_20261028.pmtiles`: layer `buildings`, zoom 13–16, 21 field.
+
+Trong tab **Convert**, nhóm PMTiles có ô **Theo schema `vmap-buildings`**. Ô này tự bật khi file có từ 40 % field của schema trở lên; parquet canonical có đủ. Khi bật:
+
+- Tên layer và zoom lấy theo schema (ô nhập bị khoá). Danh sách **Thuộc tính đưa vào PMTiles** chỉ để xem: field có dữ liệu được tô, field dữ liệu không có bị gạch ngang, field app tính hoặc chép có viền nét đứt.
+- Mỗi field được ép đúng kiểu của schema: `min_height`, `updated_at`… thành chuỗi, `height_m` thành số. Chữ không phải số (vd `abc`) thành rỗng, không thành 0.
+- `height_m` là chiều cao app tính ([mục 4](#4-chiều-cao-height_m)). `height` và `h_m` là bản sao của `height_m`. `h_m` chỉ giữ tạm cho app Mobile bản cũ và sẽ bị bỏ ở bản sau (mục `deprecated` trong file schema).
+- Cột của dữ liệu không có trong schema (vd `superseded_by`) không vào tile. Log và báo cáo liệt kê các cột này, cùng các field schema mà dữ liệu không có.
+- Sau khi cắt tile, app đọc `vector_layers` của file PMTiles và so với schema: thiếu hoặc thừa field, sai kiểu, sai zoom. Nếu lệch, bước **Kiểm tra PMTiles** ghi *Lệch schema* và báo cáo có cảnh báo, nhưng job vẫn hoàn tất. tippecanoe bỏ field rỗng trên mọi building, nên cột toàn NULL cũng hiện là thiếu.
+
+PMTiles theo schema không có `has_parts` / `is_part` (GeoPackage vẫn có), nên app Mobile không ẩn được outline đã chia khối con: outline và các khối con vẽ chồng lên nhau.
+
+Thêm hoặc đổi field: sửa `schemas/vmap-buildings.json`, mỗi field một dòng `"tên": "String"` (hoặc `"Number"`, `"Boolean"`). `copies` khai báo field chép giá trị từ field khác. Không cần sửa code: lần convert sau dùng schema mới. Bỏ hẳn `h_m` thì xoá nó khỏi `fields`, `copies` và `deprecated`.
+
+### Layer 3D
 
 ```json
 {
@@ -248,15 +269,15 @@ Kéo file `.gpkg` vào QGIS, chuột phải layer → **Filter…**:
   "minzoom": 13,
   "filter": ["!=", ["get", "has_parts"], true],
   "paint": {
-    "fill-extrusion-height": ["get", "h_m"],
-    "fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
+    "fill-extrusion-height": ["get", "height_m"],
+    "fill-extrusion-base": ["to-number", ["get", "min_height"], 0],
     "fill-extrusion-color": "#d9d3c9",
     "fill-extrusion-opacity": 0.9
   }
 }
 ```
 
-Filter `has_parts != true` ẩn các outline đã được chia thành khối con, để không bị vẽ chồng. Cách làm này giống pipeline `vmap-buildings-to-pmtiles`.
+`min_height` là chuỗi theo schema, nên đổi sang số bằng `to-number` trước khi đưa vào `fill-extrusion-base` (giá trị rỗng hoặc không phải số thành 0). Filter `has_parts != true` ẩn các outline đã được chia thành khối con, để không bị vẽ chồng; filter chỉ có tác dụng với PMTiles có `has_parts` (không theo schema VMAP). Cách làm này giống pipeline `vmap-buildings-to-pmtiles`.
 
 ### Xem trên nền bản đồ của app Mobile (VMAP) với 5 chế độ ánh sáng
 
@@ -500,7 +521,8 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 |---|---|
 | `app/server.py` | HTTP API + phục vụ giao diện (Starlette/uvicorn) |
 | `app/probe.py` | Đọc file đầu vào, nhận diện cột geometry / CRS / cột chiều cao |
-| `app/sqlbuild.py` | Sinh SQL tính `h_m`, `h_src`, `h_outlier`, `has_parts` |
+| `app/sqlbuild.py` | Sinh SQL tính `height_m` (và `h_raw`), `h_src`, `h_outlier`, `has_parts` |
+| `app/tileschema.py` | Schema PMTiles (`schemas/`): đọc file schema, sinh SQL ép kiểu từng field, kiểm tra `vector_layers` của PMTiles sau khi cắt tile |
 | `app/pipeline.py` | Các bước convert, đối soát, ghi báo cáo |
 | `app/report.py` | Thống kê chiều cao từ GeoPackage |
 | `app/diff.py` | Job so sánh 2 file: đọc A/B bằng GDAL, gọi engine, xuất GPKG / PMTiles / báo cáo |
@@ -515,5 +537,6 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |
 | `app/osmbase.py` | Base Hà Nội: ranh giới và building OSM từ Overture (DuckDB), chạy qua pipeline convert, ghi `base/hanoi/base.json` |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
+| `schemas/` | Schema PMTiles đã thống nhất với VMAP (`vmap-buildings.json`): layer, zoom, field và kiểu |
 | `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff (`preview.js`); `basemap.js` (bản đồ nền và chế độ ánh sáng); landmark trong trang xem 3D: `landmark-workspace.js` (state, thao tác, URL), `landmark-drawer.js` (giao diện drawer), `landmark-store.js` (tải GLB theo vùng nhìn, cache, filter extrusion; không phụ thuộc trình duyệt, test bằng Node), `landmark-model.js` (vẽ nhiều GLB trong một custom layer) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); `tour.js` (bay quanh toà cao nhất: chọn điểm dừng, camera; test bằng Node); indoor map PoC: `indoor.js` (editor, bản đồ, drawer) và `indoor-model.js` (mô hình IndoorGML, đồ thị, tìm đường, kiểm tra, xuất file; không phụ thuộc trình duyệt, test bằng Node); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, chế độ diff không tải three.js) |
 | `tests/` | Unit test + end-to-end (cần GDAL & tippecanoe); `tests/js/` chạy bằng Node |

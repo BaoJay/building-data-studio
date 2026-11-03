@@ -21,7 +21,7 @@ def evaluate(rule: HeightRule, rows: list[tuple]) -> list[tuple]:
     conn.execute("CREATE TABLE t (height, levels, prov)")
     conn.executemany("INSERT INTO t VALUES (?, ?, ?)", rows)
     e = height_expressions(rule)
-    return conn.execute(f"SELECT {e['h_m']}, {e['h_src']}, {e['h_outlier']} FROM t").fetchall()
+    return conn.execute(f"SELECT {e['height_m']}, {e['h_src']}, {e['h_outlier']} FROM t").fetchall()
 
 
 BASE = HeightRule(height_col="height", levels_col="levels", min_valid_m=2, max_valid_m=500, max_levels=200)
@@ -98,6 +98,26 @@ def test_normalize_sql_quotes_identifiers_and_adds_where() -> None:
     assert sql == (
         'SELECT "building:levels", "name", "geometry_wkb" FROM "my ""layer""" WHERE (status = \'active\')'
     )
+
+
+def test_height_m_input_is_replaced_and_kept_as_h_raw() -> None:
+    # Canonical files measure height in height_m, the column the app also writes: the SELECT reads
+    # the table's height_m and outputs the derived one, keeping the measured value as h_raw.
+    sql = build_normalize_sql(NormalizeSpec(layer="t", geom_sql_name="geom", columns=("id",),
+                                            height=HeightRule(height_col="height_m")))
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE t (id, height_m, geom)")
+    conn.executemany("INSERT INTO t VALUES (?, ?, NULL)", [("a", 12.34), ("b", -8), ("c", 49380)])
+    cur = conn.execute(sql)
+    assert [d[0] for d in cur.description] == ["id", "h_raw", "height_m", "h_src", "h_outlier", "geom"]
+    assert cur.fetchall() == [("a", 12.34, 12.3, "height", 0, None), ("b", -8, 4.0, "default", 1, None),
+                              ("c", 49380, 4.0, "default", 1, None)]
+
+
+def test_other_height_columns_add_no_h_raw() -> None:
+    sql = build_normalize_sql(NormalizeSpec(layer="t", geom_sql_name="geom", columns=("height",),
+                                            height=HeightRule(height_col="height")))
+    assert "h_raw" not in sql
 
 
 def test_where_rejects_statement_separator() -> None:

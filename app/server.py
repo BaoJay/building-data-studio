@@ -23,7 +23,22 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, diff, glb, landmark, landmark_library, landmark_shadow, osmbase, pipeline, probe, shadows, tools, vmap, xlsx
+from . import (
+    __version__,
+    diff,
+    glb,
+    landmark,
+    landmark_library,
+    landmark_shadow,
+    osmbase,
+    pipeline,
+    probe,
+    shadows,
+    tileschema,
+    tools,
+    vmap,
+    xlsx,
+)
 from .jobs import FileRegistry, Job, JobManager
 
 log = logging.getLogger(__name__)
@@ -123,11 +138,16 @@ async def indoor_page(request: Request) -> Response:
 async def health(request: Request) -> Response:
     versions = tools.tool_versions()
     missing = [name for name in tools.REQUIRED_TOOLS if not versions[name]["path"]]
+    try:
+        tile_schema: dict[str, Any] = tileschema.load().to_json()
+    except tileschema.SchemaError as exc:
+        tile_schema = {"error": str(exc)}
     return JSONResponse({
         "version": __version__,
         "tools": versions,
         "missing": missing,
         "defaults": {"output_dir": str(pipeline.DEFAULT_OUTPUT_DIR)},
+        "tile_schema": tile_schema,
         "accept": sorted(probe.ALLOWED_SUFFIXES),
         "accept_convert": sorted(probe.CONVERT_SUFFIXES),
     })

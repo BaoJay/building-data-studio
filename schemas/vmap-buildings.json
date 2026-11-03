@@ -1,0 +1,35 @@
+{
+  "name": "vmap-buildings",
+  "source": "TileJSON building_v7_20261028.pmtiles do VMAP thống nhất (vector_layers, layer buildings)",
+  "layer": "buildings",
+  "minzoom": 13,
+  "maxzoom": 16,
+  "fields": {
+    "build_id": "String",
+    "building_id": "String",
+    "building_tier": "String",
+    "confidence": "String",
+    "config_version": "String",
+    "decided_by": "String",
+    "description": "String",
+    "group_id": "String",
+    "h_m": "Number",
+    "height": "Number",
+    "height_m": "Number",
+    "height_provenance": "String",
+    "min_height": "String",
+    "parent_building_id": "String",
+    "resolution_mode": "String",
+    "source_id": "String",
+    "status": "String",
+    "updated_at": "String",
+    "updated_by": "String",
+    "winning_observation_id": "String",
+    "winning_source": "String"
+  },
+  "copies": {
+    "h_m": "height_m",
+    "height": "height_m"
+  },
+  "deprecated": ["h_m"]
+}

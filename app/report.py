@@ -17,6 +17,9 @@ from typing import Any
 
 from . import tools
 from .probe import quote_ident as q
+from .sqlbuild import HEIGHT_FIELD
+
+H = q(HEIGHT_FIELD)
 
 HEIGHT_BIN_EDGES: tuple[float, ...] = (0, 3, 6, 10, 15, 25, 40, 60, 100, 200)
 CATEGORY_LIMIT = 25
@@ -56,7 +59,7 @@ def build_report(gpkg: Path, spec: ReportSpec) -> dict[str, Any]:
         t = q(spec.table)
         total = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
         report: dict[str, Any] = {"total": total, "height": None, "categories": [], "outliers": [], "tallest": []}
-        has_height = spec.has_height and "h_m" in columns
+        has_height = spec.has_height and HEIGHT_FIELD in columns
         if has_height and total:
             report["height"] = _height_section(conn, spec, columns, total)
         for col in spec.category_cols:
@@ -66,14 +69,14 @@ def build_report(gpkg: Path, spec: ReportSpec) -> dict[str, Any]:
             report["outliers"] = _feature_rows(conn, spec, columns, where='"h_outlier" = 1',
                                                order=_outlier_order(spec, columns), limit=OUTLIER_LIMIT)
             report["tallest"] = _feature_rows(conn, spec, columns, where='"h_outlier" = 0',
-                                              order='"h_m" DESC', limit=TALLEST_LIMIT)
+                                              order=f"{H} DESC", limit=TALLEST_LIMIT)
     return report
 
 
 def _height_section(conn: sqlite3.Connection, spec: ReportSpec, columns: set[str], total: int) -> dict[str, Any]:
     t = q(spec.table)
     pairs = [(float(v), int(n)) for v, n in conn.execute(
-        f'SELECT "h_m", COUNT(*) FROM {t} WHERE "h_m" IS NOT NULL GROUP BY "h_m" ORDER BY "h_m"'
+        f"SELECT {H}, COUNT(*) FROM {t} WHERE {H} IS NOT NULL GROUP BY {H} ORDER BY {H}"
     )]
     counted = sum(n for _, n in pairs)
     mean = sum(v * n for v, n in pairs) / counted if counted else None
@@ -118,7 +121,7 @@ def _height_section(conn: sqlite3.Connection, spec: ReportSpec, columns: set[str
 def _category_section(conn: sqlite3.Connection, spec: ReportSpec, col: str, total: int,
                       has_height: bool) -> dict[str, Any]:
     t, c = q(spec.table), q(col)
-    metrics = ', AVG("h_m"), MAX("h_m"), SUM("h_src" = \'default\')' if has_height else ""
+    metrics = f", AVG({H}), MAX({H}), SUM(\"h_src\" = 'default')" if has_height else ""
     rows = conn.execute(
         f"SELECT {c}, COUNT(*){metrics} FROM {t} GROUP BY 1 ORDER BY 2 DESC LIMIT {CATEGORY_FETCH_LIMIT}"
     ).fetchall()
@@ -135,14 +138,14 @@ def _category_section(conn: sqlite3.Connection, spec: ReportSpec, col: str, tota
 def _outlier_order(spec: ReportSpec, columns: set[str]) -> str:
     if spec.height_col and spec.height_col in columns:
         return f"CAST({q(spec.height_col)} AS REAL) DESC"
-    return '"h_m" DESC'
+    return f"{H} DESC"
 
 
 def _feature_rows(conn: sqlite3.Connection, spec: ReportSpec, columns: set[str], *, where: str,
                   order: str, limit: int) -> list[dict[str, Any]]:
     wanted = ["fid"]
     for col in (spec.id_col, spec.height_col, spec.levels_col, spec.prov_col, *spec.category_cols,
-                "h_m", "h_src"):
+                HEIGHT_FIELD, "h_src"):
         if col and col in columns and col not in wanted:
             wanted.append(col)
     select = ", ".join(q(c) for c in wanted)
@@ -260,7 +263,7 @@ def render_markdown(report: dict[str, Any], title: str) -> str:
         lines += [
             f"- Có chiều cao thực (height/levels): **{height['real_count']:,}** ({height['real_pct']}%)",
             f"- Outlier (ngoài khoảng hợp lệ): **{height['outlier_count']:,}**",
-            f"- h_m: min {_n(s['min'])} · trung vị {_n(s['median'])} · TB {_n(s['mean'])} · "
+            f"- {HEIGHT_FIELD}: min {_n(s['min'])} · trung vị {_n(s['median'])} · TB {_n(s['mean'])} · "
             f"p90 {_n(s['p90'])} · p99 {_n(s['p99'])} · max {_n(s['max'])} m",
             "",
             "## Nguồn chiều cao (h_src)",
@@ -269,16 +272,19 @@ def render_markdown(report: dict[str, Any], title: str) -> str:
             "|---|---:|---:|",
             *[f"| {r['src']} | {r['count']:,} | {r['pct']} |" for r in height["by_source"]],
             "",
-            "## Phân bố h_m",
+            f"## Phân bố {HEIGHT_FIELD}",
             "",
             "| Khoảng | Số lượng | % |",
             "|---|---:|---:|",
             *[f"| {b['label']} | {b['count']:,} | {b['pct']} |" for b in height["histogram"]],
         ]
+    if report.get("tile_schema"):
+        lines += ["", *_schema_lines(report["tile_schema"])]
     for cat in report.get("categories", []):
         lines += ["", f"## Theo `{cat['column']}`", ""]
         if height:
-            lines += ["| Giá trị | Số lượng | % | h_m TB | h_m max | % mặc định |", "|---|---:|---:|---:|---:|---:|"]
+            lines += [f"| Giá trị | Số lượng | % | {HEIGHT_FIELD} TB | {HEIGHT_FIELD} max | % mặc định |",
+                      "|---|---:|---:|---:|---:|---:|"]
             lines += [f"| {r['value']} | {r['count']:,} | {r['pct']} | {_n(r.get('mean_h'))} | "
                       f"{_n(r.get('max_h'))} | {r.get('default_pct')} |" for r in cat["rows"]]
         else:
@@ -292,6 +298,37 @@ def render_markdown(report: dict[str, Any], title: str) -> str:
             center = f"{r['center'][0]:.6f}, {r['center'][1]:.6f}" if r.get("center") else ""
             lines.append("| " + " | ".join(str(r.get(k, "")) for k in keys) + f" | {center} |")
     return "\n".join(lines) + "\n"
+
+
+def _schema_lines(ts: dict[str, Any]) -> list[str]:
+    """The tile schema section: what the data lacked or added, and how the PMTiles compares."""
+    lines = [f"## Schema PMTiles `{ts['name']}`", ""]
+    chk = ts.get("check")
+    if chk is None:
+        lines.append("- Chưa kiểm tra PMTiles theo schema (cần pmtiles CLI).")
+    elif chk["ok"]:
+        lines.append(f"- PMTiles **khớp** {chk['matched']}/{chk['fields']} field, layer `{chk['layer']}`, "
+                     f"z{chk['zooms'][0]}–{chk['zooms'][1]}")
+    else:
+        lines.append(f"- PMTiles **lệch schema**: {chk['matched']}/{chk['fields']} field khớp")
+        if not chk["layer_found"]:
+            lines.append(f"- Không có layer `{chk['layer']}`")
+        if chk["missing"]:
+            lines.append(f"- Thiếu (không có cột, hoặc cột toàn NULL): {', '.join(chk['missing'])}")
+        if chk["extra"]:
+            lines.append(f"- Thừa: {', '.join(chk['extra'])}")
+        for w in chk["wrong_type"]:
+            lines.append(f"- Sai kiểu: `{w['field']}` là {w['got']}, cần {w['expected']}")
+        if chk["layer_found"] and chk["zooms"] != chk["expected_zooms"]:
+            lines.append(f"- Zoom {chk['zooms'][0]}–{chk['zooms'][1]}, cần "
+                         f"{chk['expected_zooms'][0]}–{chk['expected_zooms'][1]}")
+    if ts.get("dropped"):
+        lines.append(f"- Cột của dữ liệu không có trong schema, không đưa vào tile: {', '.join(ts['dropped'])}")
+    if ts.get("copies"):
+        lines.append("- Chép từ field khác: " + ", ".join(f"`{f}` = `{src}`" for f, src in ts["copies"].items()))
+    if ts.get("deprecated"):
+        lines.append(f"- Giữ tạm, sẽ bỏ: {', '.join(ts['deprecated'])}")
+    return lines
 
 
 def _n(value: float | None) -> str:

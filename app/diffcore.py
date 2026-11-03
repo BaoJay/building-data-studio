@@ -38,7 +38,7 @@ from typing import Any
 import duckdb
 
 from .probe import quote_ident as q
-from .sqlbuild import HeightRule, height_expressions, sql_str
+from .sqlbuild import HEIGHT_FIELD, LEGACY_HEIGHT_FIELD, HeightRule, height_expressions, sql_str
 
 EARTH_RADIUS_M = 6378137.0
 M_PER_DEG = math.pi / 180 * EARTH_RADIUS_M
@@ -68,7 +68,7 @@ MAX_STITCH_ITERATIONS = 64
 STITCH_TOLERANCE_PX = 8
 # Compared like any column, but never what makes a building "changed": the
 # effective height is judged separately, with a tolerance.
-NEVER_FLAG_COLS = ("h_m",)
+NEVER_FLAG_COLS = (LEGACY_HEIGHT_FIELD,)
 # Well-known secondary identifiers used to explain "removed + added" pairs.
 SOURCE_ID_COLS = ("source_id", "osm_id")
 # Column names the engine creates; attributes with these names (or starting with "__", the
@@ -218,8 +218,8 @@ class DiffEngine:
     def _needed_fields(self, side: SideSpec) -> list[str]:
         """Attributes the comparison reads (PMTiles keep the rest inside their JSON)."""
         wanted: list[str | None] = [side.id_col, side.prov_col, side.parent_col, side.superseded_col,
-                                    *side.category_cols, *self.common, *self.spec.extra_cols, "h_m", "h_src",
-                                    "h_outlier"]
+                                    *side.category_cols, *self.common, *self.spec.extra_cols,
+                                    LEGACY_HEIGHT_FIELD, "h_src", "h_outlier"]
         if side.rule:
             wanted += [side.rule.height_col, side.rule.levels_col, side.rule.prov_col]
         names = side.field_names
@@ -353,15 +353,17 @@ class DiffEngine:
         s = side.name
         key = key_text(q(side.id_col), self._types(f"{s}_bld")[side.id_col]) if side.id_col else "CAST(NULL AS VARCHAR)"
         rule_exprs = height_expressions(side.rule, "duckdb") if side.rule else None
-        if side.has("h_m"):
-            h = 'TRY_CAST("h_m" AS DOUBLE)'
+        # h_m, the height files written before height_m carry, is the value those were drawn with.
+        # height_m goes through the rule: canonical files keep their measured height under that name.
+        if side.has(LEGACY_HEIGHT_FIELD):
+            h = f"TRY_CAST({q(LEGACY_HEIGHT_FIELD)} AS DOUBLE)"
         elif rule_exprs:
-            h = rule_exprs["h_m"]
+            h = rule_exprs[HEIGHT_FIELD]
         else:
             h = "CAST(NULL AS DOUBLE)"
         if side.has("h_src"):
             real = f'"h_src" IN ({", ".join(sql_str(v) for v in REAL_SOURCES)})'
-        elif side.has("h_m") and side.prov_col and side.prov_missing:
+        elif side.has(LEGACY_HEIGHT_FIELD) and side.prov_col and side.prov_missing:
             values = ", ".join(sql_str(v) for v in side.prov_missing)
             real = f"({q(side.prov_col)} IS NULL OR {q(side.prov_col)} NOT IN ({values}))"
         elif rule_exprs:
@@ -627,7 +629,8 @@ class DiffEngine:
             "total": total, "real_height": row[1] if self.real_known[s] else None,
             "real_pct": _pct(row[1], total) if self.real_known[s] else None, "outliers": row[2],
             "median_h": row[3], "max_h": row[4], "categories": [], "orphan_parts": None, "dangling_superseded": None,
-            "height_method": "h_m" if side.has("h_m") else ("rule" if side.rule else None),
+            "height_method": (LEGACY_HEIGHT_FIELD if side.has(LEGACY_HEIGHT_FIELD)
+                              else "rule" if side.rule else None),
         }
         cats = [c for c in dict.fromkeys([side.prov_col, *side.category_cols]) if c and side.has(c)]
         for col in cats:

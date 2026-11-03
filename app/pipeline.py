@@ -1,11 +1,12 @@
 """Conversion pipeline.
 
     input (.parquet / .gpkg / ...)
-      └─ ogr2ogr + SQL ──► normalized GeoPackage (EPSG:4326, h_m, h_src, h_outlier)
+      └─ ogr2ogr + SQL ──► normalized GeoPackage (EPSG:4326, height_m, h_src, h_outlier)
            ├─ ogrinfo SQL ──► has_parts / is_part
            ├─ ogr2ogr ──► output GeoPackage in another CRS (optional)
            ├─ sqlite3 ──► height report (report.json / report.md)
-           ├─ ogr2ogr ──► FlatGeobuf (temp) ── tippecanoe ──► PMTiles
+           ├─ ogr2ogr ──► FlatGeobuf (temp) ── tippecanoe ──► PMTiles (fields + types of a
+           │                                                 tile schema, when one is chosen)
            └─ (optional) shadows.compute_dataset ──► shadows layer, tile-joined into the PMTiles
 
 Every stage logs a feature-count accounting line so silent data loss shows up.
@@ -25,12 +26,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import __version__, probe, shadows, tools, vmap
+from . import __version__, probe, shadows, tileschema, tools, vmap
 from .jobs import FileRegistry, Job, Step
 from .probe import GENERATED_FIELDS, ProbeError
 from .probe import quote_ident as q
 from .report import ReportSpec, build_report, render_markdown
 from .sqlbuild import (
+    HEIGHT_FIELD,
+    RAW_HEIGHT_FIELD,
     HeightRule,
     NormalizeSpec,
     SpecError,
@@ -54,7 +57,7 @@ SHADOW_MINZOOM = 15  # shadows of low-rise buildings are invisible further out
 MAX_ZOOM = 22
 MAX_NAME_LENGTH = 120
 DEFAULT_MAX_TILE_KB = 500
-HEIGHT_GENERATED = ("h_m", "h_src", "h_outlier")
+HEIGHT_GENERATED = (HEIGHT_FIELD, RAW_HEIGHT_FIELD, "h_src", "h_outlier")
 PARTS_GENERATED = ("has_parts", "is_part")
 DROP_FLAGS = {
     "drop-densest": "--drop-densest-as-needed",
@@ -89,6 +92,7 @@ class TilesConfig:
     attribution: str = ""
     shadows: bool = False  # add the precomputed `shadows` layer (one polygon set per light preset)
     shadow_min_height: float = 0.0  # only buildings taller than this cast a shadow
+    schema: tileschema.TileSchema | None = None  # layer, zooms and typed fields agreed with the app
 
 
 @dataclass(frozen=True)
@@ -165,11 +169,17 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
     if drop not in DROP_FLAGS:
         raise ConfigError(f"Chiến lược giảm feature không hợp lệ: {drop}")
     simplification = tiles_raw.get("simplification")
+    schema = None
+    if want_pmtiles and tiles_raw.get("schema"):
+        try:
+            schema = tileschema.load()
+        except tileschema.SchemaError as exc:
+            raise ConfigError(str(exc)) from exc
     tiles = TilesConfig(
-        layer=_ident(tiles_raw.get("layer") or DEFAULT_LAYER, "Tên layer PMTiles"),
-        minzoom=minzoom,
-        maxzoom=maxzoom,
-        attributes=tuple(str(a) for a in tiles_raw.get("attributes", [])),
+        layer=schema.layer if schema else _ident(tiles_raw.get("layer") or DEFAULT_LAYER, "Tên layer PMTiles"),
+        minzoom=schema.minzoom if schema else minzoom,
+        maxzoom=schema.maxzoom if schema else maxzoom,
+        attributes=tuple(schema.fields) if schema else tuple(str(a) for a in tiles_raw.get("attributes", [])),
         drop=drop,
         extend_zooms=bool(tiles_raw.get("extend_zooms", True)),
         simplification=(
@@ -180,6 +190,7 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
         attribution=str(tiles_raw.get("attribution") or "").strip(),
         shadows=bool(tiles_raw.get("shadows", False)),
         shadow_min_height=_float(tiles_raw.get("shadow_min_height") or 0, "Chiều cao tối thiểu để đổ bóng", 0, 1000),
+        schema=schema,
     )
 
     height = None
@@ -187,7 +198,7 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
         height = dict(height_raw)
     if want_pmtiles and tiles.shadows:
         if height is None:
-            raise ConfigError("Cần bật tính chiều cao (h_m) để tạo layer bóng.")
+            raise ConfigError("Cần bật tính chiều cao (height_m) để tạo layer bóng.")
         if tiles.layer == shadows.SHADOW_LAYER:
             raise ConfigError(f"Tên layer PMTiles không được trùng layer bóng '{shadows.SHADOW_LAYER}'.")
 
@@ -476,6 +487,8 @@ class Pipeline(StagedPipeline):
         self.src_crs: str | None = None
         self.tiles_info: dict[str, Any] | None = None
         self.shadow_info: dict[str, Any] | None = None
+        self.schema_info: dict[str, Any] | None = None
+        self.tile_fields: list[str] = []
         # With shadows, buildings are tiled on their own first and joined with the shadow tiles.
         self.with_shadows = cfg.want_pmtiles and cfg.tiles.shadows
         self.buildings_tiles = self.work / "buildings.pmtiles" if self.with_shadows else self.pmtiles_out
@@ -641,7 +654,8 @@ class Pipeline(StagedPipeline):
             geom_col=GEOM_NAME,
             has_height=rule is not None,
             id_col=id_col,
-            height_col=rule.height_col if rule else None,
+            # When height_m is both the input and the output, its measured value is in h_raw.
+            height_col=(RAW_HEIGHT_FIELD if rule.height_col == HEIGHT_FIELD else rule.height_col) if rule else None,
             levels_col=rule.levels_col if rule else None,
             prov_col=rule.prov_col if rule else None,
             category_cols=cfg.category_cols,
@@ -657,20 +671,25 @@ class Pipeline(StagedPipeline):
             s = height["stats"]
             self.job.add_log(
                 f"Chiều cao thực: {height['real_count']:,}/{report['total']:,} ({height['real_pct']}%), "
-                f"outlier: {height['outlier_count']:,}, h_m trung vị {s['median']} m, max {s['max']} m"
+                f"outlier: {height['outlier_count']:,}, {HEIGHT_FIELD} trung vị {s['median']} m, max {s['max']} m"
             )
 
     def _step_fgb(self, step: Step) -> None:
         cfg = self.cfg
         with closing(tools.connect_ro(self.normalized)) as conn:
-            columns = [r[1] for r in conn.execute(f"PRAGMA table_info({q(cfg.gpkg_layer)})")]
-        wanted = list(cfg.tiles.attributes) if cfg.tiles.attributes else []
-        attrs = [a for a in wanted if a in columns and a not in ("fid", GEOM_NAME)]
-        missing = [a for a in wanted if a not in attrs]
-        if missing:
-            self.job.add_log(f"Bỏ qua thuộc tính không có trong dữ liệu: {', '.join(missing)}")
+            columns = {r[1]: r[2] for r in conn.execute(f"PRAGMA table_info({q(cfg.gpkg_layer)})")}
+        if cfg.tiles.schema:
+            items, attrs = self._schema_items(cfg.tiles.schema, columns)
+        else:
+            wanted = list(cfg.tiles.attributes) if cfg.tiles.attributes else []
+            attrs = [a for a in wanted if a in columns and a not in ("fid", GEOM_NAME)]
+            missing = [a for a in wanted if a not in attrs]
+            if missing:
+                self.job.add_log(f"Bỏ qua thuộc tính không có trong dữ liệu: {', '.join(missing)}")
+            items = [q(a) for a in attrs]
+        self.tile_fields = attrs
         self.job.add_log(f"Thuộc tính đưa vào tile: {', '.join(attrs) or '(không có)'}")
-        select = ", ".join([*(q(a) for a in attrs), q(GEOM_NAME)])
+        select = ", ".join([*items, q(GEOM_NAME)])
         fgb = self.work / TILES_INPUT_NAME
         fgb.unlink(missing_ok=True)
         cmd = [
@@ -679,6 +698,31 @@ class Pipeline(StagedPipeline):
             "-nln", cfg.tiles.layer, "-lco", "SPATIAL_INDEX=NO", "-progress",
         ]
         self._run(cmd, step)
+
+    def _schema_items(self, schema: tileschema.TileSchema, columns: dict[str, str]) -> tuple[list[str], list[str]]:
+        """SELECT items and names of the schema fields the data has; logs what it lacks or adds."""
+        items, missing = tileschema.select_items(schema, columns)
+        fields = [f for f in schema.fields if f not in missing]
+        own = {*GENERATED_FIELDS, *HEIGHT_GENERATED, "fid", GEOM_NAME}
+        dropped = [c for c in columns if c not in schema.fields and c not in own]
+        log = self.job.add_log
+        log(f"Schema PMTiles '{schema.name}': layer {schema.layer}, z{schema.minzoom}–{schema.maxzoom}, "
+            f"{len(fields)}/{len(schema.fields)} field có dữ liệu")
+        copies = [f"{f} = {src}" for f, src in schema.copies.items() if f in fields]
+        if copies:
+            log(f"Field chép từ field khác: {', '.join(copies)}")
+        deprecated = [f for f in schema.deprecated if f in fields]
+        if deprecated:
+            log(f"Field giữ tạm, sẽ bỏ ở bản sau: {', '.join(deprecated)}")
+        if missing:
+            log(f"CẢNH BÁO: dữ liệu không có field của schema: {', '.join(missing)}")
+        if dropped:
+            log(f"CẢNH BÁO: cột không có trong schema nên không đưa vào tile: {', '.join(dropped)}")
+        # The schema file changes over time: the report keeps the fields this run used.
+        self.schema_info = {"name": schema.name, "source": schema.source, "fields": schema.fields,
+                            "copies": schema.copies, "deprecated": list(schema.deprecated),
+                            "missing_in_data": missing, "dropped": dropped}
+        return items, fields
 
     def _step_tiles(self, step: Step) -> None:
         cfg, t = self.cfg, self.cfg.tiles
@@ -702,6 +746,8 @@ class Pipeline(StagedPipeline):
             cmd.append("--detect-shared-borders")
         if t.attribution:
             cmd += ["-A", t.attribution]
+        if t.schema:
+            cmd += tileschema.tippecanoe_types(t.schema, self.tile_fields)
         cmd.append(str(self.work / TILES_INPUT_NAME))
 
         def watch(line: str) -> None:
@@ -735,11 +781,11 @@ class Pipeline(StagedPipeline):
                             "length_factor": round(sun.length_factor, 3), **preset.shadow}
             job.add_log(f"{preset.label}: nắng từ {sun.azimuth:g}°, cao {sun.altitude:g}° → bóng dài "
                         f"{sun.length_factor:.2f}× chiều cao")
-        job.add_log(f"Chiều cao: h_m · đáy: {base or '(không có, tính từ mặt đất)'} · "
+        job.add_log(f"Chiều cao: {HEIGHT_FIELD} · đáy: {base or '(không có, tính từ mặt đất)'} · "
                     f"bỏ outline có khối con: {'có (has_parts)' if parts else 'không'}"
                     + (f" · chỉ building cao hơn {cfg.tiles.shadow_min_height:g} m" if cfg.tiles.shadow_min_height else ""))
         spec = shadows.DatasetSpec(
-            gpkg=self.normalized, table=cfg.gpkg_layer, geom_col=GEOM_NAME, height_col="h_m",
+            gpkg=self.normalized, table=cfg.gpkg_layer, geom_col=GEOM_NAME, height_col=HEIGHT_FIELD,
             base_col=base, parts_col=parts, suns=suns, min_height=cfg.tiles.shadow_min_height,
             out=self.work / SHADOWS_INPUT_NAME, work=self.work / "shadows",
         )
@@ -837,11 +883,43 @@ class Pipeline(StagedPipeline):
         )
         if not info["verified"]:
             raise PipelineError(f"pmtiles verify thất bại: {verify.stderr.strip() or verify.stdout.strip()}")
+        if self.cfg.tiles.schema:
+            self._check_schema(exe, step, self.cfg.tiles.schema)
+
+    def _check_schema(self, exe: str, step: Step, schema: tileschema.TileSchema) -> None:
+        """Compare the written vector_layers with the schema; a mismatch is a warning, not a failure."""
+        meta = tools.run_capture([exe, "show", "--metadata", str(self.pmtiles_out)], timeout=120)
+        if meta.returncode != 0:
+            raise PipelineError(f"pmtiles show lỗi: {meta.stderr.strip()}")
+        result = tileschema.check(schema, json.loads(meta.stdout).get("vector_layers") or [])
+        self.schema_info = {**(self.schema_info or {}), "check": result}
+        if result["ok"]:
+            self.job.add_log(f"Schema '{schema.name}': PMTiles khớp {result['matched']}/{result['fields']} field, "
+                             f"layer {schema.layer}, z{schema.minzoom}–{schema.maxzoom}.")
+            return
+        problems = []
+        if not result["layer_found"]:
+            problems.append(f"không có layer {schema.layer}")
+        if result["missing"]:
+            problems.append(f"thiếu {', '.join(result['missing'])}")
+        if result["extra"]:
+            problems.append(f"thừa {', '.join(result['extra'])}")
+        if result["wrong_type"]:
+            problems.append("sai kiểu " + ", ".join(f"{w['field']} ({w['got']}, cần {w['expected']})"
+                                                    for w in result["wrong_type"]))
+        if result["layer_found"] and result["zooms"] != result["expected_zooms"]:
+            problems.append(f"zoom {result['zooms'][0]}–{result['zooms'][1]}, cần "
+                            f"{schema.minzoom}–{schema.maxzoom}")
+        step.detail = f"Lệch schema {schema.name}"
+        self.job.add_log(f"CẢNH BÁO: PMTiles lệch schema '{schema.name}': {'; '.join(problems)}. "
+                         "Field toàn NULL bị tippecanoe bỏ khỏi tile nên cũng hiện là thiếu.")
 
     def _step_finalize(self, step: Step) -> None:
         report = dict(self.job.report or {})
         report["accounting"] = self.accounting
         report["pmtiles"] = self.tiles_info
+        if self.schema_info:
+            report["tile_schema"] = self.schema_info
         if self.shadow_info:
             report["shadows"] = self.shadow_info
         report["provenance"] = self._provenance()

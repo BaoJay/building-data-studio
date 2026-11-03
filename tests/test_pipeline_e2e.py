@@ -68,7 +68,7 @@ def _config(path: Path, out_dir: Path, **overrides) -> dict:
                    "prov_missing": ["default"], "min_valid_m": 2, "max_valid_m": 500},
         "parts": {"enabled": True, "id_col": "building_id", "parent_col": "parent_building_id"},
         "tiles": {"layer": "buildings", "minzoom": 14, "maxzoom": 15,
-                  "attributes": ["building_id", "h_m", "has_parts", "is_part"]},
+                  "attributes": ["building_id", "height_m", "has_parts", "is_part"]},
         "report": {"category_cols": ["height_provenance", "building_tier"]},
     }
     for key, value in overrides.items():
@@ -87,19 +87,20 @@ def _run(cfg: dict) -> dict:
 def _rows(gpkg: Path) -> dict:
     with closing(sqlite3.connect(gpkg)) as conn:
         return {r[0]: r[1:] for r in conn.execute(
-            'SELECT building_id, h_m, h_src, h_outlier, has_parts, is_part FROM "buildings"')}
+            'SELECT building_id, h_raw, height_m, h_src, h_outlier, has_parts, is_part FROM "buildings"')}
 
 
 def test_plain_parquet_to_gpkg_and_pmtiles(plain_parquet: Path, tmp_path: Path) -> None:
     result = _run(_config(plain_parquet, tmp_path / "out"))
     gpkg = Path(result["outputs"]["gpkg"]["path"])
+    # height_m is the derived height; the measured one it replaced stays in h_raw.
     assert _rows(gpkg) == {
-        "A": (30.0, "height", 0, 1, 0),
-        "A1": (45.0, "height", 0, 0, 1),
-        "B": (4.0, "default", 0, 0, 0),
-        "C": (4.0, "default", 1, 0, 0),
-        "D": (4.0, "default", 1, 0, 0),
-        "E": (12.4, "height", 0, 0, 0),
+        "A": (30.0, 30.0, "height", 0, 1, 0),
+        "A1": (45.0, 45.0, "height", 0, 0, 1),
+        "B": (4.0, 4.0, "default", 0, 0, 0),
+        "C": (49380.0, 4.0, "default", 1, 0, 0),
+        "D": (0.0, 4.0, "default", 1, 0, 0),
+        "E": (12.36, 12.4, "height", 0, 0, 0),
     }
     report = result["report"]
     assert report["total"] == 6
@@ -109,6 +110,9 @@ def test_plain_parquet_to_gpkg_and_pmtiles(plain_parquet: Path, tmp_path: Path) 
     assert report["accounting"]["pmtiles_features"] == 6
     assert report["pmtiles"]["verified"] in (True, None) or tools.which("pmtiles") is None
     assert {o["building_id"] for o in report["outliers"]} == {"C", "D"}
+    # The outlier table and the raw-column summary show the measured value, not the derived one.
+    assert {o["building_id"]: o["h_raw"] for o in report["outliers"]} == {"C": 49380.0, "D": 0.0}
+    assert (report["height"]["raw"]["column"], report["height"]["raw"]["max"]) == ("h_raw", 49380.0)
     assert Path(result["outputs"]["pmtiles"]["path"]).stat().st_size > 0
     assert Path(result["outputs"]["report_md"]["path"]).read_text(encoding="utf-8").startswith("# Báo cáo")
     assert not (Path(result["output_dir"]) / "_work").exists()
@@ -122,7 +126,8 @@ def test_gpkg_input_reprocessed_to_pmtiles_only(plain_parquet: Path, tmp_path: P
     second = _run(cfg)
     assert "gpkg" not in second["outputs"]
     assert second["report"]["accounting"]["pmtiles_features"] == 6
-    assert second["report"]["height"]["outlier_count"] == 2
+    # The output's height_m is already cleaned (edits made in QGIS are kept), so nothing is out of range.
+    assert second["report"]["height"]["outlier_count"] == 0
 
 
 def test_reprojected_gpkg_output(plain_parquet: Path, tmp_path: Path) -> None:
@@ -148,7 +153,7 @@ def test_empty_column_list_keeps_only_required_columns(plain_parquet: Path, tmp_
     with closing(sqlite3.connect(result["outputs"]["gpkg"]["path"])) as conn:
         cols = [r[1] for r in conn.execute('PRAGMA table_info("buildings")')]
     # Parts ids are kept because has_parts needs them; height inputs are not copied.
-    assert cols == ["fid", "geom", "building_id", "parent_building_id", "h_m", "h_src", "h_outlier",
+    assert cols == ["fid", "geom", "building_id", "parent_building_id", "h_raw", "height_m", "h_src", "h_outlier",
                     "has_parts", "is_part"]
 
 
@@ -203,3 +208,61 @@ def test_shadows_need_heights(plain_parquet: Path, tmp_path: Path) -> None:
         pipeline.parse_config(cfg)
     with pytest.raises(pipeline.ConfigError):
         pipeline.parse_config(_config(plain_parquet, tmp_path / "out", tiles={"shadows": True, "layer": "shadows"}))
+
+
+@pytest.fixture()
+def canonical_parquet(tmp_path: Path) -> Path:
+    """A canonical export with height_m stored as text, a NULL first, and a column the schema lacks."""
+    rows = [
+        ("A", None, "default", "10", "2026-10-28T01:02:03Z", "x"),
+        ("B", "12.5", "osm_height", None, "2026-10-28T01:02:04Z", None),
+        ("C", "abc", "osm_levels", None, None, None),
+    ]
+    features = [
+        {"type": "Feature",
+         "properties": {"building_id": b, "height_m": h, "height_provenance": p, "min_height": mh,
+                        "updated_at": ts, "superseded_by": sup, "status": "active"},
+         "geometry": {"type": "Polygon", "coordinates": _square(i)}}
+        for i, (b, h, p, mh, ts, sup) in enumerate(rows)
+    ]
+    src = tmp_path / "canon.geojson"
+    src.write_text(json.dumps({"type": "FeatureCollection", "features": features}), encoding="utf-8")
+    out = tmp_path / "canon.parquet"
+    subprocess.run([tools.require("ogr2ogr"), "-f", "Parquet", str(out), str(src)], check=True, capture_output=True)
+    return out
+
+
+def _tile_rows(pmtiles: Path, zoom: int) -> dict:
+    proc = subprocess.run([tools.require("ogr2ogr"), "-f", "GeoJSON", "/vsistdout/", str(pmtiles), "buildings",
+                           "-oo", f"ZOOM_LEVEL={zoom}"], check=True, capture_output=True, text=True)
+    return {f["properties"]["building_id"]: f["properties"] for f in json.loads(proc.stdout)["features"]}
+
+
+def test_pmtiles_follow_the_tile_schema(canonical_parquet: Path, tmp_path: Path) -> None:
+    cfg = _config(canonical_parquet, tmp_path / "out", height={"enabled": False}, parts={"enabled": False},
+                  tiles={"schema": True, "layer": "ignored", "minzoom": 14, "maxzoom": 15, "attributes": ["status"]},
+                  report={"category_cols": []})
+    result = _run(cfg)
+    ts = result["report"]["tile_schema"]
+    assert ts["name"] == "vmap-buildings"
+    assert ts["dropped"] == ["superseded_by"]
+    assert "build_id" in ts["missing_in_data"] and "height_m" not in ts["missing_in_data"]
+
+    tiles = Path(result["outputs"]["pmtiles"]["path"])
+    rows = _tile_rows(tiles, 16)
+    # h_m and height repeat height_m; text that is not a number is left out, not 0.
+    assert {k: rows["B"].get(k) for k in ("h_m", "height", "height_m", "min_height")} == {
+        "h_m": 12.5, "height": 12.5, "height_m": 12.5, "min_height": None}
+    assert rows["A"].get("height_m") is None and rows["C"].get("height_m") is None
+    assert rows["A"]["min_height"] == "10" and rows["B"]["updated_at"].startswith("2026-10-28")
+    assert "superseded_by" not in rows["A"]
+
+    if tools.which("pmtiles") is None:
+        return
+    chk = ts["check"]
+    # Schema layer and zooms win over the UI's; the first height_m is NULL, yet it is typed Number.
+    assert (chk["layer_found"], chk["zooms"], chk["extra"], chk["wrong_type"]) == (True, [13, 16], [], [])
+    assert set(chk["missing"]) == set(ts["missing_in_data"])
+    assert chk["matched"] == 8  # building_id, h_m, height, height_m, height_provenance, min_height, status, updated_at
+    md = Path(result["outputs"]["report_md"]["path"]).read_text(encoding="utf-8")
+    assert "## Schema PMTiles `vmap-buildings`" in md and "superseded_by" in md

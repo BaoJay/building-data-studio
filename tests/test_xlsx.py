@@ -138,14 +138,14 @@ def test_stage_wkt_sheet_then_convert_with_heights(tmp_path: Path) -> None:
         "input": {"path": staged["path"]},
         "output": {"dir": str(tmp_path / "out"), "name": "data", "gpkg": True, "pmtiles": True},
         "height": {"enabled": True, "height_col": "height_m"},
-        "tiles": {"minzoom": 14, "maxzoom": 15, "attributes": ["building_id", "h_m", "xlsx_row"]},
+        "tiles": {"minzoom": 14, "maxzoom": 15, "attributes": ["building_id", "height_m", "xlsx_row"]},
     }
     job = Job(id="xlsx", config=cfg, name="data")
     pipeline.execute(job, FileRegistry())
     result = job.to_dict()
     assert result["status"] == "done", (result["error"], "\n".join(result["log"][-30:]))
     with closing(sqlite3.connect(result["outputs"]["gpkg"]["path"])) as conn:
-        rows = dict(conn.execute('SELECT building_id, h_m FROM "buildings"'))
+        rows = dict(conn.execute('SELECT building_id, height_m FROM "buildings"'))
     assert rows == {"A": 30.0, "B": 12.5}
 
 

@@ -5,7 +5,7 @@ registering landmarks on) without uploading or converting a file.
       ├─ divisions / division_area ──► city boundary (one polygon)
       └─ buildings / building + building_part, OpenStreetMap only, inside the boundary
            └─ DuckDB (httpfs + spatial) ──► raw GeoPackage (_work/)
-                └─ convert pipeline ──► <area>_osm_buildings.gpkg (h_m, has_parts…, + layer boundary)
+                └─ convert pipeline ──► <area>_osm_buildings.gpkg (height_m, has_parts…, + layer boundary)
                                         + <area>_osm_buildings.pmtiles
                      └─ base/<area>/base.json: the build in use
 
@@ -56,7 +56,7 @@ DEFAULT_ROOT = f"s3://{S3_BUCKET}/release"
 LIST_URL = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/?list-type=2&prefix=release/&delimiter=/"
 OSM_DATASET = "OpenStreetMap"
 M_PER_LEVEL = 3.5  # the convert default; also turns min_level into min_height
-TILE_ATTRIBUTES = ("building_id", "h_m", "h_src", "min_height", "has_parts", "is_part", "parent_building_id",
+TILE_ATTRIBUTES = ("building_id", "height_m", "h_src", "min_height", "has_parts", "is_part", "parent_building_id",
                    "name", "class", "height", "num_floors")
 OUTPUT_COLUMNS = ("building_id", "parent_building_id", "name", "class", "subtype", "height", "num_floors",
                   "min_height", "min_floor", "roof_shape", "roof_height", "roof_color", "roof_material",

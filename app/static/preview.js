@@ -8,7 +8,8 @@ import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPreset
 import { flyHome, runTour, tallest } from "/static/tour.js";
 
 
-const HEIGHT_ATTRS = ["h_m", "height_m", "height", "render_height"];
+// height_m is the height the convert writes; h_m is the one of files written before it.
+const HEIGHT_ATTRS = ["height_m", "h_m", "height", "render_height"];
 const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
 const params = new URLSearchParams(location.search);
 let token = params.get("f");  // no f: the base of the city (see main)

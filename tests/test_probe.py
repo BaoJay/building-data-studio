@@ -17,7 +17,7 @@ def test_suggest_company_schema() -> None:
     assert s["prov_missing"] == ["default"]
     assert s["category_cols"] == ["height_provenance", "building_tier"]
     assert s["pmtiles_attrs"] == [
-        "building_id", "h_m", "min_height", "has_parts", "is_part", "parent_building_id", "building_tier",
+        "building_id", "height_m", "min_height", "has_parts", "is_part", "parent_building_id", "building_tier",
     ]
 
 
@@ -30,8 +30,14 @@ def test_suggest_osm_schema_with_text_values() -> None:
 
 
 def test_generated_fields_are_never_suggested() -> None:
-    s = suggest_mapping([Field("h_m", "Real"), Field("has_parts", "Integer")])
+    s = suggest_mapping([Field("h_m", "Real"), Field("h_raw", "Real"), Field("has_parts", "Integer")])
     assert s["height_col"] is None
+
+
+def test_height_m_is_read_as_the_height_column() -> None:
+    # height_m is both the canonical measured height and the column the app writes.
+    s = suggest_mapping([Field("height_m", "Real"), Field("height", "Real"), Field("h_m", "Real")])
+    assert s["height_col"] == "height_m"
 
 
 def test_guess_geometry_columns_prefers_named_binary() -> None:

@@ -105,7 +105,7 @@ def _to_pmtiles(src: Path, out: Path) -> Path:
         "height": {"enabled": True, "height_col": "height_m", "prov_col": "height_provenance", "prov_missing": ["default"]},
         "parts": {"enabled": False},
         "tiles": {"layer": "buildings", "minzoom": 14, "maxzoom": 15,
-                  "attributes": ["building_id", "h_m", "height_provenance"]},
+                  "attributes": ["building_id", "height_m", "height_provenance"]},
     }
     job = Job(id="c", config=cfg, name="c")
     pipeline.execute(job, FileRegistry())

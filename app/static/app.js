@@ -3,8 +3,12 @@
 import { $, $$, api, bindDropzone, colOptions, esc, fmtBytes, fmtDur, fmtInt, fmtNum, hbars, kpi, loadJSON, previewUrl, reveal, saveJSON, section, toast, uploadFile } from "./util.js";
 import { initDiff, renderDiffReport, setDiffHealth } from "./diff.js";
 
-const GENERATED_HEIGHT = ["h_m", "h_src", "h_outlier"];
+const GENERATED_HEIGHT = ["height_m", "h_src", "h_outlier"];
 const GENERATED_PARTS = ["has_parts", "is_part"];
+// When the height rule reads height_m itself, the measured value is kept in h_raw.
+const RAW_HEIGHT = "h_raw";
+// A file holding this share of a tile schema's own fields (copies aside) gets the schema by default.
+const SCHEMA_MIN_SHARE = 0.4;
 // Columns app/xlsx.py adds to a staged sheet; small, so they go into the tiles by default.
 const SHEET_TILE_ATTRS = ["xlsx_row", "osm_way_id", "buffer_m"];
 const CRS_PRESETS = [
@@ -37,6 +41,7 @@ const state = {
   logSince: 0,
   pollTimer: null,
   tileAttrs: new Set(),
+  tileSchemaOn: false,
   catCols: new Set(),
   reportKey: null,
   outputsKey: null,
@@ -256,6 +261,7 @@ async function probePath(path, extra = {}, { staged = null } = {}) {
     if (res.kind === "vector") {
       const names = new Set(res.fields.map((f) => f.name));
       state.tileAttrs = new Set([...res.suggest.pmtiles_attrs, ...(staged ? SHEET_TILE_ATTRS.filter((a) => names.has(a)) : [])]);
+      state.tileSchemaOn = schemaShare(tileSchema(), names) >= SCHEMA_MIN_SHARE;
       state.catCols = new Set(res.suggest.category_cols);
       renderOptions(res);
       $("#optionsCard").hidden = false;
@@ -417,6 +423,48 @@ async function stageSheet() {
   }
 }
 
+// ------------------------------------------------------------------ tile schema
+// The PMTiles schema agreed with the app (schemas/*.json, served by /api/health); null if unreadable.
+function tileSchema() {
+  const sc = state.health?.tile_schema;
+  return sc?.fields ? sc : null;
+}
+
+// Share of the schema's own fields (not copies of another field) a file has.
+function schemaShare(sc, names) {
+  if (!sc) return 0;
+  const own = Object.keys(sc.fields).filter((f) => !(f in sc.copies));
+  return own.filter((f) => names.has(f)).length / (own.length || 1);
+}
+
+// With the schema on, the layer name and zooms are the schema's; off, the user's own.
+function syncTileFields(el, sc) {
+  const on = Boolean(sc && el.tile_schema?.checked);
+  for (const [name, key] of [["tiles_layer", "layer"], ["minzoom", "minzoom"], ["maxzoom", "maxzoom"]]) {
+    el[name].disabled = on;
+    el[name].value = on ? sc[key] : state.prefs[name];
+  }
+}
+
+// The schema's fields, marked by whether the data fills them; the tiles get exactly these.
+function renderSchemaAttrs(sc, available, generated) {
+  const have = new Set(available);
+  const names = Object.keys(sc.fields);
+  const filled = (f) => have.has(sc.copies[f] || f);
+  $("#attrList").innerHTML = names.map((f) => {
+    const derived = f in sc.copies || generated.includes(f);
+    const title = [sc.fields[f], f in sc.copies ? `= ${sc.copies[f]}` : "", sc.deprecated.includes(f) ? "giữ tạm, sẽ bỏ" : "",
+      filled(f) ? "" : "dữ liệu không có"].filter(Boolean).join(" · ");
+    return `<label class="${derived ? "gen" : ""} ${filled(f) ? "" : "gone"}" title="${esc(title)}"><input type="checkbox" disabled ${filled(f) ? "checked" : ""}>${esc(f)}</label>`;
+  }).join("");
+  const missing = names.filter((f) => !filled(f));
+  const dropped = available.filter((c) => !(c in sc.fields) && !generated.includes(c));
+  const copies = Object.entries(sc.copies).map(([f, src]) => `${f} = ${src}`).join(", ");
+  $("#attrHint").innerHTML = `${names.length - missing.length}/${names.length} field có dữ liệu, đúng tên và kiểu của schema. Viền nét đứt = app tính hoặc chép (${esc(copies)}).`
+    + (missing.length ? ` <b>Thiếu:</b> ${esc(missing.join(", "))}.` : "")
+    + (dropped.length ? ` <b>Không có trong schema nên không đưa vào tile:</b> ${esc(dropped.join(", "))}.` : "");
+}
+
 // ------------------------------------------------------------------ options form
 function renderOptions(p) {
   const pr = state.prefs;
@@ -428,6 +476,8 @@ function renderOptions(p) {
   const crsCustom = !CRS_PRESETS.some(([v]) => v === pr.gpkg_crs);
   const num = (name, value, attrs = "") => `<input type="number" name="${name}" value="${esc(value)}" ${attrs}>`;
   const chk = (name, on) => `<input type="checkbox" name="${name}" ${on ? "checked" : ""}>`;
+  const sc = tileSchema();
+  const schemaErr = state.health?.tile_schema?.error;
 
   const geomField = isParquet && (p.geometry_candidates.length > 1 || p.open_options.GEOM_POSSIBLE_NAMES)
     ? `<label class="field"><span>Cột geometry (WKB/WKT)</span><select name="geom_column">${
@@ -461,7 +511,7 @@ function renderOptions(p) {
     </fieldset>
 
     <fieldset id="fsHeight">
-      <legend><label class="check">${chk("height_enabled", !state.staged || Boolean(s.height_col || s.levels_col))} Chiều cao <code>h_m</code></label></legend>
+      <legend><label class="check">${chk("height_enabled", !state.staged || Boolean(s.height_col || s.levels_col))} Chiều cao <code>height_m</code></label></legend>
       <div class="row2">
         <label class="field"><span>Cột chiều cao (m)</span><select name="height_col">${colOptions(valueCols, s.height_col)}</select></label>
         <label class="field"><span>Cột số tầng</span><select name="levels_col">${colOptions(valueCols, s.levels_col)}</select></label>
@@ -517,6 +567,9 @@ function renderOptions(p) {
 
     <fieldset id="fsTiles">
       <legend>PMTiles</legend>
+      ${sc ? `<label class="check">${chk("tile_schema", state.tileSchemaOn)} Theo schema <code>${esc(sc.name)}</code>
+        <span class="hint">— layer <code>${esc(sc.layer)}</code>, z${sc.minzoom}–${sc.maxzoom}, ${Object.keys(sc.fields).length} field đúng tên và kiểu đã thống nhất với app Mobile</span></label>` : ""}
+      ${schemaErr ? `<div class="alert warn"><span class="icon">!</span><div>${esc(schemaErr)}</div></div>` : ""}
       <div class="row3">
         <label class="field"><span>Tên layer</span><input type="text" name="tiles_layer" value="${esc(pr.tiles_layer)}"></label>
         <label class="field"><span>Min zoom</span>${num("minzoom", pr.minzoom, 'min="0" max="22"')}</label>
@@ -536,7 +589,7 @@ function renderOptions(p) {
       <label class="check">${chk("extend_zooms", pr.extend_zooms)} Tự tăng max zoom nếu vẫn phải bỏ feature</label>
       <label class="check">${chk("shared_borders", pr.shared_borders)} Giữ khớp cạnh chung giữa polygon (<code>--detect-shared-borders</code>)</label>
       <label class="check">${chk("shadows", pr.shadows)} Thêm layer bóng <code>shadows</code> cho Bình minh / Ban ngày / Hoàng hôn (thử nghiệm)
-        <span class="hint">— cần chiều cao h_m, tile từ zoom 15; cả nước mất thêm vài phút</span></label>
+        <span class="hint">— cần chiều cao height_m, tile từ zoom 15; cả nước mất thêm vài phút</span></label>
       <label class="field" id="shadowMinField"><span>Chỉ đổ bóng building cao hơn (m)</span>${num("shadow_min_height", pr.shadow_min_height, 'min="0" step="0.5"')}
         <span class="hint">0 = mọi building. 4 = bỏ nhà đang dùng chiều cao mặc định 4 m: layer bóng nhẹ hơn ~6 lần.</span></label>
       <label class="field"><span>Attribution</span><input type="text" name="attribution" value="${esc(pr.attribution)}" placeholder="vd: © OpenStreetMap contributors"></label>
@@ -551,8 +604,8 @@ function renderOptions(p) {
 
     <fieldset class="wide">
       <legend>Thuộc tính đưa vào PMTiles</legend>
-      <div class="list-head"><span class="hint">Càng ít thuộc tính, tile càng nhẹ. Viền nét đứt = cột do app tính ra.</span>
-        <span><button type="button" class="linkbtn" data-all="tattr">Chọn tất cả</button> · <button type="button" class="linkbtn" data-none="tattr">Bỏ hết</button></span></div>
+      <div class="list-head"><span class="hint" id="attrHint"></span>
+        <span id="attrBtns"><button type="button" class="linkbtn" data-all="tattr">Chọn tất cả</button> · <button type="button" class="linkbtn" data-none="tattr">Bỏ hết</button></span></div>
       <div class="checklist" id="attrList"></div>
     </fieldset>
 
@@ -578,6 +631,7 @@ function renderOptions(p) {
     onFormChange();
   };
   form.elements.geom_column?.addEventListener("change", (e) => probePath(p.path, { geom_column: e.target.value, layer: p.layer }, { staged: state.staged }));
+  syncTileFields(form.elements, sc);
   onFormChange();
 }
 
@@ -592,6 +646,11 @@ function onFormChange(e) {
   if (e?.target?.name === "cat") {
     e.target.checked ? state.catCols.add(e.target.value) : state.catCols.delete(e.target.value);
   }
+  if (e?.target?.name === "tile_schema") {
+    state.tileSchemaOn = e.target.checked;
+    syncTileFields(el, tileSchema());
+  }
+  const schemaOn = Boolean(tileSchema() && el.tile_schema?.checked);
   const heightOn = el.height_enabled.checked;
   const partsOn = el.parts_enabled.checked;
   $("#fsHeight").classList.toggle("off", !heightOn);
@@ -605,11 +664,18 @@ function onFormChange(e) {
   $("#colCount").textContent = `${kept.length}/${$$('input[name="col"]', form).length} cột`;
 
   // Tile attributes = kept columns + generated ones (dashed).
-  const generated = [...(heightOn ? GENERATED_HEIGHT : []), ...(partsOn ? GENERATED_PARTS : [])];
+  const heightCols = [...GENERATED_HEIGHT, ...(el.height_col.value === "height_m" ? [RAW_HEIGHT] : [])];
+  const generated = [...(heightOn ? heightCols : []), ...(partsOn ? GENERATED_PARTS : [])];
   const available = [...new Set([...kept.filter((c) => !generated.includes(c)), ...generated])];
   if (partsOn) [el.id_col.value, el.parent_col.value].forEach((c) => { if (c && !available.includes(c)) available.push(c); });
-  $("#attrList").innerHTML = available.map((a) =>
-    `<label class="${generated.includes(a) ? "gen" : ""}"><input type="checkbox" name="tattr" value="${esc(a)}" ${state.tileAttrs.has(a) ? "checked" : ""}>${esc(a)}</label>`).join("");
+  $("#attrBtns").hidden = schemaOn;
+  if (schemaOn) {
+    renderSchemaAttrs(tileSchema(), available, generated);
+  } else {
+    $("#attrHint").textContent = "Càng ít thuộc tính, tile càng nhẹ. Viền nét đứt = cột do app tính ra.";
+    $("#attrList").innerHTML = available.map((a) =>
+      `<label class="${generated.includes(a) ? "gen" : ""}"><input type="checkbox" name="tattr" value="${esc(a)}" ${state.tileAttrs.has(a) ? "checked" : ""}>${esc(a)}</label>`).join("");
+  }
 
   // Category candidates: text columns that are not identifiers (ids make useless breakdowns).
   const textFields = state.probe.fields
@@ -637,7 +703,8 @@ function formulaText(el) {
   }
   if (l) parts.push(`<code>${esc(l)}</code> × ${esc(el.m_per_level.value)} m <span class="hint">(1–${esc(el.max_levels.value)} tầng)</span>`);
   parts.push(`${esc(el.default_m.value)} m`);
-  return `<b>h_m</b> = ${parts.join(" → ")}<br><span class="hint">Lấy giá trị đầu tiên hợp lệ. <code>h_src</code> ghi nguồn đã dùng; <code>h_outlier</code> = 1 khi giá trị gốc nằm ngoài khoảng hợp lệ.</span>`;
+  const raw = h === "height_m" ? " Giá trị gốc của <code>height_m</code> được giữ ở <code>h_raw</code> (chỉ trong GeoPackage)." : "";
+  return `<b>height_m</b> = ${parts.join(" → ")}<br><span class="hint">Lấy giá trị đầu tiên hợp lệ. <code>h_src</code> ghi nguồn đã dùng; <code>h_outlier</code> = 1 khi giá trị gốc nằm ngoài khoảng hợp lệ.${raw}</span>`;
 }
 
 function collectConfig() {
@@ -646,12 +713,15 @@ function collectConfig() {
   const val = (n) => (el[n]?.value ?? "").trim();
   const numv = (n) => Number(val(n));
   const gpkgCrs = el.gpkg_crs_sel.value === "custom" ? val("gpkg_crs_custom") : el.gpkg_crs_sel.value;
+  const schemaOn = Boolean(tileSchema() && el.tile_schema?.checked);
+  // With the schema on, the layer and zooms shown are the schema's: keep the user's own in the prefs.
+  const own = (name, value) => (schemaOn ? state.prefs[name] : value);
   const prefs = {
     want_gpkg: el.want_gpkg.checked, want_pmtiles: el.want_pmtiles.checked, out_dir: val("out_dir"),
     gpkg_layer: val("gpkg_layer"), gpkg_crs: gpkgCrs, m_per_level: numv("m_per_level"), default_m: numv("default_m"),
     min_valid_m: numv("min_valid_m"), max_valid_m: numv("max_valid_m"), max_levels: numv("max_levels"),
-    outlier_mode: val("outlier_mode"), decimals: numv("decimals"), tiles_layer: val("tiles_layer"),
-    minzoom: numv("minzoom"), maxzoom: numv("maxzoom"), drop: val("drop"), extend_zooms: el.extend_zooms.checked,
+    outlier_mode: val("outlier_mode"), decimals: numv("decimals"), tiles_layer: own("tiles_layer", val("tiles_layer")),
+    minzoom: own("minzoom", numv("minzoom")), maxzoom: own("maxzoom", numv("maxzoom")), drop: val("drop"), extend_zooms: el.extend_zooms.checked,
     simplification: val("simplification"), max_tile_kb: numv("max_tile_kb"), shared_borders: el.shared_borders.checked,
     attribution: val("attribution"), makevalid: el.makevalid.checked, keep_temp: el.keep_temp.checked,
     shadows: el.shadows.checked, shadow_min_height: numv("shadow_min_height") || 0,
@@ -668,7 +738,7 @@ function collectConfig() {
     },
     parts: { enabled: el.parts_enabled.checked, id_col: val("id_col") || null, parent_col: val("parent_col") || null },
     tiles: {
-      layer: prefs.tiles_layer, minzoom: prefs.minzoom, maxzoom: prefs.maxzoom,
+      layer: prefs.tiles_layer, minzoom: prefs.minzoom, maxzoom: prefs.maxzoom, schema: schemaOn,
       attributes: $$('input[name="tattr"]:checked').map((c) => c.value), drop: prefs.drop, extend_zooms: prefs.extend_zooms,
       simplification: prefs.simplification === "" ? null : Number(prefs.simplification), max_tile_kb: prefs.max_tile_kb,
       shared_borders: prefs.shared_borders, attribution: prefs.attribution, shadows: prefs.shadows,
@@ -816,8 +886,8 @@ function renderReport(job) {
   if (h) {
     html += kpi("Có chiều cao thực", fmtInt(h.real_count), `${fmtNum(h.real_pct, 2)}% · từ cột chiều cao/số tầng`)
       + kpi("Outlier", fmtInt(h.outlier_count), "giá trị gốc ngoài khoảng hợp lệ")
-      + kpi("h_m trung vị", `${fmtNum(h.stats.median)} m`, `TB ${fmtNum(h.stats.mean)} · p90 ${fmtNum(h.stats.p90)} · p99 ${fmtNum(h.stats.p99)}`)
-      + kpi("h_m cao nhất", `${fmtNum(h.stats.max)} m`, `thấp nhất ${fmtNum(h.stats.min)} m`);
+      + kpi("height_m trung vị", `${fmtNum(h.stats.median)} m`, `TB ${fmtNum(h.stats.mean)} · p90 ${fmtNum(h.stats.p90)} · p99 ${fmtNum(h.stats.p99)}`)
+      + kpi("height_m cao nhất", `${fmtNum(h.stats.max)} m`, `thấp nhất ${fmtNum(h.stats.min)} m`);
   }
   html += `</div>`;
 
@@ -825,12 +895,13 @@ function renderReport(job) {
   if (acc.pmtiles_features != null) flow.push(`PMTiles ${fmtInt(acc.pmtiles_features)} feature`);
   const tiles = r.pmtiles;
   html += `<p class="accounting">Đối soát: ${flow.join(" → ")}${acc.filtered_out ? ` · lọc bỏ ${fmtInt(acc.filtered_out)}` : ""}${acc.has_parts != null ? ` · ${fmtInt(acc.has_parts)} toà có khối con, ${fmtInt(acc.is_part)} khối con` : ""}${tiles ? ` · ${fmtInt(tiles.addressed_tiles)} tile z${tiles.minzoom}–${tiles.maxzoom}, ${fmtBytes(tiles.size_bytes)}${tiles.verified ? " · verify OK" : ""}` : ""}${r.shadows ? ` · layer bóng ${fmtInt(r.shadows.features)} polygon z${r.shadows.minzoom}–${r.shadows.maxzoom}, ${fmtBytes(r.shadows.tiles_bytes)}` : ""}</p>`;
+  if (r.tile_schema) html += schemaReport(r.tile_schema);
 
   if (h) {
-    html += section("Phân bố h_m", "số building theo khoảng chiều cao", hbars(h.histogram.map((b) => ({ label: b.label, count: b.count, pct: b.pct }))));
+    html += section("Phân bố height_m", "số building theo khoảng chiều cao", hbars(h.histogram.map((b) => ({ label: b.label, count: b.count, pct: b.pct }))));
     html += section("Nguồn chiều cao (h_src)", "height = cột chiều cao · levels = số tầng · default = mặc định", hbars(h.by_source.map((s) => ({ label: s.src, count: s.count, pct: s.pct }))));
     if (h.raw) {
-      html += `<p class="accounting">Cột gốc <code>${esc(h.raw.column)}</code>: trống ${fmtInt(h.raw.null)} · ≤ 0 m: ${fmtInt(h.raw.zero_or_negative)} · min ${fmtNum(h.raw.min)} · max ${fmtNum(h.raw.max)} m</p>`;
+      html += `<p class="accounting">Cột gốc <code>${esc(h.raw.column === RAW_HEIGHT ? "height_m" : h.raw.column)}</code>${h.raw.column === RAW_HEIGHT ? " (trước khi xử lý, lưu ở h_raw)" : ""}: trống ${fmtInt(h.raw.null)} · ≤ 0 m: ${fmtInt(h.raw.zero_or_negative)} · min ${fmtNum(h.raw.min)} · max ${fmtNum(h.raw.max)} m</p>`;
     }
   }
 
@@ -842,25 +913,47 @@ function renderReport(job) {
       <td class="n"><span class="inbar" style="width:${Math.max(2, (60 * x.count) / max)}px"></span>${fmtNum(x.pct, 2)}%</td>
       ${h ? `<td class="n">${fmtNum(x.mean_h)}</td><td class="n">${fmtNum(x.max_h)}</td><td class="n">${fmtNum(x.default_pct)}%</td>` : ""}
     </tr>`).join("");
-    const head = `<tr><th>Giá trị</th><th class="n">Số lượng</th><th class="n">%</th>${h ? '<th class="n">h_m TB</th><th class="n">h_m max</th><th class="n">% mặc định</th>' : ""}</tr>`;
+    const head = `<tr><th>Giá trị</th><th class="n">Số lượng</th><th class="n">%</th>${h ? '<th class="n">height_m TB</th><th class="n">height_m max</th><th class="n">% mặc định</th>' : ""}</tr>`;
     const more = cat.other_count > 0 ? `<p class="hint">+ ${fmtInt(cat.other_count)} building thuộc các giá trị khác</p>` : "";
     html += section(`Theo ${cat.column}`, "", `<div class="tbl-wrap"><table><thead>${head}</thead><tbody>${rows}</tbody></table></div>${more}`);
   }
 
   if (h) {
     html += section(`Outlier (${fmtInt(h.outlier_count)})`, "giá trị gốc ngoài khoảng hợp lệ — cần kiểm tra lại dữ liệu nguồn", featureTable(r.outliers, pm, idCol, true));
-    html += section("Cao nhất (hợp lệ)", "top 20 theo h_m", featureTable(r.tallest, pm, idCol, false));
+    html += section("Cao nhất (hợp lệ)", "top 20 theo height_m", featureTable(r.tallest, pm, idCol, false));
   }
   const md = job.outputs.report_md;
   if (md) html += `<div class="out-actions"><a class="btn small" href="/api/files/${esc(md.token)}?download=1" download>Tải báo cáo .md</a><a class="btn small" href="/api/files/${esc(job.outputs.report_json.token)}?download=1" download>Tải báo cáo .json</a></div>`;
   $("#report").innerHTML = html;
 }
 
+// How the written PMTiles compares with the tile schema, and what the data lacked or added.
+function schemaReport(ts) {
+  const chk = ts.check;
+  const notes = [];
+  if (ts.dropped?.length) notes.push(`Cột của dữ liệu không có trong schema, không đưa vào tile: ${ts.dropped.join(", ")}`);
+  if (chk?.ok) {
+    const extra = notes.length ? ` · ${esc(notes.join(" · "))}` : "";
+    return `<p class="accounting">Schema PMTiles <code>${esc(ts.name)}</code>: khớp ${chk.matched}/${chk.fields} field · layer <code>${esc(chk.layer)}</code> · z${chk.zooms[0]}–${chk.zooms[1]}${extra}</p>`;
+  }
+  const problems = [];
+  if (!chk) problems.push("Chưa kiểm tra file PMTiles (cần pmtiles CLI).");
+  else {
+    if (!chk.layer_found) problems.push(`Không có layer ${chk.layer}.`);
+    if (chk.missing.length) problems.push(`Thiếu: ${chk.missing.join(", ")} (không có cột, hoặc cột toàn NULL).`);
+    if (chk.extra.length) problems.push(`Thừa: ${chk.extra.join(", ")}.`);
+    for (const w of chk.wrong_type) problems.push(`${w.field} là ${w.got}, cần ${w.expected}.`);
+    if (chk.layer_found && String(chk.zooms) !== String(chk.expected_zooms)) problems.push(`Zoom ${chk.zooms[0]}–${chk.zooms[1]}, cần ${chk.expected_zooms[0]}–${chk.expected_zooms[1]}.`);
+  }
+  const head = chk ? `PMTiles lệch schema <code>${esc(ts.name)}</code>: ${chk.matched}/${chk.fields} field khớp.` : `Schema <code>${esc(ts.name)}</code>.`;
+  return `<div class="alert warn"><span class="icon">!</span><div>${head} ${esc([...problems, ...notes].join(" "))}</div></div>`;
+}
+
 function featureTable(rows, pm, idCol, isOutlier) {
   if (!rows?.length) return `<p class="hint">Không có.</p>`;
   const skip = new Set(["bbox", "center", "fid"]);
   const keys = Object.keys(rows[0]).filter((k) => !skip.has(k));
-  const head = `<tr>${keys.map((k) => `<th class="${typeof rows[0][k] === "number" ? "n" : ""}">${esc(k)}${k === "h_m" && isOutlier ? " (sau xử lý)" : ""}</th>`).join("")}<th></th></tr>`;
+  const head = `<tr>${keys.map((k) => `<th class="${typeof rows[0][k] === "number" ? "n" : ""}">${esc(k)}${k === "height_m" && isOutlier ? " (sau xử lý)" : ""}</th>`).join("")}<th></th></tr>`;
   const body = rows.map((r) => {
     const cells = keys.map((k) => {
       const v = r[k];

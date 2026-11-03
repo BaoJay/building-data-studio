@@ -27,7 +27,7 @@ from .jobs import FileRegistry, Job, Step
 from .pipeline import DEFAULT_OUTPUT_DIR, WGS84, ConfigError, StagedPipeline, build_height_rule, run_job, safe_name
 from .probe import ProbeError
 from .probe import quote_ident as q
-from .sqlbuild import sql_str
+from .sqlbuild import LEGACY_HEIGHT_FIELD, sql_str
 
 log = logging.getLogger(__name__)
 
@@ -464,7 +464,7 @@ class DiffPipeline(StagedPipeline):
             "levels_col": rule.levels_col if rule else None, "prov_col": spec.prov_col,
             "prov_missing": list(spec.prov_missing), "parent_col": spec.parent_col,
             "superseded_col": spec.superseded_col, "category_cols": list(spec.category_cols),
-            "height_from": "h_m" if spec.has("h_m") else "rule",
+            "height_from": LEGACY_HEIGHT_FIELD if spec.has(LEGACY_HEIGHT_FIELD) else "rule",
         }
 
     def _step_outputs(self, step: Step) -> None:

@@ -8,7 +8,10 @@ Height rule (per feature), in priority order:
     3. the default height                          -> h_src = 'default'
 A height counts as "valid" inside [min_valid_m, max_valid_m]. Values outside
 that range set h_outlier = 1 so they can be reviewed; `outlier_mode` decides
-what h_m becomes for them.
+what height_m becomes for them.
+
+The result is written to height_m, the column the 3D map extrudes. When the
+height column is height_m itself, its measured value is kept as h_raw.
 """
 
 from __future__ import annotations
@@ -26,6 +29,9 @@ OUTLIER_MODES: tuple[str, ...] = ("fallback", "clamp", "keep")
 MIN_LEVELS = 1
 MAX_DECIMALS = 3
 TMP_PARENT_INDEX = "bc_tmp_parent_idx"
+HEIGHT_FIELD = "height_m"  # the derived height, rendered by fill-extrusion
+RAW_HEIGHT_FIELD = "h_raw"  # the measured value, when the height column is HEIGHT_FIELD itself
+LEGACY_HEIGHT_FIELD = "h_m"  # the derived height of files written before height_m
 
 
 class SpecError(ValueError):
@@ -34,7 +40,7 @@ class SpecError(ValueError):
 
 @dataclass(frozen=True)
 class HeightRule:
-    """How to derive h_m (metres) for each building."""
+    """How to derive height_m (metres) for each building."""
 
     height_col: str | None = None
     height_is_text: bool = False
@@ -118,7 +124,7 @@ def numeric_expr(column: str, is_text: bool, dialect: Dialect = "sqlite") -> str
 
 
 def height_expressions(rule: HeightRule, dialect: Dialect = "sqlite") -> dict[str, str]:
-    """Return SQL expressions for the generated columns h_m, h_src and h_outlier.
+    """Return SQL expressions for the generated columns height_m, h_src and h_outlier.
 
     Args:
         rule: The height rule (validated here).
@@ -140,7 +146,7 @@ def height_expressions(rule: HeightRule, dialect: Dialect = "sqlite") -> dict[st
     valid_l = f"({lv} BETWEEN {MIN_LEVELS} AND {lit(rule.max_levels)})" if lv else None
     keep = rule.outlier_mode == "keep"
 
-    branches: list[tuple[str, str, str]] = []  # (condition, h_m value, h_src label)
+    branches: list[tuple[str, str, str]] = []  # (condition, height_m value, h_src label)
     if hv:
         branches.append((f"{hv} IS NOT NULL" if keep else valid_h, f"ROUND({hv}, {d})", "height"))
         if rule.outlier_mode == "clamp":
@@ -153,10 +159,10 @@ def height_expressions(rule: HeightRule, dialect: Dialect = "sqlite") -> dict[st
     if branches:
         whens_m = " ".join(f"WHEN {cond} THEN {value}" for cond, value, _ in branches)
         whens_src = " ".join(f"WHEN {cond} THEN {sql_str(src)}" for cond, _, src in branches)
-        h_m = f"CAST(CASE {whens_m} ELSE {default} END AS {real})"
+        height = f"CAST(CASE {whens_m} ELSE {default} END AS {real})"
         h_src = f"CAST(CASE {whens_src} ELSE 'default' END AS TEXT)"
     else:
-        h_m = f"CAST({default} AS {real})"
+        height = f"CAST({default} AS {real})"
         h_src = "CAST('default' AS TEXT)"
 
     outlier_terms = []
@@ -169,7 +175,7 @@ def height_expressions(rule: HeightRule, dialect: Dialect = "sqlite") -> dict[st
         if outlier_terms
         else "CAST(0 AS INTEGER)"
     )
-    return {"h_m": h_m, "h_src": h_src, "h_outlier": h_outlier}
+    return {HEIGHT_FIELD: height, "h_src": h_src, "h_outlier": h_outlier}
 
 
 def validate_where(where: str | None) -> str | None:
@@ -186,6 +192,9 @@ def build_normalize_sql(spec: NormalizeSpec) -> str:
     """Build the SELECT run by ogr2ogr (GDAL SQLite dialect) to normalise a layer."""
     parts = [q(c) for c in spec.columns]
     if spec.height is not None:
+        if spec.height.height_col == HEIGHT_FIELD:
+            # The derived height replaces the measured one: keep that for the report.
+            parts.append(f"{q(HEIGHT_FIELD)} AS {q(RAW_HEIGHT_FIELD)}")
         parts += [f"{expr} AS {q(name)}" for name, expr in height_expressions(spec.height).items()]
     parts.append(q(spec.geom_sql_name))
     sql = f"SELECT {', '.join(parts)} FROM {q(spec.layer)}"

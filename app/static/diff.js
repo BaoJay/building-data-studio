@@ -258,7 +258,7 @@ function renderForm() {
           <thead><tr><th></th><th>A · ${esc(a.name)}</th><th>B · ${esc(b.name)}</th></tr></thead>
           <tbody>${columnRows}</tbody>
         </table></div>
-        <span class="hint">Nếu file có sẵn cột <code>h_m</code> thì dùng luôn (đó là giá trị app đang vẽ); nếu không, chiều cao được tính theo quy tắc của bước convert (cột chiều cao → số tầng × 3,5 m → mặc định 4 m).</span>
+        <span class="hint">File bản cũ có cột <code>h_m</code> thì dùng luôn (đó là giá trị app đã vẽ); nếu không, chiều cao được tính theo quy tắc của bước convert (cột chiều cao, thường là <code>height_m</code> → số tầng × 3,5 m → mặc định 4 m).</span>
       </details>
     </fieldset>
   </div>`;

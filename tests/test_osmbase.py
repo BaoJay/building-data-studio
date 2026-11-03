@@ -157,7 +157,7 @@ def test_build_base_end_to_end(overture: Path, tmp_path: Path):
     gpkg = Path(manifest["gpkg_path"])
     with closing(sqlite3.connect(gpkg)) as conn:
         rows = {r[0]: r[1:] for r in conn.execute(
-            "SELECT building_id, parent_building_id, h_m, h_src, has_parts, is_part, min_height, class FROM buildings")}
+            "SELECT building_id, parent_building_id, height_m, h_src, has_parts, is_part, min_height, class FROM buildings")}
         layers = {r[0] for r in conn.execute("SELECT table_name FROM gpkg_contents")}
     assert layers == {"buildings", "boundary"}
     assert rows == {

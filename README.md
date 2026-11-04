@@ -170,6 +170,7 @@ App tự làm những việc Overture đã làm sẵn:
 - **Chiều cao** (`app/osmtags.py`): đọc `height` ở dạng `12`, `12,5`, `12 m`, `40'`, `12'6"`. Từ chối khoảng (`10-12`), chữ, số âm, và giá trị trên 1.000 m. `building:levels` chấp nhận `3;4` (lấy số lớn hơn). `min_height` trống thì dùng `building:min_level × 3,5 m`. `height_m` vẫn do pipeline convert quyết định như cũ.
 - **`building:part`** (chuẩn Simple 3D Buildings): `building:part=*` (khác `no`) là khối con. Khối con nhận làm cha **building outline nhỏ nhất chứa một điểm của nó** (OSM không có liên kết tường minh). Khối con không có outline vẫn là building thường nên không bị ẩn. Outline có khối con nhận `has_parts` và bị ẩn khi dựng 3D.
 - **Multipolygon**: ghép các way `outer`/`inner` thành vòng; relation thiếu member (way không khép kín) bị bỏ và đếm trong log.
+- **Nguồn chiều cao** (`height_lineage`, chỉ trong GeoPackage, không đưa vào PMTiles): `osm:height` (tag `height`), `osm:levels*3.5m` (`building:levels` × 3,5 m), `default:4m`, suy ra từ `h_src` nên luôn khớp `height_m`. Thứ tự ưu tiên giữ nguyên: tag OSM, rồi số tầng, rồi 4 m; không lấy chiều cao từ Overture.
 - **Tag lỗi**: tag số không dùng được (`height=tall`, `building:levels=0`…) được ghi vào `*_tag_issues.csv` (kèm link OSM) để sửa trực tiếp trên OSM.
 - Bỏ building `location=underground` / `tunnel=*`. Ranh giới lấy từ relation OSM có `ISO3166-2=VN-HN`.
 

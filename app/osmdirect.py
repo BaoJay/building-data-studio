@@ -377,6 +377,28 @@ def assemble_sql() -> list[str]:
     ]
 
 
+LINEAGE_COLUMN = "height_lineage"
+DEFAULT_HEIGHT_M = 4.0  # sqlbuild's default when there is neither a height nor levels
+
+
+def lineage_statements(table: str, m_per_level: float = M_PER_LEVEL, default_m: float = DEFAULT_HEIGHT_M) -> list[str]:
+    """SQL (GeoPackage / SQLite) adding `height_lineage`: where each height_m came from, for QA.
+
+    Derived from `h_src`, which the convert step already decided, so the two never disagree:
+    osm:height (the tag), osm:levels*3.5m (building:levels x metres per level), default:4m, and
+    osm:height:clamped for a tag above the valid range when the rule clamps.
+    """
+    t = '"' + table.replace('"', '""') + '"'
+    return [
+        f'ALTER TABLE {t} ADD COLUMN "{LINEAGE_COLUMN}" TEXT',
+        f'UPDATE {t} SET "{LINEAGE_COLUMN}" = CASE "h_src" '
+        f"WHEN 'height' THEN 'osm:height' "
+        f"WHEN 'levels' THEN 'osm:levels*{m_per_level:g}m' "
+        f"WHEN 'clamped' THEN 'osm:height:clamped' "
+        f"ELSE 'default:{default_m:g}m' END",
+    ]
+
+
 def copy_raw_sql(raw: Path) -> str:
     cols = ", ".join(OUTPUT_COLUMNS)
     return (f"COPY (SELECT {cols}, geometry FROM osm_buildings ORDER BY building_id) "
@@ -529,6 +551,13 @@ class DirectBasePipeline(BasePipeline):
             writer.writerow(["osm_id", "url", "key", "value"])
             writer.writerows((b, f"https://www.openstreetmap.org/{b}", k, v) for b, k, v in issues)
         self._tag_issues_csv = path
+
+    def _step_normalize(self, step: Step) -> None:
+        super()._step_normalize(step)
+        ogrinfo = tools.require("ogrinfo")
+        for sql in lineage_statements(self.cfg.gpkg_layer, M_PER_LEVEL):
+            self._run([ogrinfo, str(self.normalized), "-q", "-sql", sql], step, fail_on_error_lines=True)
+        self.job.add_log(f"Thêm cột {LINEAGE_COLUMN} (nguồn của height_m) vào GeoPackage.")
 
     def _step_finalize(self, step: Step) -> None:
         path = getattr(self, "_tag_issues_csv", None)

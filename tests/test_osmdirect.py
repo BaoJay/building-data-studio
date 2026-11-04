@@ -245,6 +245,16 @@ def test_fetch_tiles_splits_a_too_big_tile():
     assert seen[0] == (0, 0, 0.05, 0.05)
 
 
+def test_lineage_statements_follow_h_src():
+    conn = sqlite3.connect(":memory:")
+    conn.execute('CREATE TABLE b (id TEXT, h_src TEXT)')
+    conn.executemany("INSERT INTO b VALUES (?, ?)", [("a", "height"), ("b", "levels"), ("c", "default"), ("d", "clamped")])
+    for sql in osmdirect.lineage_statements("b"):
+        conn.execute(sql)
+    assert dict(conn.execute(f"SELECT id, {osmdirect.LINEAGE_COLUMN} FROM b")) == {
+        "a": "osm:height", "b": "osm:levels*3.5m", "c": "default:4m", "d": "osm:height:clamped"}
+
+
 # ------------------------------------------------------------------ DuckDB
 
 def _spatial_ok() -> bool:
@@ -333,4 +343,8 @@ def test_direct_build_end_to_end(tmp_path: Path):
     assert rows["way/100"] == (None, 120.0, "height", 1, 0)
     assert rows["way/101"] == ("way/100", 150.0, "height", 0, 1)
     assert rows["way/200"] == (None, 17.5, "levels", 0, 0)
+    with closing(sqlite3.connect(manifest["gpkg_path"])) as conn:
+        lineage = dict(conn.execute("SELECT building_id, height_lineage FROM buildings"))
+    assert lineage["way/100"] == "osm:height" and lineage["way/200"] == "osm:levels*3.5m"
+    assert lineage["way/103"] == "osm:height" and lineage["way/102"] == "default:4m"
     assert "way/300" not in rows and "way/400" not in rows

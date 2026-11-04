@@ -6,6 +6,7 @@ import { landmarkFilters, landmarkView, matchBuildings } from "/static/landmark-
 import { $, esc, fetchOk } from "/static/util.js";
 import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, recall, remember, vmap, vmapPreset } from "/static/basemap.js";
 import { flyHome, runTour, tallest } from "/static/tour.js";
+import { BuildingEdges } from "/static/building-edges.js";
 
 
 // height_m is the height the convert writes; h_m is the one of files written before it.
@@ -253,6 +254,7 @@ async function main() {
   map.on("zoom", () => updateZoomUI(map));
   map.on("moveend", () => updateZoomUI(map));
   map.on("click", (e) => onClick(map, e));
+  bindEdges(map);
 
   // Picking the mobile basemap also switches the buildings to the mobile look. A switch made
   // before the first "load" leaves the building layers to selectLayer (no layer chosen yet).
@@ -500,9 +502,52 @@ function selectLayer(map, meta, layerId) {
   landmark.ws?.layerChanged();
 }
 
+// ------------------------------------------------------------------ edges
+// SketchUp-style edges over the LoD1 extrusions (building-edges.js), off by default. They follow
+// bldg-3d: its filter (parts, landmark models), its heights, and only while it is shown.
+const edges = { layer: null, hint: "" };
+
+function bindEdges(map) {
+  edges.hint = $("#edgeNote").textContent;
+  $("#edges").checked = recall("edges") === "1";
+  edges.layer = new BuildingEdges(map, {
+    id: "bldg-edges",
+    before: () => (map.getLayer(LMK_LOD1) ? LMK_LOD1 : null),
+    sourceLayer: () => state.layer,
+    filter: () => map.getFilter("bldg-3d"),
+    height: (p) => (state.heightAttr ? p[state.heightAttr] : 4),
+    base: (p) => (state.baseAttr ? p[state.baseAttr] : 0),
+    enabled: () => $("#edges").checked && $("#threeD").checked && !!state.layer,
+    color: () => edgeColor(),
+    onStats: (s) => {
+      let text = edges.hint;
+      if (!$("#threeD").checked) text = "Bật “Dựng 3D” để thấy Edge.";
+      else if (s?.tooLow) text = `Phóng tới z${s.tooLow} trở lên để vẽ Edge.`;
+      else if (s) text = `${s.buildings.toLocaleString("vi-VN")} building, ${s.segments.toLocaleString("vi-VN")} cạnh, ${s.ms} ms. Vẽ lại khi dừng kéo/zoom.`;
+      $("#edgeNote").textContent = text;
+    },
+  });
+  $("#edges").addEventListener("change", () => {
+    remember("edges", $("#edges").checked ? "1" : "0");
+    syncEdges();
+  });
+}
+
+function syncEdges() {
+  if (!edges.layer || !state.layer) return;
+  edges.layer.update();
+}
+
+// The theme's ink, a little see-through: dark brown on the light maps, cream on the dark ones.
+function edgeColor() {
+  const hex = palette(mapTheme()).outline.replace("#", "");
+  const n = parseInt(hex.length === 3 ? hex.replace(/./g, "$&$&") : hex, 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 0.7];
+}
+
 function addBuildingLayers(map) {
   const layerId = state.layer;
-  ["bldg-3d", LMK_LOD1, "bldg-2d", "bldg-line"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
+  ["bldg-edges", "bldg-3d", LMK_LOD1, "bldg-2d", "bldg-line"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
   map.addLayer({ id: "bldg-2d", type: "fill", source: "bldg", "source-layer": layerId, paint: { "fill-opacity": 0.85 } });
   map.addLayer({ id: "bldg-line", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-color": palette(mapTheme()).outline, "line-opacity": 0.3, "line-width": 0.5 } });
   map.addLayer({ id: "bldg-3d", type: "fill-extrusion", source: "bldg", "source-layer": layerId, paint: { "fill-extrusion-opacity": 0.92, "fill-extrusion-vertical-gradient": true } });
@@ -571,6 +616,7 @@ function syncExtrusions(map) {
   const hidden = landmark.ws ? landmark.ws.hidden() : [];
   const { extrusion, overlay } = landmarkFilters(state.lmView, { parts: partsFilter(), hidden, idCol: state.idCol, parentAttr: state.parentAttr });
   map.setFilter("bldg-3d", extrusion);
+  syncEdges();  // the edges follow this filter
   if (map.getLayer(LMK_LOD1)) {
     if (overlay) map.setFilter(LMK_LOD1, overlay);
     map.setLayoutProperty(LMK_LOD1, "visibility", overlay && $("#threeD").checked ? "visible" : "none");

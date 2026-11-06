@@ -35,7 +35,7 @@ const SHADOW_MAX_SPAN = 0.045; // degrees; the server caps a request at 0.05
 const shadow = { key: null, bbox: null, data: null, info: "", download: "", appliedKey: null, seq: 0, timer: null };
 
 function shadowPresetId() {
-  return $("#baseSel").value === "vmap" ? vmap.preset : "day";
+  return vmap.preset;
 }
 
 // Area around the centre: pitched views reach the horizon, so the box is capped at

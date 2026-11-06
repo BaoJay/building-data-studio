@@ -23,7 +23,9 @@ const BASEMAPS = {
 };
 export const COMPASS = ["bắc", "đông bắc", "đông", "đông nam", "nam", "tây nam", "tây", "tây bắc"];
 
-// VMAP light presets come from the server (app/vmap.py), the one place they are defined.
+// VMAP light presets come from the server (app/vmap.py), the one place they are defined. They
+// apply on every basemap: the VMAP style of the preset gives its `light` and metadata (preset id
+// for the landmark emissive / glass), on "vmap" also all its layers.
 // `light` is the root light of the style last loaded for the current preset.
 export const vmap = { presets: [], preset: "day", light: null };
 let baseSeq = 0;
@@ -59,9 +61,9 @@ export function vmapPreset(id = vmap.preset) {
   return vmap.presets.find((p) => p.id === id);
 }
 
-// Building look of the mobile app: the active preset on the VMAP basemap, its day look elsewhere.
+// Building look of the mobile app in the active preset, whatever the basemap.
 export function mobileBuilding() {
-  return vmapPreset($("#baseSel").value === "vmap" ? vmap.preset : "day")?.building;
+  return vmapPreset()?.building;
 }
 
 export function initBasemap(fallback) {
@@ -73,9 +75,10 @@ export function initBasemap(fallback) {
 }
 
 function renderVmapControls() {
-  const on = $("#baseSel").value === "vmap" && vmap.presets.length > 0;
-  $("#vmapControls").hidden = !on;
-  if (!on) return;
+  $("#vmapControls").hidden = !vmap.presets.length;
+  if (!vmap.presets.length) return;
+  // The style.json to hand to the mobile team only exists for the VMAP basemap.
+  $("#presetDownload").parentElement.hidden = $("#baseSel").value !== "vmap";
   $("#presetSeg").innerHTML = vmap.presets.map((p) => `<button type="button" data-preset="${esc(p.id)}" aria-pressed="${p.id === vmap.preset}"
     title="Style ${esc(p.style)} của VMAP">${esc(p.label)}</button>`).join("");
   const p = vmapPreset();
@@ -92,7 +95,8 @@ function renderPresetNote() {
     const [, az, polar] = l.position;
     light = ` Light của style: ${l.color ?? "#ffffff"}, cường độ ${l.intensity ?? 0.5}, từ hướng ${COMPASS[Math.round(az / 45) % 8]}, cao ${90 - polar}°.`;
   }
-  $("#presetNote").textContent = `${p.style}: ${p.note}${light}`;
+  const lead = $("#baseSel").value === "vmap" ? `${p.style}: ${p.note}` : `Ánh sáng của ${p.style}, nền bản đồ giữ màu riêng.`;
+  $("#presetNote").textContent = `${lead}${light}`;
 }
 
 // Switch basemap / preset (or building source). Only the latest request is applied, so fast
@@ -157,18 +161,16 @@ export async function basemapStyle(key, bldgSource) {
   let style = { version: 8, sources: {}, layers: [bg] };
   $("#baseNote").textContent = "";
   try {
-    if (def.style) {
-      const preset = vmap.preset;
-      const res = await fetch(def.vmap ? `${def.style}?preset=${encodeURIComponent(preset)}` : def.style);
+    if (def.vmap) {
+      const { style: s, repo } = await presetStyle();
+      style = s;
+      if (repo) $("#baseNote").textContent = `Không tải được style live từ assets.vmaps.vn — đang dùng bản lưu trong repo (map-styles/${vmapPreset().style}.style.json).`;
+    } else if (def.style) {
+      const res = await fetch(def.style);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       style = await res.json();
-      if (def.vmap && preset === vmap.preset) {  // a slower answer for an earlier click is dropped anyway
-        vmap.light = style.light || null;
-        renderPresetNote();
-        if (res.headers.get("X-VMAP-Source") === "repo") {
-          $("#baseNote").textContent = `Không tải được style live từ assets.vmaps.vn — đang dùng bản lưu trong repo (map-styles/${vmapPreset().style}.style.json).`;
-        }
-      }
+    }
+    if (def.style) {
       style.layers = style.layers.filter((l) => l["source-layer"] !== "building");
     } else if (def.raster) {
       style.sources.base = { type: "raster", tiles: def.raster, tileSize: 256, attribution: def.attribution, maxzoom: 19 };
@@ -177,6 +179,27 @@ export async function basemapStyle(key, bldgSource) {
   } catch (e) {
     $("#baseNote").textContent = `Không tải được bản đồ nền (${e.message}) — đang dùng nền trống.`;
   }
+  // Any other basemap takes the light and metadata of the preset's VMAP style.
+  if (!def.vmap && vmap.presets.length) {
+    try {
+      const { style: lit } = await presetStyle();
+      if (lit.light) style.light = lit.light;
+      style.metadata = { ...style.metadata, ...lit.metadata };
+    } catch { /* the basemap keeps its own light */ }
+  }
   if (bldgSource) style.sources.bldg = bldgSource;
   return style;
+}
+
+// The VMAP style of the current preset (served by app/vmap.py, live or its repo copy).
+async function presetStyle() {
+  const preset = vmap.preset;
+  const res = await fetch(`${BASEMAPS.vmap.style}?preset=${encodeURIComponent(preset)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const style = await res.json();
+  if (preset === vmap.preset) {  // a slower answer for an earlier click is dropped anyway
+    vmap.light = style.light || null;
+    renderPresetNote();
+  }
+  return { style, repo: res.headers.get("X-VMAP-Source") === "repo" };
 }

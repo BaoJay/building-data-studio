@@ -262,10 +262,123 @@ def test_night_floors_every_wall_to_the_light_colour():
         assert shade(rgb(BUILDING), n, light, height_m=336, t=1) == pytest.approx(floor)
 
 
-def test_emissive_is_for_the_night_style_only():
-    lit = {p: json.loads(vmap.PRESETS[p].local_copy.read_text()).get("metadata", {}).get("tasco:light-preset") == "night"
-           for p in PRESET_IDS}
-    assert lit == {"dawn": False, "day": False, "dusk": False, "night": True}
+def test_every_vmap_style_names_its_light_preset():
+    """Emissive gains and glass follow metadata "tasco:light-preset" of the style."""
+    named = {p: json.loads(vmap.PRESETS[p].local_copy.read_text()).get("metadata", {}).get("tasco:light-preset") for p in PRESET_IDS}
+    assert named == {p: p for p in PRESET_IDS}
+
+
+# ------------------------------------------------------------------ emissive by group, glass (handoff 03/11/2026)
+
+EMISSIVE_GAIN = {
+    "led": {"dawn": 0.4, "day": 0, "dusk": 0.9, "night": 1.0},
+    "led_wash": {"dawn": 0.3, "day": 0, "dusk": 0.8, "night": 1.0},
+    "lobby": {"dawn": 0.3, "day": 0, "dusk": 0.6, "night": 0.8},
+    "windows": {"dawn": 0, "day": 0, "dusk": 0, "night": 0},
+    "other": {"dawn": 0.3, "day": 0, "dusk": 0.6, "night": 1.0},
+}
+GLASS = {
+    "night": (0.9, "#0B1424", "#3A3A52", "#0A0C12"),
+    "dusk": (0.7, "#2B3A66", "#C98E6A", "#1A1A22"),
+    "dawn": (0.6, "#5A7AB0", "#F2C49A", "#2A2A30"),
+    "day": (0.0, "#7FA8E0", "#DCE6F2", "#5A5E66"),
+}
+GROUPS = [None, "", "led_warm", "led_white", "led_line", "glow", "sign_tasco", "logo", "led_wash", "lobby", "windows_01", "facade_x"]
+
+
+def linear_to_srgb(c):
+    return c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+
+
+def gain_row(group):
+    g = group or ""
+    if g in ("led_wash", "lobby"):
+        return g
+    if g.startswith("windows"):
+        return "windows"
+    if g in ("led_warm", "led_white", "led_line", "glow") or g.startswith(("sign", "logo")):
+        return "led"
+    return "other"
+
+
+def emissive_mode(group):
+    return 0 if not group else 2 if group == "led_wash" else 1
+
+
+def material_emissive(preset, extras, factor, khr=1.0):
+    group = extras.get("emissive_group") or ""
+    mode = emissive_mode(group) if max(factor) > 0 else 0
+    own = extras.get("emissive_strength")
+    strength = own if isinstance(own, (int, float)) and own >= 0 else khr
+    gain = EMISSIVE_GAIN[gain_row(group)][preset] * strength if mode and preset in PRESET_IDS else 0
+    return {"mode": mode, "gain": gain, "factor": [linear_to_srgb(min(max(f, 0), 1)) for f in factor]}
+
+
+def apply_emissive(color, em, texel=None):
+    e = [f * (texel[i] if texel else 1) for i, f in enumerate(em["factor"])]
+    m = max(texel) if texel else 1
+    if em["mode"] == 1:
+        return [mix(c, e[i], clamp(em["gain"] * m, 0, 1)) for i, c in enumerate(color)]
+    if em["mode"] == 2:
+        return [clamp(c + e[i] * em["gain"], 0, 1) for i, c in enumerate(color)]
+    return color
+
+
+def smoothstep(e0, e1, x):
+    t = clamp((x - e0) / (e1 - e0), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def glass_reflect(color, n, v, preset):
+    reflect, zenith, horizon, ground = GLASS.get(preset, (0.0, *GLASS["day"][1:]))
+    if preset not in GLASS:
+        reflect = 0.0
+    zenith, horizon, ground = rgb(zenith), rgb(horizon), rgb(ground)
+    d = dot(n, v)
+    r = [2 * d * n[i] - v[i] for i in range(3)]
+    f = 0.04 + 0.96 * (1 - max(d, 0)) ** 5
+    if r[1] >= 0:
+        sky = [mix(horizon[i], zenith[i], smoothstep(0, 0.6, r[1])) for i in range(3)]
+    else:
+        sky = [mix(horizon[i], ground[i], smoothstep(0, 0.3, -r[1])) for i in range(3)]
+    t = clamp(f * reflect, 0, 1)
+    return [mix(c, sky[i], t) for i, c in enumerate(color)]
+
+
+def test_the_led_colour_is_turned_into_srgb_before_mixing():
+    """[1, 0.8, 0.5] linear is [1, 0.906, 0.735] in sRGB: mixed raw it would turn orange."""
+    assert material_emissive("night", {"emissive_group": "led_warm"}, [1, 0.8, 0.5])["factor"] == pytest.approx([1, 0.906, 0.735], abs=1e-3)
+
+
+def test_replace_makes_the_line_led_its_own_colour_at_night():
+    """D01_Frost_White (255, 242, 206) under the night light, plus [1, 0.8, 0.5]: added it
+    clamped to white; replaced it is the LED colour."""
+    light = resolve(style_light("night"))
+    lit = shade(rgb("#fff2ce"), [0, -1, 0], light, height_m=110.6, t=0.5)
+    em = material_emissive("night", {"emissive_group": "led_warm"}, [1, 0.8, 0.5])
+    assert apply_emissive(lit, em) == pytest.approx([1, 0.906, 0.735], abs=1e-3)
+    added = [clamp(c + f, 0, 1) for c, f in zip(lit, em["factor"])]
+    assert added[0] == 1 and added[1] > 0.95  # the old sum: near white
+
+
+def test_led_wash_adds_the_baked_light_and_is_nothing_by_day():
+    light = resolve(style_light("night"))
+    wall = shade(rgb("#8e8e8e"), [0, -1, 0], light, height_m=110.6, t=0.5)
+    em = material_emissive("night", {"emissive_group": "led_wash"}, [1, 1, 1])
+    assert apply_emissive(wall, em, [0.6, 0.5, 0.3]) == pytest.approx([clamp(c + t, 0, 1) for c, t in zip(wall, [0.6, 0.5, 0.3])])
+    day = material_emissive("day", {"emissive_group": "led_wash"}, [1, 1, 1])
+    assert apply_emissive(wall, day, [0.6, 0.5, 0.3]) == wall  # *_BAKED looks like its plain twin by day
+
+
+def test_no_group_or_no_factor_never_glows():
+    assert material_emissive("night", {}, [1, 1, 1])["mode"] == 0
+    assert material_emissive("night", {"emissive_group": "lobby"}, [0, 0, 0])["mode"] == 0
+
+
+def test_every_group_is_dark_by_day():
+    for g in GROUPS:
+        assert material_emissive("day", {"emissive_group": g}, [1, 1, 1])["gain"] == 0
+
 
 
 def test_emissive_mask_can_use_texcoord_1():
@@ -276,6 +389,24 @@ def test_emissive_mask_can_use_texcoord_1():
     model = (LIGHT_JS.parent / "landmark-model.js").read_text()
     assert 'setAttribute("lmk_uv1"' in model
     assert "emissiveMap.channel === 1" in model
+
+
+def test_shader_blends_emissive_by_group_and_reflects_glass():
+    src = LIGHT_JS.read_text()
+    frag = src[src.index("export const FRAGMENT_SHADER"):]
+    for needle in ("uniform int u_emissive_mode;", "if (u_emissive_mode == 1) color = mix(color, E, clamp(gain * m, 0.0, 1.0));",
+                   "else if (u_emissive_mode == 2) color = clamp(color + E * gain, 0.0, 1.0);", "m = max(max(t.r, t.g), t.b);",
+                   "#ifdef LMK_EMISSIVE_MAP", "#ifdef LMK_GLASS", "vec3 R = reflect(-V, n);",
+                   "float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);",
+                   "mix(u_sky_horizon, u_sky_zenith, smoothstep(0.0, 0.6, R.y))",
+                   "mix(u_sky_horizon, u_sky_ground, smoothstep(0.0, 0.3, -R.y))",
+                   "clamp(F * u_glass_reflect * on, 0.0, 1.0)", "float on = 1.0 - u_override.a;"):
+        assert needle in frag, needle
+    assert frag.index("glassReflect(color, n, on)") < frag.index("u_emissive_mode == 1"), "emissive goes on after the glass"
+    model = (LIGHT_JS.parent / "landmark-model.js").read_text()
+    for needle in ("material.userData = extras", "defines.LMK_GLASS", "defines.LMK_EMISSIVE_MAP", "LL.cameraInModel(",
+                   "LL.materialEmissive(this.preset, m.userData"):
+        assert needle in model, needle
 
 
 def test_shader_uses_the_same_constants():
@@ -313,8 +444,7 @@ console.log(JSON.stringify(cases.map((c) => {
     back: LL.modelToEnu(LL.enuToModel(c.n, c.heading), c.heading),
     shade: LL.shade(base, c.n, light, { bearing: c.bearing, heightM: 336, t: c.t }),
     night: LL.isNightStyle({ "tasco:light-preset": "night" }) && !LL.isNightStyle({ "tasco:style-variant": "dark" }),
-    levels: ["dawn", "day", "dusk", "night"].map((p) => LL.emissiveLevel({ "tasco:light-preset": p })).concat(LL.emissiveLevel({ "tasco:style-variant": "dark" }), LL.emissiveLevel(undefined)),
-    emissiveOn: LL.landmarkUniforms(light, { emissive: 0.6 }).u_emissive_on,
+    presets: ["dawn", "day", "dusk", "night"].map((p) => LL.lightPreset({ "tasco:light-preset": p })).concat(LL.lightPreset({ "tasco:style-variant": "dark" }), LL.lightPreset(undefined)),
   };
 })));
 """ % BUILDING)
@@ -333,8 +463,75 @@ console.log(JSON.stringify(cases.map((c) => {
         expected = shade(rgb(BUILDING), c["n"], light, bearing=c["bearing"], height_m=336, t=c["t"])
         assert r["shade"] == pytest.approx(expected, abs=1e-12)
         assert r["night"] is True
-        assert r["levels"] == [0.3, 0, 0.6, 1, 0, 0]
-        assert r["emissiveOn"] == 0.6
+        assert r["presets"] == ["dawn", "day", "dusk", "night", None, None]
+
+
+@needs_node
+def test_js_emissive_and_glass_match_this_port(tmp_path):
+    shutil.copy(LIGHT_JS, tmp_path / "landmark-light.mjs")
+    presets = [*PRESET_IDS, None]
+    em_cases = [{"preset": p, "extras": {"emissive_group": g} | ({"emissive_strength": 2} if g == "led_wash" else {}),
+                 "factor": f, "texel": t}
+                for p in presets for g in GROUPS for f in ([1, 0.8, 0.5], [0, 0, 0]) for t in (None, [0.6, 0.5, 0.2])]
+    s = math.sqrt(0.5)
+    glass_cases = [{"preset": p, "n": n, "v": v}
+                   for p in presets for n in ([0, 0, 1], [1, 0, 0], [0, 1, 0], [s, 0, s])
+                   for v in ([0, 0, 1], [0.6, 0.0, 0.8], [0, 0.6, 0.8], [0, -0.6, 0.8], [0.8, 0.6, 0])]
+    runner = tmp_path / "run.mjs"
+    runner.write_text("""
+import * as LL from "./landmark-light.mjs";
+import { readFileSync } from "node:fs";
+const { em, glass, mvp } = JSON.parse(readFileSync(0, "utf8"));
+const base = [0.3, 0.32, 0.4];
+console.log(JSON.stringify({
+  em: em.map((c) => {
+    const e = LL.materialEmissive(c.preset, c.extras, c.factor);
+    return { mode: e.mode, gain: e.gain, factor: e.u_emissive_factor, color: LL.applyEmissive(base, e, c.texel) };
+  }),
+  glass: glass.map((c) => LL.glassReflect(base, c.n, c.v, c.preset)),
+  uniforms: LL.landmarkUniforms(LL.resolveLight({}), { preset: "night" }),
+  eye: LL.cameraInModel(mvp),
+  ortho: LL.cameraInModel([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+  contract: LL.GLB_CONTRACT.map((c) => c.key),
+}));
+""")
+    eye = [-80.0, 104.5, 212.8]
+    mvp = _perspective_look_at(eye, [-4, 45, 4])
+    proc = subprocess.run(["node", str(runner)], input=json.dumps({"em": em_cases, "glass": glass_cases, "mvp": mvp}),
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    r = json.loads(proc.stdout)
+    base = [0.3, 0.32, 0.4]
+    for c, got in zip(em_cases, r["em"]):
+        want = material_emissive(c["preset"], c["extras"], c["factor"])
+        assert (got["mode"], got["gain"]) == (want["mode"], pytest.approx(want["gain"])), c
+        assert got["factor"] == pytest.approx(want["factor"], abs=1e-12)
+        assert got["color"] == pytest.approx(apply_emissive(base, want, c["texel"]), abs=1e-12), c
+    for c, got in zip(glass_cases, r["glass"]):
+        assert got == pytest.approx(glass_reflect(base, c["n"], c["v"], c["preset"]), abs=1e-12), c
+    u = r["uniforms"]
+    assert u["u_glass_reflect"] == 0.9 and u["u_sky_horizon"] == pytest.approx(rgb("#3A3A52"))
+    assert r["eye"] == pytest.approx(eye, abs=1e-6)
+    assert r["ortho"] is None
+    assert {"anchor", "zoom_range", "emissive_group", "emissive_strength", "emissiveTexture", "TEXCOORD_1", "surface_type"} <= set(r["contract"])
+
+
+def _perspective_look_at(eye, target, fov=40.0, near=1.0, far=5000.0):
+    """projection × view (column-major, 16 numbers), as a GL camera at `eye` looking at `target`."""
+    f = [t - e for t, e in zip(target, eye)]
+    fl = math.sqrt(dot(f, f))
+    f = [x / fl for x in f]
+    up = [0, 1, 0]
+    sx = [f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]]
+    sl = math.sqrt(dot(sx, sx))
+    sx = [x / sl for x in sx]
+    u = [sx[1] * f[2] - sx[2] * f[1], sx[2] * f[0] - sx[0] * f[2], sx[0] * f[1] - sx[1] * f[0]]
+    view = [[sx[0], sx[1], sx[2], -dot(sx, eye)], [u[0], u[1], u[2], -dot(u, eye)],
+            [-f[0], -f[1], -f[2], dot(f, eye)], [0, 0, 0, 1]]
+    k = 1 / math.tan(math.radians(fov) / 2)
+    proj = [[k, 0, 0, 0], [0, k, 0, 0], [0, 0, (far + near) / (near - far), 2 * far * near / (near - far)], [0, 0, -1, 0]]
+    m = [[sum(proj[i][k2] * view[k2][j] for k2 in range(4)) for j in range(4)] for i in range(4)]
+    return [m[r][c] for c in range(4) for r in range(4)]  # column-major
 
 
 # ------------------------------------------------------------------ footprint lookup

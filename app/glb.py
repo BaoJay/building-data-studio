@@ -8,6 +8,11 @@ axis-aligned box of the lot. glTF units are metres, +Y up.
 
 triangles() reads the geometry itself (positions and indices of the BIN chunk), for the ground
 shadow a landmark casts (app/landmark_shadow.py).
+
+The landmark pipeline also writes `asset.extras` (where the model stands: `anchor` {lat, lon};
+which zooms the file is for: `lod_zoom`, `zoom_range` [min, max | null]) and `materials[].extras`
+(`emissive_group`, `surface_type`): see asset_extras() and the GLB contract in
+app/static/landmark-light.js.
 """
 
 from __future__ import annotations
@@ -145,8 +150,65 @@ def _roots(gltf: dict[str, Any]) -> list[int]:
     return [i for i in range(len(nodes)) if i not in children]
 
 
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def anchor_of(extras: Any) -> dict[str, float] | None:
+    """asset.extras.anchor ({lat, lon}, degrees) when it is a valid point, else None."""
+    a = extras.get("anchor") if isinstance(extras, dict) else None
+    if not isinstance(a, dict):
+        return None
+    lat, lon = _number(a.get("lat")), _number(a.get("lon"))
+    if lat is None or lon is None or not (-85 <= lat <= 85 and -180 <= lon <= 180):
+        return None
+    return {"lat": lat, "lon": lon}
+
+
+def lod_of(extras: Any) -> dict[str, Any] | None:
+    """The zooms a file is drawn at: asset.extras.zoom_range [min, max | null] (min <= zoom < max,
+    null: no upper bound) and lod_zoom (min when missing). None when there is no valid range."""
+    r = extras.get("zoom_range") if isinstance(extras, dict) else None
+    if not isinstance(r, list) or len(r) != 2:
+        return None
+    lo = _number(r[0])
+    hi = None if r[1] is None else _number(r[1])
+    if lo is None or not 0 <= lo <= 30 or (r[1] is not None and (hi is None or hi <= lo)):
+        return None
+    z = _number(extras.get("lod_zoom"))
+    num = lambda v: int(v) if v is not None and v.is_integer() else v  # noqa: E731  17.0 -> 17
+    return {"lod_zoom": num(z if z is not None else lo), "zoom_range": [num(lo), num(hi)]}
+
+
+def asset_extras(gltf: dict[str, Any]) -> dict[str, Any]:
+    """What the studio reads of asset.extras: anchor and LOD zoom range (None when missing)."""
+    extras = (gltf.get("asset") or {}).get("extras")
+    return {"anchor": anchor_of(extras), "lod": lod_of(extras)}
+
+
+def material_summary(gltf: dict[str, Any]) -> dict[str, Any]:
+    """materials[].extras the landmark shader reads: how many materials per emissive_group
+    (with an emissiveFactor above 0, as the shader requires) and how many are glass."""
+    groups: dict[str, int] = {}
+    glass = 0
+    for m in gltf.get("materials") or []:
+        extras = m.get("extras") if isinstance(m, dict) else None
+        if not isinstance(extras, dict):
+            continue
+        group = extras.get("emissive_group")
+        factor = m.get("emissiveFactor") or [0, 0, 0]
+        if isinstance(group, str) and group and any((_number(v) or 0) > 0 for v in factor[:3]):
+            groups[group] = groups.get(group, 0) + 1
+        if extras.get("surface_type") == "glass":
+            glass += 1
+    return {"emissive_groups": dict(sorted(groups.items())), "glass": glass}
+
+
 def inspect(path: Path) -> dict[str, Any]:
-    """Counts, box and unreadable extensions of the default scene of a .glb."""
+    """Counts, box, unreadable extensions, asset.extras and material extras of the default scene
+    of a .glb."""
     gltf = read_json(path)
     nodes = gltf.get("nodes") or []
     meshes = gltf.get("meshes") or []
@@ -193,6 +255,8 @@ def inspect(path: Path) -> dict[str, Any]:
         "bounds": bounds,  # [[min x, y, z], [max x, y, z]] in model metres, +Y up
         "unreadable": sorted({label for ext, label in UNREADABLE.items() if ext in used}),
         "generator": str((gltf.get("asset") or {}).get("generator") or ""),
+        **asset_extras(gltf),
+        **material_summary(gltf),
     }
 
 

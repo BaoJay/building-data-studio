@@ -220,6 +220,137 @@ def test_folder_only_opens_landmarks(library, lid):
         library.folder(lid)
 
 
+# ------------------------------------------------------------------ asset.extras, material extras, levels of detail
+
+TASCO = {"lat": 21.0156627, "lon": 105.7828616}
+
+
+def lit_gltf(lod_zoom=17, zoom_range=(17, None), anchor=TASCO, **extra) -> dict:
+    """tower_gltf() as the landmark pipeline writes it: asset.extras (anchor, zoom range) and
+    material extras (an LED line, the baked wash, glass)."""
+    extras = {"pipeline": "test", "lod_zoom": lod_zoom, "zoom_range": list(zoom_range)}
+    if anchor:
+        extras["anchor"] = anchor
+    g = tower_gltf(**extra)
+    g["asset"] = {"version": "2.0", "generator": "test", "extras": extras}
+    g["materials"] = [
+        {"name": "D01_Frost_White_LED_WARM", "emissiveFactor": [1, 0.8, 0.5], "extras": {"emissive_group": "led_warm", "surface_type": "sign"}},
+        {"name": "Wall_BAKED", "emissiveFactor": [1, 1, 1], "extras": {"emissive_group": "led_wash", "emissive_suffix": "BAKED"}},
+        {"name": "Glass", "extras": {"surface_type": "glass"}},
+        {"name": "Group_without_light", "extras": {"emissive_group": "lobby"}},  # no emissiveFactor: never glows
+    ]
+    return g
+
+
+def upload_lit(library, lid, *, lod=None, version=None, **kw):
+    src = library.folder(lid) / ".upload-test.glb"
+    make_glb(src, lit_gltf(**kw))
+    if version is None:
+        return library.add_version(lid, src, original_name=f"tasco_z{kw.get('lod_zoom', 17)}.glb", note="")
+    return library.add_lod(lid, version, src, original_name=f"tasco_z{kw.get('lod_zoom', 17)}.glb")
+
+
+def test_inspect_reads_asset_and_material_extras(tmp_path):
+    path = tmp_path / "lit.glb"
+    make_glb(path, lit_gltf())
+    m = glb.inspect(path)
+    assert m["anchor"] == TASCO
+    assert m["lod"] == {"lod_zoom": 17, "zoom_range": [17, None]}
+    assert m["emissive_groups"] == {"led_warm": 1, "led_wash": 1}
+    assert m["glass"] == 1
+    path2 = tmp_path / "plain.glb"
+    make_glb(path2, tower_gltf())
+    m = glb.inspect(path2)
+    assert (m["anchor"], m["lod"], m["emissive_groups"], m["glass"]) == (None, None, {}, 0)
+
+
+@pytest.mark.parametrize(("extras", "lod"), [
+    ({"zoom_range": [16, 17], "lod_zoom": 16}, {"lod_zoom": 16, "zoom_range": [16, 17]}),
+    ({"zoom_range": [17, None]}, {"lod_zoom": 17, "zoom_range": [17, None]}),
+    ({"zoom_range": [15.5, 16]}, {"lod_zoom": 15.5, "zoom_range": [15.5, 16]}),
+    ({"zoom_range": [17, 16]}, None),
+    ({"zoom_range": [17]}, None),
+    ({"zoom_range": ["17", None]}, None),
+    ({"zoom_range": [True, None]}, None),
+    ({}, None),
+    (None, None),
+])
+def test_zoom_range_of_asset_extras(extras, lod):
+    assert glb.lod_of(extras) == lod
+
+
+@pytest.mark.parametrize(("extras", "anchor"), [
+    ({"anchor": {"lat": 21.0156627, "lon": 105.7828616}}, {"lat": 21.0156627, "lon": 105.7828616}),
+    ({"anchor": {"lat": 105.78, "lon": 21.01}}, None),  # swapped: lat beyond 85
+    ({"anchor": [21.0156627, 105.7828616]}, None),
+    ({"anchor": {"lat": "21", "lon": 105}}, None),
+    ({}, None),
+])
+def test_anchor_of_asset_extras(extras, anchor):
+    assert glb.anchor_of(extras) == anchor
+
+
+def test_a_georeferenced_glb_is_placed_at_its_anchor_heading_0(library, tmp_path):
+    lid = register(library)["id"]
+    upload(library, lid, tmp_path)  # an older model, turned by hand
+    library.set_placement(lid, 1, {"heading": 37, "scale": 1.2, "anchor": "bbox", "lon": 105.8376, "lat": 21.0372})
+    library.use(lid, 1)
+    v2 = upload_lit(library, lid)["versions"][1]
+    # Not the hand-made placement of v1: the GLB says where it stands.
+    assert v2["placement"] == {"heading": 0.0, "scale": 1.0, "anchor": "origin", "lon": TASCO["lon"], "lat": TASCO["lat"]}
+
+
+def test_files_per_zoom_range_join_their_version(library, tmp_path):
+    lid = register(library)["id"]
+    upload_lit(library, lid)
+    upload_lit(library, lid, version=1, lod_zoom=15, zoom_range=(15, 16))
+    rec = upload_lit(library, lid, version=1, lod_zoom=16, zoom_range=(16, 17))
+    v = rec["versions"][0]
+    assert [(x["lod_zoom"], x["zoom_range"], x["file"]) for x in v["lods"]] == [(16, [16, 17], "v1_z16.glb"), (15, [15, 16], "v1_z15.glb")]
+    assert rec["history"][-1] == {**rec["history"][-1], "action": "lod", "version": 1, "lod_zoom": 16}
+    assert len(rec["versions"]) == 1
+    path, item = library.glb_path(lid, 1, 15)
+    assert path.name == "v1_z15.glb" and item["zoom_range"] == [15, 16]
+    assert library.glb_path(lid, 1, 17)[0].name == "v1.glb"  # the version's own range
+    assert library.glb_path(lid, 1)[0].name == "v1.glb"
+    with pytest.raises(lib.NotFound):
+        library.glb_path(lid, 1, 14)
+    # What the preview and the app read: most detailed first, own file flagged.
+    lods = lib.version_lods(library.read(lid)["versions"][0])
+    assert [(x["lod_zoom"], x["own"], x["file"]) for x in lods] == [(17, True, "v1.glb"), (16, False, "v1_z16.glb"), (15, False, "v1_z15.glb")]
+    library.use(lid, 1)
+    [item] = library.manifest()["landmarks"]
+    assert [(x["lod_zoom"], x["zoom_range"], x["file"]) for x in item["lods"]] == [
+        (17, [17, None], f"{lid}/v1.glb"), (16, [16, 17], f"{lid}/v1_z16.glb"), (15, [15, 16], f"{lid}/v1_z15.glb")]
+
+
+@pytest.mark.parametrize(("kw", "error"), [
+    ({"lod_zoom": 16, "zoom_range": (16, 18)}, "trùng"),          # overlaps z17 [17, ∞)
+    ({"lod_zoom": 17, "zoom_range": (12, 13)}, "trùng"),          # same lod_zoom
+    ({"lod_zoom": 16, "zoom_range": (16, 17), "anchor": {"lat": 21.0166627, "lon": 105.7828616}}, "lệch"),  # 111 m away
+])
+def test_a_file_per_zoom_is_checked(library, tmp_path, kw, error):
+    lid = register(library)["id"]
+    upload_lit(library, lid)
+    with pytest.raises(lib.LibraryError, match=error):
+        upload_lit(library, lid, version=1, **kw)
+    assert "lods" not in library.read(lid)["versions"][0]
+    assert sorted(f.name for f in (library.root / lid).glob("v*.glb")) == ["v1.glb"]
+
+
+def test_files_per_zoom_need_zoom_ranges(library, tmp_path):
+    lid = register(library)["id"]
+    upload(library, lid, tmp_path)  # no zoom_range: drawn at every zoom
+    assert lib.version_lods(library.read(lid)["versions"][0]) == []
+    with pytest.raises(lib.LibraryError, match="không có zoom_range"):
+        upload_lit(library, lid, version=1, lod_zoom=16, zoom_range=(16, 17))
+    upload_lit(library, lid)  # v2, with a range
+    src = library.folder(lid) / ".upload-test.glb"
+    make_glb(src, tower_gltf())
+    with pytest.raises(lib.LibraryError, match="asset.extras.zoom_range"):
+        library.add_lod(lid, 2, src, original_name="plain.glb")
+
+
 def test_a_bad_upload_is_refused_and_leaves_no_version(library):
     lid = register(library)["id"]
     src = library.folder(lid) / ".upload-bad.glb"

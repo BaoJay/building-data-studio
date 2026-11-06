@@ -1,7 +1,10 @@
 // node --test "tests/js/*.test.mjs"   (also run by tests/test_preview_js.py)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ModelStore, extrusionFilter, intersects, landmarkFilters, landmarkView, matchBuildings, padBbox, renderable } from "../../app/static/landmark-store.js";
+import {
+  ModelStore, anchorOf, extrusionFilter, glbInfo, inZoomRange, intersects, landmarkFilters, landmarkView, lodOf, matchBuildings,
+  overlappingLods, padBbox, pickLod, renderable, zoomLabel,
+} from "../../app/static/landmark-store.js";
 
 // A landmark every 0.001° east of (105.8, 21), footprint 0.0002° wide.
 function entry(i, extra = {}) {
@@ -236,4 +239,128 @@ test("landmarks of another layer or id column are not drawn", () => {
   const items = [{ id: "a", layer: "buildings", id_field: "building_id" }, { id: "b", layer: "other", id_field: "building_id" },
     { id: "c", layer: "buildings", id_field: "osm_id" }, { id: "d" }];
   assert.deepEqual(renderable(items, { layer: "buildings", idCol: "building_id" }).map((l) => l.id), ["a", "d"]);
+});
+
+// ------------------------------------------------------------------ levels of detail (zoom ranges)
+
+const LODS = (i) => [
+  { key: `/glb/${i}`, url: `/glb/${i}`, lod_zoom: 17, zoom_range: [17, null] },
+  { key: `/glb/${i}?z=16`, url: `/glb/${i}?z=16`, lod_zoom: 16, zoom_range: [16, 17] },
+  { key: `/glb/${i}?z=15`, url: `/glb/${i}?z=15`, lod_zoom: 15, zoom_range: [15, 16] },
+];
+
+// Like harness(), but loads the file of the zoom (load's third argument).
+function lodHarness() {
+  const calls = [];
+  const store = new ModelStore({
+    load: (e, signal, file) => new Promise((resolve, reject) => {
+      calls.push({ key: file.key, resolve: () => resolve({ key: file.key }), reject: (msg) => reject(new Error(msg)) });
+      signal.addEventListener("abort", () => reject(new Error("aborted")));
+    }),
+  });
+  return { store, calls };
+}
+
+test("zoom ranges: min <= zoom < max, null max is open", () => {
+  assert.ok(inZoomRange(17, [17, null]) && inZoomRange(30, [17, null]));
+  assert.ok(inZoomRange(16, [16, 17]) && inZoomRange(16.99, [16, 17]) && !inZoomRange(17, [16, 17]));
+  const lods = LODS(0);
+  assert.equal(pickLod(lods, 18.2).lod_zoom, 17);
+  assert.equal(pickLod(lods, 16.5).lod_zoom, 16);
+  assert.equal(pickLod(lods, 15).lod_zoom, 15);
+  assert.equal(pickLod(lods, 14.9), null, "outside every range: nothing");
+  assert.equal(pickLod(lods, 14.9, true).lod_zoom, 15, "nearest for the landmark being edited");
+  assert.equal(pickLod(lods, null).lod_zoom, 17);
+  assert.equal(zoomLabel([17, null]), "≥ 17");
+  assert.equal(zoomLabel([15.5, 16]), "15,5–16");
+  assert.deepEqual(overlappingLods(lods), []);
+  assert.equal(overlappingLods([...lods, { zoom_range: [16.5, 18] }]).length, 2);
+});
+
+test("the file of the zoom is drawn, the one before stays while it loads", async () => {
+  const { store, calls } = lodHarness();
+  store.setItems([entry(0, { lods: LODS(0) })]);
+  store.setView(WIDE, CENTER, 17.4);
+  await settle();
+  assert.deepEqual(calls.map((c) => c.key), ["/glb/0"]);
+  calls[0].resolve();
+  await settle();
+  assert.equal(store.shown()[0].file.lod_zoom, 17);
+  store.setView(WIDE, CENTER, 16.2);
+  await settle();
+  assert.equal(calls.at(-1).key, "/glb/0?z=16");
+  assert.equal(store.status("lm0").state, "loading");
+  // Meanwhile the z17 model stays on the map: the extrusion does not flash.
+  assert.equal(store.shown()[0].model.key, "/glb/0");
+  assert.deepEqual(store.hiddenBuildings(), ["b0"]);
+  calls.at(-1).resolve();
+  await settle();
+  assert.equal(store.shown()[0].model.key, "/glb/0?z=16");
+  assert.equal(store.shown()[0].file.lod_zoom, 16);
+});
+
+test("outside every zoom range a landmark is not drawn and keeps its extrusion", async () => {
+  const { store, calls } = lodHarness();
+  store.setItems([entry(0, { lods: LODS(0) }), entry(1)]);  // lm1: one file, every zoom
+  store.setView(WIDE, CENTER, 14);
+  await settle();
+  assert.deepEqual(calls.map((c) => c.key), ["/glb/1"]);
+  calls[0].resolve();
+  await settle();
+  assert.equal(store.status("lm0").state, "zoom");
+  assert.deepEqual(store.hiddenBuildings(), ["b1"]);
+});
+
+test("the landmark being edited shows the file nearest the zoom", async () => {
+  const { store, calls } = lodHarness();
+  store.setItems([]);
+  store.setOverride(entry(0, { lods: LODS(0) }));
+  store.setView(WIDE, CENTER, 13);
+  await settle();
+  assert.deepEqual(calls.map((c) => c.key), ["/glb/0?z=15"]);
+});
+
+test("a file of the zoom that fails is not replaced by another one", async () => {
+  const { store, calls } = lodHarness();
+  store.setItems([entry(0, { lods: LODS(0) })]);
+  store.setView(WIDE, CENTER, 17);
+  await settle();
+  calls[0].resolve();
+  await settle();
+  store.setView(WIDE, CENTER, 16);
+  await settle();
+  calls.at(-1).reject("hỏng");
+  await settle();
+  assert.equal(store.status("lm0").state, "error");
+  assert.deepEqual(store.shown(), []);
+});
+
+// A .glb holding only its JSON chunk.
+function glbBuffer(json) {
+  let data = new TextEncoder().encode(JSON.stringify(json));
+  const pad = (4 - (data.length % 4)) % 4;
+  const bytes = new Uint8Array(20 + data.length + pad);
+  const dv = new DataView(bytes.buffer);
+  dv.setUint32(0, 0x46546c67, true);
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, bytes.length, true);
+  dv.setUint32(12, data.length + pad, true);
+  dv.setUint32(16, 0x4e4f534a, true);
+  bytes.set(data, 20);
+  bytes.fill(0x20, 20 + data.length);
+  return bytes.buffer;
+}
+
+test("asset.extras of a local .glb: anchor and zoom range", () => {
+  const extras = { anchor: { lat: 21.0156627, lon: 105.7828616 }, lod_zoom: 16, zoom_range: [16, 17] };
+  assert.deepEqual(glbInfo(glbBuffer({ asset: { version: "2.0", extras } })),
+    { anchor: { lat: 21.0156627, lon: 105.7828616 }, lod: { lod_zoom: 16, zoom_range: [16, 17] } });
+  assert.deepEqual(glbInfo(glbBuffer({ asset: { version: "2.0" } })), { anchor: null, lod: null });
+  assert.deepEqual(glbInfo(new ArrayBuffer(8)), { anchor: null, lod: null });
+  assert.equal(anchorOf({ anchor: { lat: 105.78, lon: 21.01 } }), null, "lat and lon swapped: lat beyond 85 is refused");
+  assert.equal(anchorOf({ anchor: [21, 105] }), null);
+  assert.deepEqual(lodOf({ zoom_range: [17, null] }), { lod_zoom: 17, zoom_range: [17, null] });
+  assert.equal(lodOf({ zoom_range: [17, 16] }), null);
+  assert.equal(lodOf({ zoom_range: [17] }), null);
+  assert.equal(lodOf({ zoom_range: ["17", null] }), null);
 });

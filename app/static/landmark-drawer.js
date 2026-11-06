@@ -3,6 +3,7 @@
 // this module only reads them.
 import { $, esc, fmtBytes, fmtInt, fmtNum } from "/static/util.js";
 import { LL, anchorPoint, modelHeight, modelSize } from "/static/landmark-model.js";
+import { zoomLabel } from "/static/landmark-store.js";
 
 const HEIGHT_TOLERANCE = { m: 2, ratio: 0.05 };  // the height check warns past both
 const EARTH_M = 40075016.686;  // equator length
@@ -142,11 +143,18 @@ function versionRows(ws, rec, here) {
       : `<button class="btn small primary" type="button" data-act="use" data-v="${n}">Dùng</button>`;
     const show = !here ? "" : showing ? `<span class="hint">Đang xem</span>` : `<button class="btn small" type="button" data-act="show" data-v="${n}">Xem</button>`;
     const model = [fmtBytes(v.size), `${fmtInt(v.model.triangles)} tam giác`, h == null ? "" : `cao ${fmtNum(h, 1)} m`].filter(Boolean).join(" · ");
+    const glbUrl = `/api/landmarks/${encodeURIComponent(rec.id)}/versions/${n}/glb`;
+    const lods = v.model.lod ? [{ ...v.model.lod, own: true, size: v.size }, ...(v.lods || [])].sort((a, b) => b.zoom_range[0] - a.zoom_range[0]) : [];
+    const dl = (x) => `${glbUrl}?${x.own ? "" : `z=${x.lod_zoom}&`}download=1`;
+    const lodLinks = lods.length ? `<div class="hint">Theo zoom: ${lods.map((x) => `<a href="${dl(x)}" download title="Tải file z${x.lod_zoom} (${fmtBytes(x.size)})">z${x.lod_zoom}</a> ${esc(zoomLabel(x.zoom_range))}`).join(" · ")}</div>` : "";
+    const groups = Object.entries(v.model.emissive_groups || {}).map(([g, c]) => `${esc(g)} ${c}`);
+    if (v.model.glass) groups.push(`kính ${v.model.glass}`);
+    const extras = [groups.join(" · "), v.model.anchor ? "có anchor" : ""].filter(Boolean).join(" · ");
     let row = `<tr class="${showing ? "showing" : ""}">
       <td><b>v${n}</b><div>${statusBadge(v)}</div></td>
       <td class="lm-wrap"><div>${esc(fmtTime(v.uploaded_at))}${v.by ? ` · ${esc(v.by)}` : ""}</div>
         <div class="mono lm-file" title="${esc(v.original_name)}">${esc(v.original_name)}</div>
-        <div class="hint">${model}</div>${flags}
+        <div class="hint">${model}</div>${lodLinks}${extras ? `<div class="hint">${extras}</div>` : ""}${flags}
         ${v.note ? `<div class="lm-note">${esc(v.note)}</div>` : ""}</td>
       <td><div class="lm-acts">${show}${use}
         <a class="btn small" href="/api/landmarks/${encodeURIComponent(rec.id)}/versions/${n}/glb?download=1" download>Tải</a>
@@ -169,6 +177,7 @@ function historyHtml(rec) {
       case "register": return "Đăng ký landmark";
       case "upload": return `Upload v${ev.version}`;
       case "placement": return `Lưu placement v${ev.version}`;
+      case "lod": return `Thêm file z${ev.lod_zoom} cho v${ev.version}`;
       case "edit": return `Sửa ${ev.fields.map((f) => (f === "name" ? "tên" : "ID liên kết")).join(", ")}`;
       case "use":
         if (ev.to == null) return `Bỏ dùng v${ev.from}`;
@@ -251,24 +260,30 @@ function tryHtml(ws, canUpload) {
   const base = ws.sel?.kind === "landmark" ? ws.baseVersion() : null;
   return `<section class="lm-sec">
     <h3>${canUpload ? "File GLB" : "Thử file GLB"}</h3>
-    <label class="field"><span>Chọn file .glb để xem thử trên bản đồ (chỉ đọc trong trình duyệt${canUpload ? ", chưa upload" : ""})</span>
-      <input type="file" id="lmFile" accept=".glb,model/gltf-binary"></label>
-    ${local ? `<div class="hint">Đang xem thử <b class="mono">${esc(local.name)}</b> (${fmtBytes(local.file.size)}), chưa upload.</div>` : ""}
+    <label class="field"><span>Chọn file .glb để xem thử trên bản đồ (chỉ đọc trong trình duyệt${canUpload ? ", chưa upload" : ""}). Chọn cả bộ z15 / z16 / z17 để đổi file theo zoom.</span>
+      <input type="file" id="lmFile" accept=".glb,model/gltf-binary" multiple></label>
+    ${local ? `<div class="hint">Đang xem thử ${localFiles(local)}, chưa upload.</div>` : ""}
     ${canUpload ? `<input type="text" id="upNote" placeholder="Ghi chú cho version mới (tuỳ chọn)">` : ""}
     <div class="btn-row">
       ${canUpload ? `<button class="btn primary" type="button" data-act="upload" ${local && !ws.uploading ? "" : "disabled"}>Upload version mới</button>` : ""}
       ${local ? `<button class="btn" type="button" data-act="drop-local">Bỏ file thử</button>` : ""}
       <span class="hint" id="upStatus"></span></div>
     <div class="progress" id="upBar" hidden><span></span></div>
-    ${canUpload ? `<div class="hint">${base ? `Version mới bắt đầu với placement của v${base.version}; placement đang chỉnh (nếu khác) giữ lại để bạn lưu.` : "Version đầu tiên đặt ở tâm footprint, hướng 0."}</div>`
+    ${canUpload ? `<div class="hint">${base ? `Version mới bắt đầu với placement của v${base.version}; placement đang chỉnh (nếu khác) giữ lại để bạn lưu.` : "Version đầu tiên đặt ở tâm footprint, hướng 0."}
+      GLB có <code>asset.extras.anchor</code> thì đặt tại anchor, hướng 0. Bộ nhiều file: file chi tiết nhất là version, các file còn lại thêm vào nó theo <code>zoom_range</code>.</div>`
       : `<div class="hint">Mô hình đặt ở tâm footprint của building. Đăng ký landmark để upload file và lưu placement.</div>`}
   </section>`;
+}
+
+// The local files tried: name, zoom range, size.
+function localFiles(local) {
+  return local.files.map((f) => `<b class="mono">${esc(f.name)}</b>${f.info.lod ? ` (z${f.info.lod.lod_zoom}, zoom ${esc(zoomLabel(f.info.lod.zoom_range))})` : ""} ${fmtBytes(f.file.size)}`).join(", ");
 }
 
 function uploadOnlyHtml(ws) {
   return `<section class="lm-sec">
     <h3>Upload GLB</h3>
-    <input type="file" id="lmFile" accept=".glb,model/gltf-binary" aria-label="File GLB">
+    <input type="file" id="lmFile" accept=".glb,model/gltf-binary" multiple aria-label="File GLB (một file hoặc cả bộ theo zoom)">
     <input type="text" id="upNote" placeholder="Ghi chú (tuỳ chọn)">
     <div class="btn-row"><button class="btn primary" type="button" data-act="upload" ${ws.uploading ? "disabled" : ""}>Upload version mới</button>
       <span class="hint" id="upStatus"></span></div>
@@ -304,6 +319,7 @@ function placementHtml(ws, v) {
       <div class="btn-row">
         <button class="btn small" type="button" data-act="pick" aria-pressed="false">Chọn trên bản đồ</button>
         <button class="btn small" type="button" data-act="centroid">Về tâm footprint</button>
+        <button class="btn small" type="button" data-act="glb-anchor" hidden title="Hướng 0, tỉ lệ 1, gốc GLB tại asset.extras.anchor">Đặt theo anchor của GLB</button>
       </div>
       <div class="hint">Điểm neo trên mô hình đứng ở toạ độ này, trên mặt đất. Có thể kéo điểm ◆ trên bản đồ.</div>
     </div>
@@ -331,16 +347,42 @@ export function syncPlacement(ws) {
   box.querySelector('[data-act="save-place"]')?.toggleAttribute("disabled", !dirty);
   box.querySelector('[data-act="reset-place"]')?.toggleAttribute("disabled", !dirty);
   box.querySelector('[data-act="pick"]').setAttribute("aria-pressed", String(ws.picking));
+  const anchor = ws.glbAnchor();
+  box.querySelector('[data-act="glb-anchor"]').hidden = !anchor;
   const fp = ws.footprint();
   const rows = [];
   const note = ws.loadNote();
   if (note) rows.push(`<div class="${note.warn ? "warn" : ""}">${esc(note.text)}</div>`);
+  if (anchor) rows.push(anchorRow(anchor, d));
+  rows.push(lodRow(ws));
   if (fp) rows.push(`<div>Cách tâm footprint ${fmtNum(distanceM(fp.centroid, [d.lon, d.lat]), 1)} m.</div>`);
   const model = ws.shownModel();
   const v = ws.previewVersion();
   const h = model ? modelHeight(model, d) : v ? serverHeight(v, d) : null;
   if (h != null && fp) rows.push(heightCheck(h, fp, d.scale));
   $("#placeReadout").innerHTML = rows.join("");
+}
+
+// asset.extras.anchor of the GLB against the placement being edited.
+function anchorRow(a, d) {
+  const off = distanceM([a.lon, a.lat], [d.lon, d.lat]);
+  const same = off < 0.05 && d.heading === 0 && d.scale === 1 && d.anchor === "origin";
+  return same
+    ? `<div>Đặt đúng <code>asset.extras.anchor</code> của GLB (${a.lat.toFixed(7)}, ${a.lon.toFixed(7)}), hướng 0.</div>`
+    : `<div class="warn">GLB ghi anchor ${a.lat.toFixed(7)}, ${a.lon.toFixed(7)} (hướng 0, gốc GLB); placement đang lệch ${fmtNum(off, 1)} m`
+      + `${d.heading !== 0 ? `, hướng ${fmtNum(d.heading, 1)}°` : ""}${d.scale !== 1 ? `, tỉ lệ ${d.scale}` : ""}${d.anchor !== "origin" ? ", neo tâm đáy hộp" : ""}. `
+      + `Bấm <b>Đặt theo anchor của GLB</b>.</div>`;
+}
+
+// Which file of the landmark being edited the map draws at this zoom.
+function lodRow(ws) {
+  const f = ws.editedFiles();
+  const z = fmtNum(ws.map.getZoom(), 2);
+  if (!f?.lods) return `<div>Một file cho mọi zoom (GLB không ghi <code>zoom_range</code>).</div>`;
+  const list = f.lods.map((x) => `${x === f.file ? "<b>" : ""}z${x.lod_zoom} ${esc(zoomLabel(x.zoom_range))}${x === f.file ? "</b>" : ""}`).join(" · ");
+  const inside = f.lods.some((x) => x.zoom_range[0] <= ws.map.getZoom() && (x.zoom_range[1] === null || ws.map.getZoom() < x.zoom_range[1]));
+  const out = inside ? "" : ` <span class="warn">Zoom ${z} ngoài mọi khoảng: app không vẽ landmark (giữ extrusion LoD1); ở đây vẫn hiện z${f.file?.lod_zoom} để chỉnh.</span>`;
+  return `<div>Zoom ${z}: vẽ file <b>z${f.file?.lod_zoom}</b>. Các file: ${list}.${out}</div>`;
 }
 
 function heightCheck(modelH, fp, scale) {
@@ -374,6 +416,18 @@ function qaHtml(ws) {
         <details class="lmk-uniforms"><summary>Uniform ánh sáng (để đối chiếu khi port)</summary><pre id="lmkUniforms"></pre></details>
       </div>
     </details>
+  </section>
+  <section class="lm-sec">
+    <details class="lmk" id="contractSec" ${ws.contractOpen ? "open" : ""}>
+      <summary>Thuộc tính GLB cho Mobile</summary>
+      <div class="lmk-body">
+        <div class="hint">Mọi giá trị trong GLB mà renderer của studio đang đọc, đã implement. Renderer LMK3 của Mobile cần đọc đúng các thuộc tính này
+          (công thức và shader: <code>app/static/landmark-light.js</code>). Cột cuối là giá trị của GLB đang xem.</div>
+        <div id="lmkContract"></div>
+        <div class="btn-row"><button class="btn small" type="button" data-act="copy-contract">Sao chép (Markdown)</button><span class="hint" id="contractCopied"></span></div>
+        <textarea id="contractText" class="mono" rows="8" hidden readonly aria-label="Danh sách thuộc tính (Markdown)"></textarea>
+      </div>
+    </details>
   </section>`;
 }
 
@@ -401,6 +455,7 @@ export function renderQa(ws) {
   if (d) rows.push(lightRows(ws));
   info.innerHTML = rows.join("");
   $("#lmkUniforms").textContent = model && d ? uniformDump(ws, d) : "";
+  renderContract(ws);
 }
 
 // Which ground shadow the landmark casts (app/landmark_shadow.py): its GLB once a version is in
@@ -420,8 +475,11 @@ function lightRows(ws) {
   const [r, az, polar] = l.position;
   const extra = l.anchor === "viewport" ? ` + bearing ${fmtNum(ws.map.getBearing(), 0)}°` : "";
   const warn = l.problems.length ? ` <span class="warn">Không dùng được ${l.problems.join(", ")} của light (expression?): dùng giá trị mặc định.</span>` : "";
-  const level = ws.layer.emissive;
-  const emissive = level > 0 ? `Emissive: mức ${fmtNum(level, 1)} theo preset (dawn 0,3 · day 0 · dusk 0,6 · night 1).` : "Emissive: tắt (day; bật ở dawn 0,3 · dusk 0,6 · night 1).";
+  const preset = ws.layer.preset;
+  const g = (row) => fmtNum(LL.EMISSIVE_GAIN[row][preset], 1);
+  const emissive = !preset ? "Emissive và kính: tắt (style không có <code>tasco:light-preset</code>)."
+    : `Preset <b>${preset}</b>: gain emissive LED ${g("led")} · led_wash ${g("led_wash")} · lobby ${g("lobby")} · windows ${g("windows")} · nhóm khác ${g("other")}; `
+      + `kính phản chiếu ${fmtNum(LL.GLASS[preset].reflect, 1)}.`;
   return `<div>Light của style (anchor ${l.anchor}): màu ${rgb(l.color)}, cường độ ${l.intensity}, `
     + `[${r}, ${az}°${extra}, ${polar}°]. ${emissive}${warn}</div>`
     + `<div class="lmk-swatches">Màu mong đợi với màu so sánh ${esc(ws.host.referenceColor())}: ${expectedSwatches(ws)}</div>`;
@@ -452,10 +510,133 @@ function uniformDump(ws, d) {
     `u_lightintensity = ${u.u_lightintensity}`,
     `u_north = ${v(u.u_north)}`,
     `u_height_m = ${modelHeight(ws.shownModel(), d).toFixed(2)}`,
-    `u_emissive_on = ${u.u_emissive_on}`,
+    `u_sky_zenith = ${v(u.u_sky_zenith)}`,
+    `u_sky_horizon = ${v(u.u_sky_horizon)}`,
+    `u_sky_ground = ${v(u.u_sky_ground)}`,
+    `u_camera_pos = ${v(ws.shownModel().shared.u_camera_pos.value.toArray())}`,
+    `preset = ${ws.layer.preset ?? "—"}, u_glass_reflect = ${u.u_glass_reflect}`,
   ].join("\n");
 }
 
 function rgb(c) {
   return `rgb(${c.map((v) => Math.round(v * 255)).join(", ")})`;
+}
+
+// ------------------------------------------------------------------ GLB contract (for the app)
+
+const yes = (n, what = "") => (n ? `${n}${what ? ` ${what}` : ""}` : "—");
+
+// What the GLB on screen holds of each value of LL.GLB_CONTRACT (plain text).
+function contractValues(ws, model) {
+  const info = model.materialInfo;
+  const extras = model.asset?.extras || {};
+  const count = (f) => info.filter(f).length;
+  const tally = (key) => Object.entries(info.reduce((m, x) => (x[key] ? { ...m, [x[key]]: (m[x[key]] || 0) + 1 } : m), {}))
+    .sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(" · ");
+  const files = ws.editedFiles();
+  const a = extras.anchor;
+  const lod = extras.zoom_range ? `lod_zoom ${extras.lod_zoom ?? "—"}, zoom_range [${extras.zoom_range.map((x) => x ?? "null").join(", ")}]` : "";
+  return {
+    anchor: a ? `${a.lat}, ${a.lon}` : "—",
+    zoom_range: [lod, files?.lods?.length > 1 ? `bộ ${files.lods.length} file: ${files.lods.map((x) => `z${x.lod_zoom} ${zoomLabel(x.zoom_range)}`).join(" · ")}` : ""].filter(Boolean).join("; ") || "—",
+    emissive_group: tally("group") || "—",
+    emissive_strength: yes(count((x) => x.mode && x.strength !== 1), "vật liệu ≠ 1"),
+    emissiveFactor: yes(count((x) => Math.max(...x.factor) > 0), "vật liệu > 0"),
+    emissiveTexture: yes(count((x) => x.emissiveMap), `vật liệu (texCoord 1: ${count((x) => x.texCoord === 1)})`),
+    TEXCOORD_1: yes(count((x) => x.hasUv1), "vật liệu"),
+    surface_type: tally("surfaceType") || "—",
+    baseColor: `${info.length} vật liệu (texture: ${count((x) => x.baseMap)})`,
+    NORMAL: model.flatNormals ? `thiếu ở ${model.flatNormals} mesh (tính phẳng)` : "có ở mọi mesh",
+    alpha: [count((x) => x.alphaMask) && `MASK ${count((x) => x.alphaMask)}`, count((x) => x.doubleSided) && `doubleSided ${count((x) => x.doubleSided)}`].filter(Boolean).join(" · ") || "—",
+    texture_transform: yes(count((x) => x.transform), "vật liệu"),
+  };
+}
+
+// One row per material: group, blend, gain under the preset, surface, texCoord.
+function materialRows(ws, model) {
+  const preset = ws.layer.preset;
+  return model.materialInfo.map((x) => {
+    const e = LL.materialEmissive(preset, { emissive_group: x.group, emissive_strength: x.strength }, x.factor, x.khrStrength);
+    return {
+      name: x.name || "(không tên)", group: x.group || "—", mode: LL.EMISSIVE_MODE_NAMES[x.mode],
+      gain: x.mode ? fmtNum(e.gain, 2) : "—", surface: x.surfaceType || "—", texCoord: x.emissiveMap ? String(x.texCoord) : "—",
+      glass: x.glass,
+    };
+  }).sort((a, b) => (a.group === "—") - (b.group === "—") || a.group.localeCompare(b.group) || a.name.localeCompare(b.name));
+}
+
+export function renderContract(ws) {
+  const box = $("#lmkContract");
+  if (!box) return;
+  const model = ws.shownModel();
+  const values = model ? contractValues(ws, model) : {};
+  const preset = ws.layer.preset;
+  const contract = `<div class="tbl-wrap"><table class="props lmk-contract lmk-main"><thead><tr><th>Thuộc tính</th><th>Dùng để / quy tắc</th><th>GLB này</th></tr></thead><tbody>`
+    + LL.GLB_CONTRACT.map((c) => `<tr><td><code>${esc(c.where).replace(/([.,]) ?/g, "$1<wbr>")}</code></td><td><b>${esc(c.use)}.</b> ${esc(c.rule)}</td><td>${esc(values[c.key] ?? "—")}</td></tr>`).join("")
+    + `</tbody></table></div>`;
+  const gains = `<div class="tbl-wrap"><table class="props lmk-contract"><thead><tr><th>Gain emissive</th>${LL.PRESETS.map((p) => `<th${p === preset ? ' class="on"' : ""}>${p}</th>`).join("")}</tr></thead><tbody>`
+    + Object.entries(GAIN_ROWS).map(([row, label]) => `<tr><td>${esc(label)}</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${fmtNum(LL.EMISSIVE_GAIN[row][p], 1)}</td>`).join("")}</tr>`).join("")
+    + `<tr><td>Kính: phản chiếu</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${fmtNum(LL.GLASS[p].reflect, 1)}</td>`).join("")}</tr>`
+    + `<tr><td>Kính: zenith / horizon / ground</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${["zenith", "horizon", "ground"].map((k) => `<i class="lmk-dot" style="background:${LL.GLASS[p][k]}" title="${k} ${LL.GLASS[p][k]}"></i>`).join("")}</td>`).join("")}</tr>`
+    + `</tbody></table></div>`;
+  const mats = model ? `<details class="lmk-uniforms"><summary>${model.materialInfo.length} vật liệu của GLB này (nhóm, cách trộn, gain ở preset ${esc(preset || "—")})</summary>
+      <div class="tbl-wrap"><table class="props lmk-contract"><thead><tr><th>Vật liệu</th><th>emissive_group</th><th>Trộn</th><th>Gain</th><th>surface_type</th><th>texCoord</th></tr></thead><tbody>`
+    + materialRows(ws, model).map((r) => `<tr><td class="mono">${esc(r.name)}</td><td>${esc(r.group)}</td><td>${esc(r.mode)}</td><td>${esc(r.gain)}</td><td>${esc(r.surface)}</td><td>${esc(r.texCoord)}</td></tr>`).join("")
+    + `</tbody></table></div></details>` : `<div class="hint">Cột “GLB này” điền khi mô hình tải xong.</div>`;
+  const ignored = `<div class="hint">Không đọc (cố ý): ${LL.GLB_IGNORED.map(esc).join("; ")}.</div>`;
+  const open = box.querySelector("details")?.open;  // the material list stays open across redraws
+  box.innerHTML = contract + gains + mats + ignored;
+  if (open) box.querySelector("details")?.setAttribute("open", "");
+}
+
+const GAIN_ROWS = {
+  led: "led_warm, led_white, led_line, glow, sign*, logo* (REPLACE)",
+  led_wash: "led_wash (ADD)",
+  lobby: "lobby (REPLACE)",
+  windows: "windows* (REPLACE)",
+  other: "nhóm khác (REPLACE)",
+};
+
+// The list as Markdown, for the app team.
+export function contractMarkdown(ws) {
+  const model = ws.shownModel();
+  const values = model ? contractValues(ws, model) : {};
+  const cell = (t) => String(t).replace(/\|/g, "\\|");
+  const lines = [
+    `# Thuộc tính GLB landmark mà renderer phải đọc`,
+    "",
+    `Nguồn: Building Data Studio, \`app/static/landmark-light.js\`${model ? `. GLB: ${model.name}` : ""}.`,
+    "",
+    "| Thuộc tính | Dùng để | Quy tắc | GLB này |",
+    "|---|---|---|---|",
+    ...LL.GLB_CONTRACT.map((c) => `| \`${cell(c.where)}\` | ${cell(c.use)} | ${cell(c.rule)} | ${cell(values[c.key] ?? "—")} |`),
+    "",
+    `| Gain emissive | ${LL.PRESETS.join(" | ")} |`,
+    `|---|${LL.PRESETS.map(() => "---").join("|")}|`,
+    ...Object.entries(GAIN_ROWS).map(([row, label]) => `| ${cell(label)} | ${LL.PRESETS.map((p) => LL.EMISSIVE_GAIN[row][p]).join(" | ")} |`),
+    `| Kính: phản chiếu | ${LL.PRESETS.map((p) => LL.GLASS[p].reflect).join(" | ")} |`,
+    `| Kính: zenith / horizon / ground | ${LL.PRESETS.map((p) => `${LL.GLASS[p].zenith} / ${LL.GLASS[p].horizon} / ${LL.GLASS[p].ground}`).join(" | ")} |`,
+  ];
+  if (model) {
+    lines.push("", "| Vật liệu | emissive_group | Trộn | surface_type | texCoord |", "|---|---|---|---|---|",
+      ...materialRows(ws, model).map((r) => `| ${cell(r.name)} | ${cell(r.group)} | ${r.mode} | ${cell(r.surface)} | ${r.texCoord} |`));
+  }
+  lines.push("", `Không đọc (cố ý): ${LL.GLB_IGNORED.join("; ")}.`);
+  return lines.join("\n") + "\n";
+}
+
+export async function copyContract(ws) {
+  const text = contractMarkdown(ws);
+  const area = $("#contractText");
+  try {
+    await navigator.clipboard.writeText(text);
+    $("#contractCopied").textContent = "Đã sao chép.";
+    area.hidden = true;
+  } catch {
+    // No clipboard (permission): show the text to copy by hand.
+    area.value = text;
+    area.hidden = false;
+    area.select();
+    $("#contractCopied").textContent = "Trình duyệt chặn clipboard: chọn và sao chép trong ô dưới.";
+  }
 }

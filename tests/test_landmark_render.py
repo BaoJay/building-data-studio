@@ -15,7 +15,7 @@ import pytest
 from app import landmark_library as lib
 from app import server
 from app.jobs import FileRegistry
-from tests.test_landmark_library import footprint, make_glb, tower_gltf
+from tests.test_landmark_library import footprint, lit_gltf, make_glb, tower_gltf
 
 
 def register(library, path: Path | str, building_id: str, name: str = "") -> str:
@@ -246,6 +246,36 @@ def test_library_crud_through_the_api(app_state):
     assert status == 200 and "_trash" in json.loads(body)["moved_to"]
     status, _ = get_json(f"/api/landmarks/{lid}")
     assert status == 404
+
+
+def test_files_per_zoom_through_the_api(app_state):
+    """A version with z17 / z16 / z15 files: uploaded one after the other, listed for the preview
+    with their URLs, served by ?z=."""
+    lid = register(app_state["library"], app_state["a"], "845002110", "Tasco Tower")
+    tmp = app_state["a"].parent
+    for z, zr in ((17, [17, None]), (16, [16, 17]), (15, [15, 16])):
+        make_glb(tmp / f"z{z}.glb", lit_gltf(lod_zoom=z, zoom_range=zr))
+    status, _, body = call("PUT", f"/api/landmarks/{lid}/versions", "name=tasco_z17.glb", (tmp / "z17.glb").read_bytes())
+    assert status == 201
+    assert json.loads(body)["versions"][0]["placement"]["lon"] == 105.7828616  # asset.extras.anchor
+    for z in (16, 15):
+        status, _, body = call("PUT", f"/api/landmarks/{lid}/versions/1/lods", f"name=tasco_z{z}.glb", (tmp / f"z{z}.glb").read_bytes())
+        assert status == 201, body
+    status, _, body = call("PUT", f"/api/landmarks/{lid}/versions/1/lods", "name=again.glb", (tmp / "z16.glb").read_bytes())
+    assert status == 400 and "trùng" in json.loads(body)["error"]
+    status, _, _ = call("PUT", f"/api/landmarks/{lid}/versions/9/lods", "name=x.glb", (tmp / "z16.glb").read_bytes())
+    assert status == 404
+
+    _, data = get_json("/api/landmarks/render", f"f={app_state['ta']}")
+    [item] = [i for i in data["landmarks"] if i["id"] == lid]
+    base = f"/api/landmarks/{lid}/versions/1/glb"
+    assert [(x["lod_zoom"], x["zoom_range"], x["glb"]) for x in item["lods"]] == [
+        (17, [17, None], base), (16, [16, 17], f"{base}?z=16"), (15, [15, 16], f"{base}?z=15")]
+    for z, name in ((None, "v1.glb"), ("16", "v1_z16.glb"), ("15", "v1_z15.glb")):
+        status, _, body = call("GET", base, f"z={z}" if z else "")
+        assert status == 200 and body == (app_state["library"].folder(lid) / name).read_bytes()
+    assert call("GET", base, "z=14")[0] == 404
+    assert call("GET", base, "z=abc")[0] == 400
 
 
 # ------------------------------------------------------------------ ground shadows of the GLB

@@ -351,6 +351,31 @@ def test_files_per_zoom_need_zoom_ranges(library, tmp_path):
         library.add_lod(lid, 2, src, original_name="plain.glb")
 
 
+def test_zoom_slots_set_the_range_of_files_without_one(library, tmp_path):
+    """A z17 / z16 / z15 set chosen slot by slot: GLBs without asset.extras.zoom_range (or with
+    another one) are drawn at the slot's range."""
+    lid = register(library)["id"]
+    src = library.folder(lid) / ".upload-test.glb"
+    make_glb(src, tower_gltf())
+    library.add_version(lid, src, original_name="tasco_z17.glb", note="", slot="17")
+    make_glb(src, tower_gltf())
+    library.add_lod(lid, 1, src, original_name="tasco_z16.glb", slot="16")
+    src = library.folder(lid) / ".upload-test.glb"
+    make_glb(src, lit_gltf(lod_zoom=15, zoom_range=(15, 16)))  # the slot wins over the GLB
+    rec = library.add_lod(lid, 1, src, original_name="tasco_z15.glb", slot=15)
+    v = rec["versions"][0]
+    assert v["model"]["lod"] == {"lod_zoom": 17, "zoom_range": [17, None]}
+    lods = lib.version_lods(v)
+    assert [(x["lod_zoom"], x["zoom_range"], x["file"]) for x in lods] == [
+        (17, [17, None], "v1.glb"), (16, [15, 17], "v1_z16.glb"), (15, [0, 15], "v1_z15.glb")]
+    assert library.glb_path(lid, 1, 15)[0].name == "v1_z15.glb"
+    make_glb(src, tower_gltf())
+    with pytest.raises(lib.LibraryError, match="trùng"):  # the slot is taken
+        library.add_lod(lid, 1, src, original_name="again.glb", slot="16")
+    with pytest.raises(lib.LibraryError, match="ô zoom"):
+        library.add_lod(lid, 1, src, original_name="z14.glb", slot="14")
+
+
 def test_a_bad_upload_is_refused_and_leaves_no_version(library):
     lid = register(library)["id"]
     src = library.folder(lid) / ".upload-bad.glb"

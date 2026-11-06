@@ -23,6 +23,8 @@ min <= zoom < max). A version can then hold several files of the same model, one
 pipeline exports z15 / z16 / z17): the first upload is the version's own file (`file`, the most
 detailed: shadows, box, download), the others are added to it (`lods`). They share its placement.
 The 3D preview and the app draw the file whose range holds the zoom, none outside every range.
+A file uploaded into one of the z15 / z16 / z17 slots takes the slot's range (LOD_SLOTS) instead of
+the one its GLB says, so a GLB without asset.extras.zoom_range can be part of a set too.
 """
 
 from __future__ import annotations
@@ -51,6 +53,8 @@ MAX_SCALE = 1000.0
 MAX_TEXT = 500
 _ID_RE = re.compile(r"[^A-Za-z0-9._-]+")
 RESERVED_IDS = {"manifest.json", "render"}  # taken by an API route
+# Upload slots per level of detail: lod_zoom -> zoom range [min, max | None) the file is drawn at.
+LOD_SLOTS = {17: [17, None], 16: [15, 17], 15: [0, 15]}
 
 
 class LibraryError(ValueError):
@@ -178,6 +182,19 @@ def ranges_overlap(a: list[Any], b: list[Any]) -> bool:
 
 def zoom_label(r: list[Any]) -> str:
     return f"≥ {r[0]:g}" if r[1] is None else f"{r[0]:g}–{r[1]:g}"
+
+
+def slot_lod(slot: Any) -> dict[str, Any] | None:
+    """The LOD of an upload slot ("15", "16" or "17"), None for no slot."""
+    if slot is None or slot == "":
+        return None
+    try:
+        z = int(slot)
+    except (TypeError, ValueError):
+        z = None
+    if z not in LOD_SLOTS:
+        raise LibraryError(f"Không có ô zoom z{slot}: chỉ có {', '.join(f'z{k}' for k in sorted(LOD_SLOTS))}.")
+    return {"lod_zoom": z, "zoom_range": list(LOD_SLOTS[z])}
 
 
 def anchor_distance(a: dict[str, float], b: dict[str, float]) -> float:
@@ -398,12 +415,14 @@ class Library:
                 self._write(rec)
         return view(rec)
 
-    def add_version(self, lid: str, upload: Path, *, original_name: str, note: str) -> dict[str, Any]:
-        """Keep an uploaded .glb (a file inside the landmark folder) as the next version."""
+    def add_version(self, lid: str, upload: Path, *, original_name: str, note: str, slot: Any = None) -> dict[str, Any]:
+        """Keep an uploaded .glb (a file inside the landmark folder) as the next version (slot: the
+        zoom slot it was uploaded into, whose range replaces the GLB's)."""
         note = _text(note, "Ghi chú")
         model = glb.inspect(upload)
         if not model["meshes"]:
             raise LibraryError("GLB không có mesh nào.")
+        model["lod"] = slot_lod(slot) or model.get("lod")
         digest, size = sha256(upload), upload.stat().st_size
         with self._lock:
             rec = self.read(lid)
@@ -431,13 +450,15 @@ class Library:
             self._write(rec)
         return view(rec)
 
-    def add_lod(self, lid: str, version: int, upload: Path, *, original_name: str) -> dict[str, Any]:
+    def add_lod(self, lid: str, version: int, upload: Path, *, original_name: str, slot: Any = None) -> dict[str, Any]:
         """Keep an uploaded .glb (a file inside the landmark folder) as another level of detail of
-        a version: its zoom_range must not overlap the version's other files."""
+        a version: its zoom_range (the slot's, else the GLB's) must not overlap the version's other
+        files."""
         model = glb.inspect(upload)
         if not model["meshes"]:
             raise LibraryError("GLB không có mesh nào.")
-        lod = model.get("lod")
+        model["lod"] = slot_lod(slot) or model.get("lod")
+        lod = model["lod"]
         if not lod:
             raise LibraryError(f"{original_name or 'File'} không có asset.extras.zoom_range nên không biết vẽ ở zoom nào.")
         digest, size = sha256(upload), upload.stat().st_size

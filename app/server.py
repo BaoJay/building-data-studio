@@ -603,17 +603,18 @@ async def _receive_glb(request: Request, keep) -> Response:
 
 
 async def upload_landmark_version(request: Request) -> Response:
-    """Stream a .glb into the landmark folder and keep it as the next version."""
+    """Stream a .glb into the landmark folder and keep it as the next version (?lod=15|16|17: the
+    zoom slot it was uploaded into)."""
     note = request.query_params.get("note", "")
     return await _receive_glb(request, lambda tmp, name: library.add_version(
-        request.path_params["lid"], tmp, original_name=name, note=note))
+        request.path_params["lid"], tmp, original_name=name, note=note, slot=request.query_params.get("lod")))
 
 
 async def upload_landmark_lod(request: Request) -> Response:
     """Stream a .glb into the landmark folder and keep it as the file of another zoom range
-    (asset.extras.zoom_range) of version n."""
+    (?lod=15|16|17: the zoom slot's, else asset.extras.zoom_range) of version n."""
     return await _receive_glb(request, lambda tmp, name: library.add_lod(
-        request.path_params["lid"], request.path_params["n"], tmp, original_name=name))
+        request.path_params["lid"], request.path_params["n"], tmp, original_name=name, slot=request.query_params.get("lod")))
 
 
 async def landmark_glb(request: Request) -> Response:

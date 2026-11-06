@@ -74,6 +74,14 @@ export function glbInfo(buffer) {
   return { anchor: anchorOf(extras), lod: lodOf(extras) };
 }
 
+// Upload slots per level of detail, most detailed first: a file chosen in a slot is drawn at the
+// slot's zoom range, whatever its GLB says (same as LOD_SLOTS in app/landmark_library.py).
+export const LOD_SLOTS = [
+  { lod_zoom: 17, zoom_range: [17, null] },
+  { lod_zoom: 16, zoom_range: [15, 17] },
+  { lod_zoom: 15, zoom_range: [0, 15] },
+];
+
 export function inZoomRange(zoom, range) {
   return zoom >= range[0] && (range[1] === null || zoom < range[1]);
 }

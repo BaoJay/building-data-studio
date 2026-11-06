@@ -585,6 +585,10 @@ table.lmk-main code { overflow-wrap: anywhere; }
 .lm-sec + .lm-sec { border-top: 1px solid var(--line); padding-top: var(--space-4); }
 .lm-sec h3 { margin: 0; font: 600 16px/22px var(--font-serif); display: flex; align-items: center; gap: var(--space-2); }
 .lm-sec p { margin: 0; }
+.lm-lod-slots { display: grid; gap: var(--space-1); }
+.lm-lod-slot { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; padding: 4px 0; border-top: 1px dashed var(--line); }
+.lm-lod-slot .lm-wrap { overflow-wrap: anywhere; min-width: 0; }
+.lm-lod-slot .btn-row { flex-wrap: nowrap; }
 .lm-kicker { font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 .lm-title-row { display: flex; align-items: start; justify-content: space-between; gap: var(--space-2); }
 .lm-title { margin: 0; font: 600 21px/28px var(--font-serif); overflow-wrap: anywhere; }

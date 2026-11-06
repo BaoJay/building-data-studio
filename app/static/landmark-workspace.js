@@ -25,7 +25,7 @@
 // the view (lon, lat, z), so reload and back / forward come back to them.
 /* global maplibregl */
 import { $, api, esc, fetchOk, reveal, toast, uploadFile } from "/static/util.js";
-import { ModelStore, glbInfo, overlappingLods, renderable, zoomLabel } from "/static/landmark-store.js";
+import { LOD_SLOTS, ModelStore, glbInfo, overlappingLods, renderable, zoomLabel } from "/static/landmark-store.js";
 import { LandmarkLayer, disposeModel, parseModel } from "/static/landmark-model.js";
 import * as ui from "/static/landmark-drawer.js";
 
@@ -66,6 +66,19 @@ async function readGlbFiles(list) {
   return files.sort((a, b) => (b.info.lod?.zoom_range[0] ?? Infinity) - (a.info.lod?.zoom_range[0] ?? Infinity));
 }
 
+// The files chosen in the zoom slots (z -> File), most detailed first: each takes the slot's zoom
+// range, whatever its GLB says (`slot` goes with the upload).
+async function readLodFiles(chosen) {
+  return Promise.all(LOD_SLOTS.filter((s) => chosen[s.lod_zoom]).map(async ({ lod_zoom, zoom_range }) => {
+    const file = chosen[lod_zoom];
+    const buffer = await file.arrayBuffer();
+    return { name: file.name, file, buffer, info: { ...glbInfo(buffer), lod: { lod_zoom, zoom_range } }, slot: lod_zoom };
+  }));
+}
+
+// Query of one file's upload: its name, and its zoom slot when chosen in one.
+const uploadQuery = (f, extra = {}) => new URLSearchParams({ name: f.name, ...extra, ...(f.slot ? { lod: String(f.slot) } : {}) });
+
 // Placement of a GLB that says where it stands: its origin at the anchor, no turn.
 const anchorPlacement = (a) => ({ heading: 0, scale: 1, anchor: "origin", lon: round7(a.lon), lat: round7(a.lat) });
 
@@ -92,6 +105,7 @@ class Workspace {
     this.preview = null;  // what the open landmark shows: { kind: "version", n } | { kind: "local", name, files: [{ name, file, buffer, info }], seq }
     this.draft = null;  // its placement, as being edited
     this.place = null;  // building clicked: footprint read by /api/building, once a local file is tried on it
+    this.lodFiles = {};  // lod_zoom -> File chosen in the slot of that zoom (LOD_SLOTS)
     this.overrideId = null;
     this.localSeq = 0;
     this.pendingSig = "";  // pending() when the LoD1 colours were last set
@@ -429,7 +443,7 @@ class Workspace {
   // Back to the version drawn: the model being edited goes.
   clearEdit() {
     this.stopPicking();
-    Object.assign(this, { preview: null, draft: null, place: null });
+    Object.assign(this, { preview: null, draft: null, place: null, lodFiles: {} });
     this.syncOverride();
     this.syncMarker();
   }
@@ -596,6 +610,34 @@ class Workspace {
       toast(`Không dùng được file đã chọn: ${err.message}`);
       return;
     }
+    this.lodFiles = {};
+    this.tryFiles(files);
+  }
+
+  // A file chosen (or dropped: null) in the slot of zoom z. The slots set is tried on the map
+  // where it can be drawn, else only kept for the upload.
+  async setLodFile(z, file) {
+    const { [z]: _, ...rest } = this.lodFiles;
+    this.lodFiles = file ? { ...rest, [z]: file } : rest;
+    if (!this.sel || !(this.sel.kind === "candidate" || this.sameSource(this.sel.rec))) {
+      ui.render(this);
+      return;
+    }
+    if (!Object.keys(this.lodFiles).length) {
+      this.dropLocal();
+      return;
+    }
+    let files;
+    try {
+      files = await readLodFiles(this.lodFiles);
+    } catch (err) {
+      toast(`Không đọc được file: ${err.message}`);
+      return;
+    }
+    this.tryFiles(files);
+  }
+
+  async tryFiles(files) {
     const s = this.sel;
     if (s.kind === "candidate" && !this.place) {
       toast("Đang tìm footprint của building…");
@@ -762,6 +804,7 @@ class Workspace {
       case "register": this.register(); break;
       case "upload": this.upload(); break;
       case "drop-local": this.dropLocal(); break;
+      case "lod-clear": this.setLodFile(Number(btn.dataset.lod), null); break;
       case "edit": this.editing = true; ui.render(this); break;
       case "edit-cancel": this.editing = false; ui.render(this); break;
       case "edit-save": this.saveEdit(); break;
@@ -836,6 +879,11 @@ class Workspace {
       this.afterSelect(false);
     } else if (t.id === "lmFile" && this.sel && (this.sel.kind === "candidate" || this.sameSource(this.sel.rec))) {
       this.tryLocal(t.files);
+    } else if (t.id === "lmFile" && Object.keys(this.lodFiles).length) {  // one way at a time
+      this.lodFiles = {};
+      ui.renderLodSlots(this);
+    } else if (t.dataset.lod && t.files?.length) {
+      this.setLodFile(Number(t.dataset.lod), t.files[0]);
     } else if (t.id === "lmkCompare") {
       this.compare = t.checked;
       this.syncReference();
@@ -868,7 +916,7 @@ class Workspace {
       return;
     }
     // A file being tried on the building stays, ready to upload as the first version.
-    const local = this.preview?.kind === "local" ? { preview: this.preview, draft: this.draft } : null;
+    const local = this.preview?.kind === "local" ? { preview: this.preview, draft: this.draft, lodFiles: this.lodFiles } : null;
     await this.loadLibrary();
     this.clearEdit();
     this.sel = null;
@@ -886,6 +934,7 @@ class Workspace {
   // other zoom ranges added to it.
   async upload() {
     let files = this.preview?.kind === "local" ? this.preview.files : null;
+    if (!files && Object.keys(this.lodFiles).length) files = await readLodFiles(this.lodFiles);
     if (!files) {
       const list = $("#lmFile")?.files;
       if (!list?.length) {
@@ -916,12 +965,12 @@ class Workspace {
     let rec;
     let failed = null;
     try {
-      rec = await uploadFile(files[0].file, progress(0), `${lmUrl(lid)}/versions?${new URLSearchParams({ name: files[0].name, note })}`);
+      rec = await uploadFile(files[0].file, progress(0), `${lmUrl(lid)}/versions?${uploadQuery(files[0], { note })}`);
       done += files[0].file.size;
       const n = rec.versions.at(-1).version;
       for (let i = 1; i < files.length; i++) {
         try {
-          rec = await uploadFile(files[i].file, progress(i), `${lmUrl(lid)}/versions/${n}/lods?${new URLSearchParams({ name: files[i].name })}`);
+          rec = await uploadFile(files[i].file, progress(i), `${lmUrl(lid)}/versions/${n}/lods?${uploadQuery(files[i])}`);
         } catch (err) {
           failed = `${files[i].name}: ${err.message}`;
           break;
@@ -935,6 +984,7 @@ class Workspace {
       return;
     }
     this.uploading = false;
+    this.lodFiles = {};
     await this.refreshLists();
     if (this.sel?.rec?.id !== lid) return;
     const draft = this.draft;

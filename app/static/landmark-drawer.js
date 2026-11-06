@@ -3,7 +3,7 @@
 // this module only reads them.
 import { $, esc, fmtBytes, fmtInt, fmtNum } from "/static/util.js";
 import { LL, anchorPoint, modelHeight, modelSize } from "/static/landmark-model.js";
-import { zoomLabel } from "/static/landmark-store.js";
+import { LOD_SLOTS, zoomLabel } from "/static/landmark-store.js";
 
 const HEIGHT_TOLERANCE = { m: 2, ratio: 0.05 };  // the height check warns past both
 const EARTH_M = 40075016.686;  // equator length
@@ -262,6 +262,7 @@ function tryHtml(ws, canUpload) {
     <h3>${canUpload ? "File GLB" : "Thử file GLB"}</h3>
     <label class="field"><span>Chọn file .glb để xem thử trên bản đồ (chỉ đọc trong trình duyệt${canUpload ? ", chưa upload" : ""}). Chọn cả bộ z15 / z16 / z17 để đổi file theo zoom.</span>
       <input type="file" id="lmFile" accept=".glb,model/gltf-binary" multiple></label>
+    ${lodSlotsHtml(ws)}
     ${local ? `<div class="hint">Đang xem thử ${localFiles(local)}, chưa upload.</div>` : ""}
     ${canUpload ? `<input type="text" id="upNote" placeholder="Ghi chú cho version mới (tuỳ chọn)">` : ""}
     <div class="btn-row">
@@ -275,6 +276,26 @@ function tryHtml(ws, canUpload) {
   </section>`;
 }
 
+// One file per level of detail: each slot draws its file at the slot's zoom range, whatever the
+// GLB says, so a set without asset.extras.zoom_range can be uploaded too (ws.lodFiles).
+function lodSlotsHtml(ws) {
+  const rows = LOD_SLOTS.map(({ lod_zoom: z, zoom_range: r }) => {
+    const f = ws.lodFiles[z];
+    return `<div class="lm-lod-slot">
+      <span><b>z${z}</b> <span class="hint">zoom ${esc(zoomLabel(r))}</span></span>
+      <span class="mono lm-wrap">${f ? `${esc(f.name)} <span class="hint">${fmtBytes(f.size)}</span>` : `<span class="hint">chưa chọn</span>`}</span>
+      <span class="btn-row"><label class="btn small">${f ? "Đổi" : "Chọn"}<input type="file" data-lod="${z}" accept=".glb,model/gltf-binary" hidden></label>
+        ${f ? `<button class="btn small" type="button" data-act="lod-clear" data-lod="${z}" aria-label="Bỏ file z${z}">Bỏ</button>` : ""}</span>
+    </div>`;
+  }).join("");
+  return `<div class="lm-lod-slots"><div class="hint">Hoặc chọn từng file theo mức zoom (LOD): file chi tiết nhất là version, các file còn lại thêm vào nó.</div>${rows}</div>`;
+}
+
+export function renderLodSlots(ws) {
+  const el = document.querySelector(".lm-lod-slots");
+  if (el) el.outerHTML = lodSlotsHtml(ws);
+}
+
 // The local files tried: name, zoom range, size.
 function localFiles(local) {
   return local.files.map((f) => `<b class="mono">${esc(f.name)}</b>${f.info.lod ? ` (z${f.info.lod.lod_zoom}, zoom ${esc(zoomLabel(f.info.lod.zoom_range))})` : ""} ${fmtBytes(f.file.size)}`).join(", ");
@@ -284,6 +305,7 @@ function uploadOnlyHtml(ws) {
   return `<section class="lm-sec">
     <h3>Upload GLB</h3>
     <input type="file" id="lmFile" accept=".glb,model/gltf-binary" multiple aria-label="File GLB (một file hoặc cả bộ theo zoom)">
+    ${lodSlotsHtml(ws)}
     <input type="text" id="upNote" placeholder="Ghi chú (tuỳ chọn)">
     <div class="btn-row"><button class="btn primary" type="button" data-act="upload" ${ws.uploading ? "disabled" : ""}>Upload version mới</button>
       <span class="hint" id="upStatus"></span></div>

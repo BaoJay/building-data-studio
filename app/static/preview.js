@@ -413,6 +413,7 @@ function bindDrawer(map) {
   setDrawer(map, wanted || (saved ? saved === "1" : !phone), false);
   $("#drawerOpen").addEventListener("click", () => setDrawer(map, true));
   $("#drawerClose").addEventListener("click", () => setDrawer(map, false));
+  bindDrawerResize(map);
 }
 
 function setDrawer(map, open, save = true) {
@@ -420,6 +421,7 @@ function setDrawer(map, open, save = true) {
   $("#lmDrawer").hidden = !open;
   $("#drawerOpen").hidden = open;
   $("#drawerOpen").setAttribute("aria-expanded", String(open));
+  $("#drawerGrip").classList.toggle("edge", !open);
   if (save) remember("drawer", open ? "1" : "0");
   // On a phone the panel folds away while the sheet is open, so some map stays to work on.
   if (open && window.matchMedia("(max-width: 640px)").matches) setPanelCollapsed(true);
@@ -915,9 +917,51 @@ function onDiffClick(map, e) {
   });
 }
 
-// ------------------------------------------------------------------ panel width
-// The grip on the panel's right edge drags its width (remembered per browser); double-click
-// or Home resets it, arrow keys nudge it.
+// ------------------------------------------------------------------ resize grips
+// A grip on a side box's edge: drag it, double-click or Home for the default width, arrow keys
+// nudge it (Shift: 3x). dir is +1 when dragging right widens the box (panel), -1 when left does
+// (drawer). drag(w) gets the width the pointer asks for, done(moved) runs on release, after()
+// on a key (before the width changes) or a double-click.
+function bindGrip(grip, W, dir, { width, setWidth, drag, done, after = () => {} }) {
+  grip.setAttribute("aria-valuemin", String(W.min));
+  grip.setAttribute("aria-valuemax", String(W.max));
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width();
+    let moved = false;
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("dragging");
+    document.body.classList.add("resizing-panel");
+    const move = (ev) => {
+      if (Math.abs(ev.clientX - startX) > 3) moved = true;
+      if (moved) drag(startW + dir * (ev.clientX - startX));
+    };
+    const end = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", end);
+      grip.removeEventListener("pointercancel", end);
+      grip.classList.remove("dragging");
+      document.body.classList.remove("resizing-panel");
+      done(moved);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  });
+  grip.addEventListener("dblclick", () => { setWidth(W.def, true); after(); });
+  grip.addEventListener("keydown", (e) => {
+    if (!["ArrowRight", "ArrowLeft", "Home"].includes(e.key)) return;
+    e.preventDefault();
+    after();  // first, so a closed drawer is open and width() reads its real width
+    const step = (e.shiftKey ? 3 : 1) * W.step * dir;
+    if (e.key === "Home") setWidth(W.def, true);
+    else setWidth(width() + (e.key === "ArrowRight" ? step : -step), true);
+  });
+}
+
+// The grip on the panel's right edge sets its width (remembered per browser).
 const PANEL_W = { def: 300, min: 260, max: 900, step: 20 };
 
 function bindPanelResize() {
@@ -936,42 +980,56 @@ function bindPanelResize() {
     if (save) remember("panelWidth", String(v));
     place();
   };
-  grip.setAttribute("aria-valuemin", String(PANEL_W.min));
-  grip.setAttribute("aria-valuemax", String(PANEL_W.max));
+  const width = () => panel.getBoundingClientRect().width;
   setWidth(Number(recall("panelWidth")) || PANEL_W.def, false);
   new ResizeObserver(place).observe(panel);
-  addEventListener("resize", () => setWidth(panel.getBoundingClientRect().width, false));
-
-  grip.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = panel.getBoundingClientRect().width;
-    grip.setPointerCapture(e.pointerId);
-    grip.classList.add("dragging");
-    document.body.classList.add("resizing-panel");
-    const move = (ev) => setWidth(startW + ev.clientX - startX, false);
-    const end = () => {
-      grip.removeEventListener("pointermove", move);
-      grip.removeEventListener("pointerup", end);
-      grip.removeEventListener("pointercancel", end);
-      grip.classList.remove("dragging");
-      document.body.classList.remove("resizing-panel");
-      setWidth(panel.getBoundingClientRect().width, true);
-    };
-    grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", end);
-    grip.addEventListener("pointercancel", end);
+  addEventListener("resize", () => setWidth(width(), false));
+  bindGrip(grip, PANEL_W, 1, {
+    width,
+    setWidth,
+    drag: (w) => setWidth(w, false),
+    done: () => setWidth(width(), true),
   });
-  grip.addEventListener("dblclick", () => setWidth(PANEL_W.def, true));
-  grip.addEventListener("keydown", (e) => {
-    const w = panel.getBoundingClientRect().width;
-    const step = e.shiftKey ? PANEL_W.step * 3 : PANEL_W.step;
-    if (e.key === "ArrowRight") setWidth(w + step, true);
-    else if (e.key === "ArrowLeft") setWidth(w - step, true);
-    else if (e.key === "Home") setWidth(PANEL_W.def, true);
-    else return;
-    e.preventDefault();
+}
+
+// The grip on the drawer's left edge sets its width (remembered per browser). Dragged well past
+// its narrowest, the drawer closes; the grip then waits at the map's right edge, and dragging it
+// brings the drawer back. No click-to-open: a double-click's second click would land on the map.
+const DRAWER_W = { def: 440, min: 320, max: 1400, step: 20, close: 100 };
+
+function bindDrawerResize(map) {
+  const drawer = $("#lmDrawer");
+  const grip = $("#drawerGrip");
+  const clamp = (w) => Math.round(Math.max(DRAWER_W.min, Math.min(w, DRAWER_W.max, innerWidth - 360)));
+  let frame = 0;
+  const setWidth = (w, save) => {
+    const v = clamp(w);
+    drawer.style.setProperty("--drawer-w", `${v}px`);
+    grip.setAttribute("aria-valuenow", String(v));
+    if (save) remember("drawerWidth", String(v));
+    // The map is beside the drawer: it follows the width (once per frame while dragging).
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; map.resize(); });
+  };
+  const width = () => drawer.getBoundingClientRect().width;  // 0 while closed
+  const saved = () => Number(recall("drawerWidth")) || DRAWER_W.def;
+  grip.hidden = false;  // not in diff mode, which has no drawer
+  // No window-resize handler: the CSS max-width caps the drawer, and keeping --drawer-w lets it grow back.
+  setWidth(saved(), false);
+  bindGrip(grip, DRAWER_W, -1, {
+    width,
+    setWidth,
+    drag: (w) => {
+      if (w < DRAWER_W.min - DRAWER_W.close) return setDrawer(map, false, false);
+      setWidth(w, false);
+      setDrawer(map, true, false);
+    },
+    done: (moved) => {
+      if (!moved) return;
+      remember("drawer", drawer.hidden ? "0" : "1");
+      if (!drawer.hidden) setWidth(width(), true);
+      else setWidth(saved(), false);  // closed by the drag: back to its width, not the narrow one passed on the way
+    },
+    after: () => setDrawer(map, true),
   });
 }
 

@@ -516,11 +516,15 @@ body.resizing-panel { cursor: ew-resize; user-select: none; }
 body.ws-page { display: flex; }
 .ws-map { position: relative; flex: 1 1 auto; min-width: 0; height: 100%; }
 .drawer {
-  flex: none; width: 440px; max-width: 48vw; height: 100%; z-index: 7;
+  flex: none; width: var(--drawer-w, 440px); max-width: calc(100vw - 360px); height: 100%; z-index: 7;
   display: grid; grid-template-rows: auto minmax(0, 1fr);
   background: var(--surface); border-left: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
 }
 .drawer[hidden] { display: none; }
+/* Grip on the drawer's left edge (in the map, over the border); at the map's edge while closed. */
+.drawer-grip { right: 0; top: 50%; transform: translate(50%, -50%); z-index: 8; }
+.drawer-grip.edge { transform: translate(-3px, -50%); }
+.drawer-grip[hidden] { display: none; }
 .drawer-head { display: flex; align-items: baseline; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
 .drawer-head h2 { margin: 0; font: 600 18px/24px var(--font-serif); }
 .drawer-head .btn { margin-left: auto; }

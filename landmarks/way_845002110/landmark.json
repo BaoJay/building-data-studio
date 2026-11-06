@@ -1,0 +1,573 @@
+{
+  "schema": 1,
+  "id": "way_845002110",
+  "building_id": "way/845002110",
+  "name": "Tasco Tower",
+  "link": "",
+  "footprint": {
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            105.7828112,
+            21.0159696
+          ],
+          [
+            105.782779,
+            21.0159658
+          ],
+          [
+            105.7827428,
+            21.0159546
+          ],
+          [
+            105.7825054,
+            21.0157793
+          ],
+          [
+            105.7829024,
+            21.0153123
+          ],
+          [
+            105.7831492,
+            21.0155001
+          ],
+          [
+            105.7831813,
+            21.0155364
+          ],
+          [
+            105.783188,
+            21.015569
+          ],
+          [
+            105.78318,
+            21.015594
+          ],
+          [
+            105.7828903,
+            21.0159496
+          ],
+          [
+            105.7828461,
+            21.0159658
+          ],
+          [
+            105.7828112,
+            21.0159696
+          ]
+        ]
+      ]
+    },
+    "centroid": [
+      105.78286156,
+      21.0156627
+    ],
+    "area_m2": 2743.97,
+    "bbox": [
+      105.7825054,
+      21.0153123,
+      105.783188,
+      21.0159696
+    ],
+    "size_m": [
+      70.93,
+      72.68
+    ],
+    "height": 20.0,
+    "base": 0.0,
+    "matched": "id",
+    "pieces": 1,
+    "height_field": "h_m"
+  },
+  "source": {
+    "name": "hanoi_osm_buildings.pmtiles",
+    "path": "/home/baojay/building-data-studio/base/hanoi/hanoi_osm_buildings__20261030-063643/hanoi_osm_buildings.pmtiles",
+    "layer": "buildings",
+    "id_field": "building_id",
+    "zoom": 16,
+    "parent_field": "parent_building_id"
+  },
+  "created_at": "2026-10-30T06:59:36+00:00",
+  "updated_at": "2026-11-06T01:54:16+00:00",
+  "in_use": 6,
+  "versions": [
+    {
+      "version": 1,
+      "file": "v1.glb",
+      "original_name": "Tasco_Tower_v2_shell_textured_web_lit.glb",
+      "size": 653292,
+      "sha256": "7017ccec25860aa3b1d122d51f3ace09825cb58aa77316d6bf3bfc1f0160455a",
+      "uploaded_at": "2026-10-30T07:02:38+00:00",
+      "by": "baojay",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 17,
+        "triangles": 11238,
+        "materials": 17,
+        "textures": 16,
+        "bounds": [
+          [
+            -32.225,
+            -0.9,
+            -31.8931
+          ],
+          [
+            32.225,
+            109.7,
+            2.7569
+          ]
+        ],
+        "unreadable": [],
+        "generator": "Khronos glTF Blender I/O v5.2.40"
+      },
+      "placement": {
+        "heading": 233.0,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.78286156,
+        "lat": 21.0156627
+      }
+    },
+    {
+      "version": 2,
+      "file": "v2.glb",
+      "original_name": "Tasco_Tower_v2_shell_textured_web_lit.glb",
+      "size": 635092,
+      "sha256": "00396ef82704fea598bd845f6ba398f37a7851c8ff62828760c01e514d487c63",
+      "uploaded_at": "2026-10-30T07:56:09+00:00",
+      "by": "baojay",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 16,
+        "triangles": 11128,
+        "materials": 16,
+        "textures": 15,
+        "bounds": [
+          [
+            -32.2301,
+            0.0,
+            -16.9317
+          ],
+          [
+            32.2199,
+            110.6,
+            17.7183
+          ]
+        ],
+        "unreadable": [],
+        "generator": "Khronos glTF Blender I/O v5.2.40"
+      },
+      "placement": {
+        "heading": 233.0,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.78286156,
+        "lat": 21.0156627
+      }
+    },
+    {
+      "version": 3,
+      "file": "v3.glb",
+      "original_name": "Tasco_Tower_v2_shell_textured_web_lit.glb",
+      "size": 661856,
+      "sha256": "7cf02c5ae79912686fbc874a2b9b309fb5c6e3dc590a43835ba84e50f6e056cc",
+      "uploaded_at": "2026-10-30T09:43:37+00:00",
+      "by": "baojay",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 16,
+        "triangles": 11472,
+        "materials": 16,
+        "textures": 12,
+        "bounds": [
+          [
+            -32.2301,
+            0.0,
+            -16.9317
+          ],
+          [
+            32.2199,
+            110.6,
+            17.7183
+          ]
+        ],
+        "unreadable": [],
+        "generator": "Khronos glTF Blender I/O v5.2.40"
+      },
+      "placement": {
+        "heading": 233.0,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.78286156,
+        "lat": 21.0156627
+      }
+    },
+    {
+      "version": 4,
+      "file": "v4.glb",
+      "original_name": "Tasco_Tower_v2_shell_textured_web_lit.glb",
+      "size": 661804,
+      "sha256": "073713ba2ac0b2e16758802314395693dfc424d405b2a9dc3d9222c9b50eec8f",
+      "uploaded_at": "2026-10-30T10:06:02+00:00",
+      "by": "baojay",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 16,
+        "triangles": 11472,
+        "materials": 16,
+        "textures": 12,
+        "bounds": [
+          [
+            -32.2301,
+            0.0,
+            -16.9317
+          ],
+          [
+            32.2199,
+            110.6,
+            17.7183
+          ]
+        ],
+        "unreadable": [],
+        "generator": "Khronos glTF Blender I/O v5.2.40"
+      },
+      "placement": {
+        "heading": 233.0,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.78286156,
+        "lat": 21.0156627
+      }
+    },
+    {
+      "version": 5,
+      "file": "v5.glb",
+      "original_name": "Tasco_Tower_v2_shell_lit_z17.glb",
+      "size": 771484,
+      "sha256": "1dc5b6832ea5aba547ed53ef6bfeed7a6153d665df933128130dfae6131ebc04",
+      "uploaded_at": "2026-11-03T07:25:12+00:00",
+      "by": "baojay",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 16,
+        "triangles": 12899,
+        "materials": 16,
+        "textures": 12,
+        "bounds": [
+          [
+            -36.4489,
+            0.0,
+            -31.0577
+          ],
+          [
+            28.9924,
+            110.6,
+            38.2261
+          ]
+        ],
+        "unreadable": [],
+        "generator": "Khronos glTF Blender I/O v5.2.40"
+      },
+      "placement": {
+        "heading": 0.0,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.78286156,
+        "lat": 21.0156627
+      }
+    },
+    {
+      "version": 6,
+      "file": "v6.glb",
+      "original_name": "Tasco_Tower_v2_shell_lit_z17.glb",
+      "size": 842660,
+      "sha256": "c380f195a3ca8e959987f0e0f61ad6ffccfafcc04818d27177baab685ea1b33c",
+      "uploaded_at": "2026-11-06T01:53:58+00:00",
+      "by": "baojay",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 25,
+        "triangles": 12799,
+        "materials": 25,
+        "textures": 12,
+        "bounds": [
+          [
+            -36.4489,
+            0.0,
+            -31.0577
+          ],
+          [
+            28.9924,
+            110.6,
+            38.2261
+          ]
+        ],
+        "unreadable": [],
+        "generator": "Khronos glTF Blender I/O v5.2.40",
+        "anchor": {
+          "lat": 21.0156627,
+          "lon": 105.7828616
+        },
+        "lod": {
+          "lod_zoom": 17,
+          "zoom_range": [
+            17,
+            null
+          ]
+        },
+        "emissive_groups": {
+          "led_warm": 1,
+          "led_wash": 10,
+          "led_white": 1
+        },
+        "glass": 4
+      },
+      "placement": {
+        "heading": 0.0,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.7828616,
+        "lat": 21.0156627
+      },
+      "lods": [
+        {
+          "lod_zoom": 16,
+          "zoom_range": [
+            15,
+            17
+          ],
+          "file": "v6_z16.glb",
+          "original_name": "Tasco_Tower_v2_shell_lit_z16.glb",
+          "size": 802708,
+          "sha256": "df9a51893313381cb2a7a16821b97b82bbaeca0b5e889d6bcfa1ccd5024c22ca",
+          "uploaded_at": "2026-11-06T01:53:58+00:00",
+          "by": "baojay",
+          "model": {
+            "meshes": 25,
+            "triangles": 12792,
+            "materials": 25,
+            "textures": 12,
+            "bounds": [
+              [
+                -36.4489,
+                0.0,
+                -31.0577
+              ],
+              [
+                28.9924,
+                110.6,
+                38.2261
+              ]
+            ],
+            "unreadable": [],
+            "generator": "Khronos glTF Blender I/O v5.2.40",
+            "anchor": {
+              "lat": 21.0156627,
+              "lon": 105.7828616
+            },
+            "lod": {
+              "lod_zoom": 16,
+              "zoom_range": [
+                15,
+                17
+              ]
+            },
+            "emissive_groups": {
+              "led_warm": 1,
+              "led_wash": 10,
+              "led_white": 1
+            },
+            "glass": 4
+          }
+        },
+        {
+          "lod_zoom": 15,
+          "zoom_range": [
+            0,
+            15
+          ],
+          "file": "v6_z15.glb",
+          "original_name": "Tasco_Tower_v2_shell_lit_z17.glb",
+          "size": 842660,
+          "sha256": "c380f195a3ca8e959987f0e0f61ad6ffccfafcc04818d27177baab685ea1b33c",
+          "uploaded_at": "2026-11-06T01:53:58+00:00",
+          "by": "baojay",
+          "model": {
+            "meshes": 25,
+            "triangles": 12799,
+            "materials": 25,
+            "textures": 12,
+            "bounds": [
+              [
+                -36.4489,
+                0.0,
+                -31.0577
+              ],
+              [
+                28.9924,
+                110.6,
+                38.2261
+              ]
+            ],
+            "unreadable": [],
+            "generator": "Khronos glTF Blender I/O v5.2.40",
+            "anchor": {
+              "lat": 21.0156627,
+              "lon": 105.7828616
+            },
+            "lod": {
+              "lod_zoom": 15,
+              "zoom_range": [
+                0,
+                15
+              ]
+            },
+            "emissive_groups": {
+              "led_warm": 1,
+              "led_wash": 10,
+              "led_white": 1
+            },
+            "glass": 4
+          }
+        }
+      ]
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-10-30T06:59:36+00:00",
+      "by": "baojay",
+      "action": "register"
+    },
+    {
+      "at": "2026-10-30T07:02:38+00:00",
+      "by": "baojay",
+      "action": "upload",
+      "version": 1,
+      "note": ""
+    },
+    {
+      "at": "2026-10-30T07:02:40+00:00",
+      "by": "baojay",
+      "action": "placement",
+      "version": 1
+    },
+    {
+      "at": "2026-10-30T07:02:45+00:00",
+      "by": "baojay",
+      "action": "use",
+      "from": null,
+      "to": 1,
+      "note": ""
+    },
+    {
+      "at": "2026-10-30T07:56:09+00:00",
+      "by": "baojay",
+      "action": "upload",
+      "version": 2,
+      "note": ""
+    },
+    {
+      "at": "2026-10-30T07:56:17+00:00",
+      "by": "baojay",
+      "action": "use",
+      "from": 1,
+      "to": 2,
+      "note": ""
+    },
+    {
+      "at": "2026-10-30T09:43:37+00:00",
+      "by": "baojay",
+      "action": "upload",
+      "version": 3,
+      "note": ""
+    },
+    {
+      "at": "2026-10-30T09:45:22+00:00",
+      "by": "baojay",
+      "action": "use",
+      "from": 2,
+      "to": 3,
+      "note": ""
+    },
+    {
+      "at": "2026-10-30T10:06:02+00:00",
+      "by": "baojay",
+      "action": "upload",
+      "version": 4,
+      "note": ""
+    },
+    {
+      "at": "2026-11-03T07:23:00+00:00",
+      "by": "baojay",
+      "action": "use",
+      "from": 3,
+      "to": 4,
+      "note": ""
+    },
+    {
+      "at": "2026-11-03T07:25:12+00:00",
+      "by": "baojay",
+      "action": "upload",
+      "version": 5,
+      "note": ""
+    },
+    {
+      "at": "2026-11-03T07:25:30+00:00",
+      "by": "baojay",
+      "action": "placement",
+      "version": 5
+    },
+    {
+      "at": "2026-11-03T07:25:33+00:00",
+      "by": "baojay",
+      "action": "use",
+      "from": 4,
+      "to": 5,
+      "note": ""
+    },
+    {
+      "at": "2026-11-06T01:53:58+00:00",
+      "by": "baojay",
+      "action": "upload",
+      "version": 6,
+      "note": ""
+    },
+    {
+      "at": "2026-11-06T01:53:58+00:00",
+      "by": "baojay",
+      "action": "lod",
+      "version": 6,
+      "lod_zoom": 16
+    },
+    {
+      "at": "2026-11-06T01:53:58+00:00",
+      "by": "baojay",
+      "action": "lod",
+      "version": 6,
+      "lod_zoom": 15
+    },
+    {
+      "at": "2026-11-06T01:54:07+00:00",
+      "by": "baojay",
+      "action": "use",
+      "from": 5,
+      "to": 6,
+      "note": ""
+    },
+    {
+      "at": "2026-11-06T01:54:16+00:00",
+      "by": "baojay",
+      "action": "placement",
+      "version": 6
+    }
+  ]
+}

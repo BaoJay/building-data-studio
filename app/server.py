@@ -335,13 +335,15 @@ def _base_job(area_key: str) -> Job | None:
     return next((j for j in jobs.list() if j.kind == "base" and j.config.get("area") == area_key), None)
 
 
-def start_base_build(area_key: str = osmbase.DEFAULT_AREA, release: str | None = None) -> Job:
+def start_base_build(area_key: str = osmbase.DEFAULT_AREA, release: str | None = None,
+                     source: str = "overture", osm_file: str | None = None) -> Job:
     """Queue a build of the base, unless one is already queued or running."""
     job = _base_job(area_key)
     if job is not None and job.status in ("queued", "running"):
         return job
     area = osmbase.AREAS[area_key]
-    return jobs.submit({"area": area.key, "release": release}, name=osmbase.out_name(area), kind="base")
+    config = {"area": area.key, "release": release, "source": source, "osm_file": osm_file}
+    return jobs.submit(config, name=osmbase.out_name(area), kind="base")
 
 
 async def get_base(request: Request) -> Response:
@@ -357,7 +359,13 @@ async def build_base(request: Request) -> Response:
     if area not in osmbase.AREAS:
         return _error(f"Không có khu vực {area}.", 404)
     release = str(body.get("release") or "").strip() or None
-    job = start_base_build(area, release)
+    source = str(body.get("source") or "overture")
+    if source not in ("overture", "overpass", "file"):
+        return _error(f"Nguồn không hợp lệ: {source} (overture | overpass | file).", 400)
+    osm_file = str(body.get("osm_file") or "").strip() or None
+    if source == "file" and not osm_file:
+        return _error("Nguồn 'file' cần đường dẫn osm_file (.osm.pbf / .osm).", 400)
+    job = start_base_build(area, release, source, osm_file)
     return JSONResponse({"id": job.id, **base_status(area)}, status_code=202)
 
 

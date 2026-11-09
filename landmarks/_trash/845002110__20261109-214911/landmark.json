@@ -1,0 +1,210 @@
+{
+  "schema": 1,
+  "id": "845002110",
+  "building_id": "845002110",
+  "name": "Tasco Tower",
+  "link": "hihihi",
+  "footprint": {
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            105.7828112,
+            21.015969
+          ],
+          [
+            105.782779,
+            21.0159658
+          ],
+          [
+            105.7827435,
+            21.0159546
+          ],
+          [
+            105.7825054,
+            21.0157787
+          ],
+          [
+            105.7829031,
+            21.015313
+          ],
+          [
+            105.7831485,
+            21.0155008
+          ],
+          [
+            105.7831813,
+            21.0155364
+          ],
+          [
+            105.783188,
+            21.0155684
+          ],
+          [
+            105.7831793,
+            21.0155947
+          ],
+          [
+            105.782891,
+            21.0159496
+          ],
+          [
+            105.7828454,
+            21.0159665
+          ],
+          [
+            105.7828112,
+            21.015969
+          ]
+        ]
+      ]
+    },
+    "centroid": [
+      105.78286157,
+      21.01566309
+    ],
+    "area_m2": 2739.2,
+    "bbox": [
+      105.7825054,
+      21.015313,
+      105.783188,
+      21.015969
+    ],
+    "size_m": [
+      70.93,
+      72.54
+    ],
+    "height": 20.0,
+    "base": 0.0,
+    "matched": "id",
+    "pieces": 1,
+    "height_field": "h_m"
+  },
+  "source": {
+    "name": "osm_raw.pmtiles",
+    "path": "/Users/giabaonguyenhoang/dev/building-converter/output/osm_raw__20261023-111822/osm_raw.pmtiles",
+    "layer": "buildings",
+    "id_field": "osm_id",
+    "zoom": 17,
+    "parent_field": null
+  },
+  "created_at": "2026-10-23T11:20:36+07:00",
+  "updated_at": "2026-10-23T11:21:56+07:00",
+  "in_use": 2,
+  "versions": [
+    {
+      "version": 1,
+      "file": "v1.glb",
+      "original_name": "Tasco_Tower_v1_shell_textured_web.glb",
+      "size": 132108,
+      "sha256": "5ade76781514ebfd671fcaf13d9df841942ff70f38b2342c01aa18eca288315a",
+      "uploaded_at": "2026-10-23T11:20:44+07:00",
+      "by": "giabaonguyenhoang",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 17,
+        "triangles": 12236,
+        "materials": 16,
+        "textures": 12,
+        "bounds": [
+          [
+            -32.225,
+            -0.9,
+            -31.8931
+          ],
+          [
+            32.225,
+            109.7,
+            2.7569
+          ]
+        ],
+        "unreadable": [
+          "Draco"
+        ],
+        "generator": "Khronos glTF Blender I/O v5.2.40"
+      },
+      "placement": {
+        "heading": 0.0,
+        "scale": 1.0,
+        "anchor": "origin",
+        "lon": 105.78286157,
+        "lat": 21.01566309
+      }
+    },
+    {
+      "version": 2,
+      "file": "v2.glb",
+      "original_name": "Tasco_Tower_v1_shell_textured_direct.glb",
+      "size": 748996,
+      "sha256": "833649184051c9bf4f3715f733305e8092a95678f97c25a89822355c3b7e0a36",
+      "uploaded_at": "2026-10-23T11:21:21+07:00",
+      "by": "giabaonguyenhoang",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 17,
+        "triangles": 12236,
+        "materials": 16,
+        "textures": 12,
+        "bounds": [
+          [
+            -32.225,
+            -0.9,
+            -31.8931
+          ],
+          [
+            32.225,
+            109.7,
+            2.7569
+          ]
+        ],
+        "unreadable": [],
+        "generator": "SimLab GLTF"
+      },
+      "placement": {
+        "heading": 232.5,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.78286157,
+        "lat": 21.01566309
+      }
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-10-23T11:20:36+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "register"
+    },
+    {
+      "at": "2026-10-23T11:20:44+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "upload",
+      "version": 1,
+      "note": ""
+    },
+    {
+      "at": "2026-10-23T11:21:21+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "upload",
+      "version": 2,
+      "note": ""
+    },
+    {
+      "at": "2026-10-23T11:21:50+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "placement",
+      "version": 2
+    },
+    {
+      "at": "2026-10-23T11:21:56+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "use",
+      "from": null,
+      "to": 2,
+      "note": ""
+    }
+  ]
+}

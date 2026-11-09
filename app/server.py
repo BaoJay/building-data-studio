@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -695,6 +696,64 @@ async def delete_landmark(request: Request) -> Response:
     return JSONResponse({"ok": True, "moved_to": str(dest)})
 
 
+# ------------------------------------------------------------------ hidden buildings
+# Soft delete: building ids hidden in the 3D preview, kept in <library>/_hidden.json per dataset
+# (a canonical build's dataset, so it survives rebuilds; else the PMTiles path). Tiles are untouched.
+_hidden_lock = threading.Lock()
+
+
+def _hidden_file() -> Path:
+    return library.root / "_hidden.json"
+
+
+def _hidden_key(path: Path) -> str:
+    ctx = landmark_context(path)
+    return f"dataset:{ctx['dataset']}" if ctx and ctx["kind"] == "canonical" else f"file:{path.resolve()}"
+
+
+def _read_hidden() -> dict[str, list[str]]:
+    try:
+        data = json.loads(_hidden_file().read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def set_hidden(path: Path, building_id: str | None, hidden: bool) -> list[str]:
+    """Hide or show one building (building_id None and hidden False: show them all)."""
+    key = _hidden_key(path)
+    with _hidden_lock:
+        data = _read_hidden()
+        ids = [] if building_id is None else [i for i in data.get(key, []) if i != building_id] + ([building_id] if hidden else [])
+        if ids:
+            data[key] = ids
+        else:
+            data.pop(key, None)
+        library.root.mkdir(parents=True, exist_ok=True)
+        tmp = _hidden_file().with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8")
+        os.replace(tmp, _hidden_file())
+    return ids
+
+
+async def hidden_buildings(request: Request) -> Response:
+    """GET ?f=<token>: the ids hidden on that PMTiles. POST {f, id, hidden}: hide or show one;
+    POST {f, all: true, hidden: false}: show them all again."""
+    body = await _json(request) if request.method == "POST" else dict(request.query_params)
+    path = _source_file(str(body.get("f", "")))
+    if path is None:
+        return _error("File PMTiles không tồn tại.", 404)
+    if request.method == "GET":
+        return JSONResponse({"ids": (await _in_thread(_read_hidden)).get(await _in_thread(_hidden_key, path), [])}, headers=NO_CACHE)
+    if body.get("all") and body.get("hidden") is False:
+        return JSONResponse({"ids": await _in_thread(set_hidden, path, None, False)})
+    bid = body.get("id")
+    if not isinstance(bid, str) or not bid or len(bid) > 200:
+        return _error("Thiếu id building.")
+    ids = await _in_thread(set_hidden, path, bid, bool(body.get("hidden", True)))
+    return JSONResponse({"ids": ids})
+
+
 async def _receive_glb(request: Request, keep) -> Response:
     """Stream a .glb (?name=) into the landmark folder, then keep(tmp path, name) -> record."""
     lid = request.path_params["lid"]
@@ -933,6 +992,7 @@ routes = [
     Route("/api/vmap/assets/{path:path}", vmap_asset),
     Route("/api/shadows", building_shadows),
     Route("/api/building", building_footprint),
+    Route("/api/hidden", hidden_buildings, methods=["GET", "POST"]),
     Route("/api/landmarks", list_landmarks, methods=["GET"]),
     Route("/api/landmarks", register_landmark, methods=["POST"]),
     Route("/api/landmarks/manifest.json", landmarks_manifest),

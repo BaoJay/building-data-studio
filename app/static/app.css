@@ -471,6 +471,8 @@ body.resizing-panel { cursor: ew-resize; user-select: none; }
   padding: 10px var(--space-3); max-width: 360px; box-shadow: var(--shadow-float);
 }
 .maplibregl-popup-tip { border-top-color: var(--line-strong) !important; border-bottom-color: var(--line-strong) !important; }
+.ctx-menu .maplibregl-popup-content { display: grid; gap: var(--space-2); padding: 8px 10px; }
+.ctx-menu .maplibregl-popup-tip { display: none; }
 .maplibregl-popup-close-button { color: var(--ink-2); font-size: 16px; }
 .maplibregl-ctrl-group:not(:empty) {
   background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow-float);

@@ -3,7 +3,7 @@
 // in the drawer on the right (landmark-workspace.js, not loaded in diff mode).
 /* global maplibregl, pmtiles */
 import { landmarkFilters, landmarkView, matchBuildings } from "/static/landmark-store.js";
-import { $, esc, fetchOk } from "/static/util.js";
+import { $, esc, fetchOk, toast } from "/static/util.js";
 import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, recall, remember, vmap, vmapPreset } from "/static/basemap.js";
 import { flyHome, runTour, tallest } from "/static/tour.js";
 import { BuildingEdges } from "/static/building-edges.js";
@@ -15,7 +15,7 @@ const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
 const params = new URLSearchParams(location.search);
 let token = params.get("f");  // no f: the base of the city (see main)
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
-const state = { layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
+const state = { hidden: [], layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
 // The landmark workspace (landmark-workspace.js), once loaded.
 const landmark = { ws: null, failed: false };
 // How a landmark with its GLB loaded is drawn (landmark-store.js LANDMARK_VIEWS), kept in the
@@ -246,6 +246,7 @@ async function main() {
   const zoom = hasCenter ? Number(params.get("z") || 17) : base?.view.zoom || Math.max(header.centerZoom, header.minZoom + 1);
   const bldgSource = { type: "vector", url: `pmtiles://${url}`, attribution: meta.attribution || "" };
 
+  state.hidden = await fetchOk(`/api/hidden?f=${encodeURIComponent(token)}`).then((r) => r.json()).then((d) => d.ids, () => []);
   const map = await createMap({ center, zoom, pitch: 55, bearing: -15 }, bldgSource, ["bldg-3d", "bldg-2d"]);
 
   map.on("load", () => {
@@ -256,6 +257,12 @@ async function main() {
   map.on("zoom", () => updateZoomUI(map));
   map.on("moveend", () => updateZoomUI(map));
   map.on("click", (e) => onClick(map, e));
+  // A right drag rotates the map: only a right click without a drag opens the menu.
+  let rightDown = null;
+  map.on("mousedown", (e) => { if (e.originalEvent.button === 2) rightDown = e.point; });
+  map.on("contextmenu", (e) => { if (!rightDown || rightDown.dist(e.point) < 5) onContextMenu(map, e); });
+  $("#unhideBtn").addEventListener("click", () => setHidden(map, null, false));
+  syncHiddenNote();
   bindEdges(map);
 
   // Picking the mobile basemap also switches the buildings to the mobile look. A switch made
@@ -464,9 +471,13 @@ function matchBuilding(id) {
   return ["any", ...match];
 }
 
+// What every building layer leaves out: outlines with parts (has_parts) and the buildings hidden
+// by the user (soft delete, see setHidden). null: nothing.
 function partsFilter() {
-  const hideParents = !$("#hideParentsWrap").hidden && $("#hideParents").checked;
-  return hideParents ? ["!", ["any", ["==", ["get", "has_parts"], true], ["==", ["get", "has_parts"], 1]]] : null;
+  const out = [];
+  if (!$("#hideParentsWrap").hidden && $("#hideParents").checked) out.push(["!", ["any", ["==", ["get", "has_parts"], true], ["==", ["get", "has_parts"], 1]]]);
+  if (state.hidden.length && state.idCol) out.push(["!", matchBuildings(state.hidden, state.idCol, state.parentAttr)]);
+  return out.length > 1 ? ["all", ...out] : out[0] || null;
 }
 
 function selectLayer(map, meta, layerId) {
@@ -707,6 +718,52 @@ function onClick(map, e) {
     applyStyle(map);
   }
   showPopup(map, e.lngLat, props);
+}
+
+// Right click on a building: selects it (as a left click) and opens a menu of actions on it.
+// Landmarks are left out: their model would stay drawn over the hidden building.
+function onContextMenu(map, e) {
+  if (!state.idCol || landmark.ws?.picking || landmark.ws?.onClick(e)) return;
+  const feats = map.queryRenderedFeatures(e.point, { layers: ["bldg-3d", "bldg-2d"].filter((id) => map.getLayoutProperty(id, "visibility") !== "none") });
+  const props = feats[0]?.properties;
+  if (!props || props[state.idCol] == null) return;
+  e.preventDefault();
+  onClick(map, e);
+  const id = String(props[state.idCol]);
+  const parent = state.parentAttr && props[state.parentAttr] != null ? String(props[state.parentAttr]) : null;
+  const target = parent || id;  // a part stands for its whole building, as when selected
+  const menu = new maplibregl.Popup({ closeButton: false, className: "ctx-menu", maxWidth: "240px" })
+    .setLngLat(e.lngLat)
+    .setHTML(`<div class="hint">${esc(props.name || target)}</div><button class="btn small" type="button" data-act="hide">Ẩn building</button>`)
+    .addTo(map);
+  menu.getElement().querySelector('[data-act="hide"]').addEventListener("click", () => {
+    menu.remove();
+    setHidden(map, target, true);
+  });
+}
+
+// Soft delete: the id goes to a list kept by the server (/api/hidden); the tiles are untouched.
+// id null with hidden false: show every hidden building again.
+async function setHidden(map, id, hidden) {
+  try {
+    const res = await fetchOk("/api/hidden", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(id == null ? { f: token, all: true, hidden: false } : { f: token, id, hidden }) });
+    state.hidden = (await res.json()).ids;
+  } catch (err) {
+    toast(`Không lưu được: ${err.message}`);
+    return;
+  }
+  if (hidden && state.selected === id) {
+    if (landmark.ws) landmark.ws.close(); else state.selected = null;
+  }
+  syncHiddenNote();
+  applyStyle(map);
+  toast(hidden ? "Đã ẩn building. Hiện lại ở panel bên trái." : "Đã hiện lại các building đã ẩn.");
+}
+
+function syncHiddenNote() {
+  $("#hiddenRow").hidden = !state.hidden.length;
+  $("#hiddenNote").textContent = `${state.hidden.length} building đang ẩn (chuột phải vào building → Ẩn). Dữ liệu gốc không bị xoá.`;
 }
 
 function showPopup(map, lngLat, props) {

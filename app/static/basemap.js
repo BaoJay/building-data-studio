@@ -21,12 +21,14 @@ const BASEMAPS = {
   osm: { raster: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], attribution: "© OpenStreetMap contributors" },
   none: {},
 };
+const VMAP_BASEMAP = "https://tiles.vmaps.vn/build-vt-20261014-060829-3e11/basemap-build-vt-20261014-060829-3e11.json";
 export const COMPASS = ["bắc", "đông bắc", "đông", "đông nam", "nam", "tây nam", "tây", "tây bắc"];
 
 // VMAP light presets come from the server (app/vmap.py), the one place they are defined.
 // `light` is the root light of the style last loaded for the current preset.
 export const vmap = { presets: [], preset: "day", light: null };
 let baseSeq = 0;
+let baseSources = new Set();  // the basemap style's own sources, not the buildings added on top
 
 // The colour set follows the basemap, not the page: dark tiles get the dark set, whose
 // height ramp is reversed so tall buildings stay the most salient.
@@ -111,6 +113,12 @@ export async function reloadBasemap(map, bldgSource, onLoad) {
 
 // bldgSource: () => the building source to keep across styles (or null).
 export function bindBasemapControls(map, bldgSource, onLoad, onBaseChange = () => {}) {
+  // A dead tile server otherwise leaves a blank basemap with no word why.
+  map.on("error", (e) => {
+    if (!baseSources.has(e.sourceId)) return;
+    const status = e.error?.status ? ` HTTP ${e.error.status}` : "";
+    $("#baseNote").textContent = `Không tải được tile bản đồ nền (source "${e.sourceId}"${status}) — server tile của bản đồ nền đang lỗi, nên không có đường, nước, nhãn.`;
+  });
   $("#baseSel").addEventListener("change", () => {
     onBaseChange($("#baseSel").value);
     reloadBasemap(map, bldgSource, onLoad);
@@ -162,6 +170,14 @@ export async function basemapStyle(key, bldgSource) {
       const res = await fetch(def.vmap ? `${def.style}?preset=${encodeURIComponent(preset)}` : def.style);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       style = await res.json();
+      if (def.vmap) {
+        // shortcut: the published styles' tile host (tasco-maps.dnpwater.vn) answers 502 since
+        // 2026-11-09, so roads etc. come from VMAP's own basemap build instead, without tasco POIs.
+        // Pinned build; drop this once the styles point at a working host.
+        style.sources.openmaptiles = { type: "vector", url: VMAP_BASEMAP };
+        style.layers = style.layers.filter((l) => l.source !== "tasco_poi");
+        delete style.sources.tasco_poi;
+      }
       if (def.vmap && preset === vmap.preset) {  // a slower answer for an earlier click is dropped anyway
         vmap.light = style.light || null;
         renderPresetNote();
@@ -177,6 +193,7 @@ export async function basemapStyle(key, bldgSource) {
   } catch (e) {
     $("#baseNote").textContent = `Không tải được bản đồ nền (${e.message}) — đang dùng nền trống.`;
   }
+  baseSources = new Set(Object.keys(style.sources));
   if (bldgSource) style.sources.bldg = bldgSource;
   return style;
 }

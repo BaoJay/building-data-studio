@@ -91,8 +91,8 @@
     "building_id": "way/845002110"
   },
   "created_at": "2026-10-30T06:59:36+00:00",
-  "updated_at": "2026-11-09T10:24:38+07:00",
-  "in_use": 6,
+  "updated_at": "2026-11-09T21:56:32+07:00",
+  "in_use": 7,
   "versions": [
     {
       "version": 1,
@@ -440,6 +440,169 @@
           }
         }
       ]
+    },
+    {
+      "version": 7,
+      "file": "v7.glb",
+      "original_name": "Tasco_Tower_v2_shell_lit_z17.glb",
+      "size": 885864,
+      "sha256": "7090f29b131cdbcaa40bed798422483764a873afc5a2dd44952963fb8513fa7b",
+      "uploaded_at": "2026-11-09T21:56:04+07:00",
+      "by": "giabaonguyenhoang",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 24,
+        "triangles": 13198,
+        "materials": 24,
+        "textures": 15,
+        "bounds": [
+          [
+            -36.4489,
+            0.0,
+            -31.0577
+          ],
+          [
+            28.9924,
+            110.6,
+            38.2261
+          ]
+        ],
+        "unreadable": [],
+        "generator": "Khronos glTF Blender I/O v5.2.40",
+        "anchor": {
+          "lat": 21.0156627,
+          "lon": 105.7828616
+        },
+        "lod": {
+          "lod_zoom": 17,
+          "zoom_range": [
+            17,
+            null
+          ]
+        },
+        "emissive_groups": {
+          "led_warm": 1,
+          "led_wash": 9,
+          "led_white": 1,
+          "lobby": 1,
+          "windows_tower": 1
+        },
+        "glass": 5
+      },
+      "placement": {
+        "heading": 0.0,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.7828616,
+        "lat": 21.0156627
+      },
+      "lods": [
+        {
+          "lod_zoom": 16,
+          "zoom_range": [
+            15,
+            17
+          ],
+          "file": "v7_z16.glb",
+          "original_name": "Tasco_Tower_v2_shell_lit_z16.glb",
+          "size": 829056,
+          "sha256": "9ed50d517d96346db480df08ed12588f12b131d7e5d2ee596ae668d028c3d6a2",
+          "uploaded_at": "2026-11-09T21:56:04+07:00",
+          "by": "giabaonguyenhoang",
+          "model": {
+            "meshes": 24,
+            "triangles": 13198,
+            "materials": 24,
+            "textures": 15,
+            "bounds": [
+              [
+                -36.4489,
+                0.0,
+                -31.0577
+              ],
+              [
+                28.9924,
+                110.6,
+                38.2261
+              ]
+            ],
+            "unreadable": [],
+            "generator": "Khronos glTF Blender I/O v5.2.40",
+            "anchor": {
+              "lat": 21.0156627,
+              "lon": 105.7828616
+            },
+            "lod": {
+              "lod_zoom": 16,
+              "zoom_range": [
+                15,
+                17
+              ]
+            },
+            "emissive_groups": {
+              "led_warm": 1,
+              "led_wash": 9,
+              "led_white": 1,
+              "lobby": 1,
+              "windows_tower": 1
+            },
+            "glass": 5
+          }
+        },
+        {
+          "lod_zoom": 15,
+          "zoom_range": [
+            0,
+            15
+          ],
+          "file": "v7_z15.glb",
+          "original_name": "Tasco_Tower_v2_shell_lit_z15.glb",
+          "size": 803804,
+          "sha256": "9e440c34801670ec319b43cadfa330770fb52f185d2e3ad5cedc165709663196",
+          "uploaded_at": "2026-11-09T21:56:04+07:00",
+          "by": "giabaonguyenhoang",
+          "model": {
+            "meshes": 24,
+            "triangles": 13171,
+            "materials": 24,
+            "textures": 15,
+            "bounds": [
+              [
+                -36.4489,
+                0.0,
+                -31.0577
+              ],
+              [
+                28.9924,
+                110.6,
+                38.2261
+              ]
+            ],
+            "unreadable": [],
+            "generator": "Khronos glTF Blender I/O v5.2.40",
+            "anchor": {
+              "lat": 21.0156627,
+              "lon": 105.7828616
+            },
+            "lod": {
+              "lod_zoom": 15,
+              "zoom_range": [
+                0,
+                15
+              ]
+            },
+            "emissive_groups": {
+              "led_warm": 1,
+              "led_wash": 9,
+              "led_white": 1,
+              "lobby": 1,
+              "windows_tower": 1
+            },
+            "glass": 5
+          }
+        }
+      ]
     }
   ],
   "history": [
@@ -578,6 +741,41 @@
       "from": "way/845002110",
       "to": "01a12f2e-bd4b-788f-baa6-cbcd0b563d16",
       "build": "build-bldg-20261109-102422"
+    },
+    {
+      "at": "2026-11-09T21:56:04+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "upload",
+      "version": 7,
+      "note": ""
+    },
+    {
+      "at": "2026-11-09T21:56:04+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "lod",
+      "version": 7,
+      "lod_zoom": 16
+    },
+    {
+      "at": "2026-11-09T21:56:04+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "lod",
+      "version": 7,
+      "lod_zoom": 15
+    },
+    {
+      "at": "2026-11-09T21:56:24+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "placement",
+      "version": 7
+    },
+    {
+      "at": "2026-11-09T21:56:32+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "use",
+      "from": 6,
+      "to": 7,
+      "note": ""
     }
   ],
   "dataset": "hanoi",

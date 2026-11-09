@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "id": "way_37625751",
+  "building_id": "way/37625751",
+  "name": "Lăng Bác",
+  "link": "",
+  "footprint": {
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            105.8345483,
+            21.0369586
+          ],
+          [
+            105.8344853,
+            21.0366657
+          ],
+          [
+            105.8347549,
+            21.0366169
+          ],
+          [
+            105.8347468,
+            21.0365794
+          ],
+          [
+            105.8348206,
+            21.0365656
+          ],
+          [
+            105.8348984,
+            21.0369299
+          ],
+          [
+            105.8348192,
+            21.0369436
+          ],
+          [
+            105.8348125,
+            21.0369086
+          ],
+          [
+            105.8345483,
+            21.0369586
+          ]
+        ]
+      ]
+    },
+    "centroid": [
+      105.83469503,
+      21.0367791
+    ],
+    "area_m2": 1260.81,
+    "bbox": [
+      105.8344853,
+      21.0365656,
+      105.8348984,
+      21.0369586
+    ],
+    "size_m": [
+      42.92,
+      43.46
+    ],
+    "height": 7.8,
+    "base": 0.0,
+    "matched": "id",
+    "pieces": 1,
+    "height_field": "h_m"
+  },
+  "source": {
+    "name": "hanoi_osm_buildings.pmtiles",
+    "path": "/Users/giabaonguyenhoang/dev/building-data-studio/base/hanoi/hanoi_osm_buildings__20261026-131841/hanoi_osm_buildings.pmtiles",
+    "layer": "buildings",
+    "id_field": "building_id",
+    "zoom": 16,
+    "parent_field": "parent_building_id"
+  },
+  "created_at": "2026-10-26T14:54:17+07:00",
+  "updated_at": "2026-10-26T14:55:38+07:00",
+  "in_use": 1,
+  "versions": [
+    {
+      "version": 1,
+      "file": "v1.glb",
+      "original_name": "hochiminh_mausolem_v0_shell_web_nodraco.glb",
+      "size": 62336,
+      "sha256": "041f5a0bea6d5f1907bd6c146e715eadbe962877d8ee1e7015a916bc126bef1d",
+      "uploaded_at": "2026-10-26T14:55:19+07:00",
+      "by": "giabaonguyenhoang",
+      "note": "",
+      "same_as": null,
+      "model": {
+        "meshes": 10,
+        "triangles": 2003,
+        "materials": 10,
+        "textures": 9,
+        "bounds": [
+          [
+            0.0,
+            -0.2536,
+            -30.0
+          ],
+          [
+            35.0,
+            20.0464,
+            0.0
+          ]
+        ],
+        "unreadable": [],
+        "generator": "Khronos glTF Blender I/O v5.2.40"
+      },
+      "placement": {
+        "heading": 281.0,
+        "scale": 1.0,
+        "anchor": "bbox",
+        "lon": 105.83469503,
+        "lat": 21.0367791
+      }
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-10-26T14:54:17+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "register"
+    },
+    {
+      "at": "2026-10-26T14:55:19+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "upload",
+      "version": 1,
+      "note": ""
+    },
+    {
+      "at": "2026-10-26T14:55:22+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "placement",
+      "version": 1
+    },
+    {
+      "at": "2026-10-26T14:55:38+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "use",
+      "from": null,
+      "to": 1,
+      "note": ""
+    }
+  ]
+}

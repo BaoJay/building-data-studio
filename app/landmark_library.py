@@ -10,6 +10,14 @@ A landmark replaces the extrusion of one building_id. Its footprint is read once
 registered, from the PMTiles it was clicked on (landmark.lookup), so the library opens without
 that file. `link` is a free id to find the building elsewhere (MapOps canonical id, OSM id…).
 
+Landmarks of the Canonical Building Data (app.canonical) are bound to a dataset, not to a file:
+`dataset` (the area, e.g. "hanoi"), `building_id` (the canonical UUID, the same in every build:
+the id the app looks the landmark up by) and `source_id` (the OSM way it stands on). Each canonical
+build finds the building of every landmark (build.json `landmarks.ids`) and binds landmarks
+registered before (on the OSM base) to it, so one landmark is drawn on every build of its dataset,
+and on every base build through its OSM id. `source.building_id` keeps the id it had in the file
+it was registered from.
+
 Each version has its own placement, since a new export may move the model's origin: heading
 (degrees clockwise seen from above, as in the 3D preview), scale, the model point that goes on
 the ground (GLB origin or bottom centre of its box) and the lon / lat it goes to. A new version
@@ -47,7 +55,9 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_DIR = APP_DIR.parent / "landmarks"
 MANIFEST = "landmark.json"
 TRASH = "_trash"
-SCHEMA = 1
+SCHEMA = 2  # 2: dataset / source_id (canonical binding), source.building_id
+DEFAULT_SOURCE = {"layer": "buildings", "id_field": "building_id", "parent_field": "parent_building_id"}
+OSM_ID_RE = re.compile(r"^(way|relation)/\d+$")
 ANCHORS = ("origin", "bbox")
 MAX_SCALE = 1000.0
 MAX_TEXT = 500
@@ -150,6 +160,8 @@ def summary(rec: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": rec["id"],
         "building_id": rec["building_id"],
+        "source_id": rec.get("source_id"),
+        "dataset": rec.get("dataset"),
         "name": rec["name"],
         "link": rec["link"],
         "in_use": rec["in_use"],
@@ -172,6 +184,42 @@ def same_file(recorded: Any, path: Path) -> bool:
         return Path(str(recorded)).expanduser().resolve() == path.resolve()
     except (OSError, RuntimeError):  # unreadable path, symlink loop
         return False
+
+
+def _after(a: Any, b: Any) -> bool:
+    """Whether ISO time a is later than b (False when either is missing or unreadable)."""
+    try:
+        return datetime.fromisoformat(str(a)) > datetime.fromisoformat(str(b))
+    except (TypeError, ValueError):
+        return False
+
+
+def in_file(rec: dict[str, Any], path: Path, ctx: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The landmark as drawn on one PMTiles (its building_id there, layer and id fields), or None
+    when it does not stand on that file.
+
+    ctx says what the file is (server.landmark_context): a canonical build of a dataset, with the
+    building_id it found for each landmark (`ids`); the OSM base, whose ids are OSM ids; or nothing
+    known, where only the file the landmark was registered from counts.
+    """
+    src = rec.get("source") or {}
+    if same_file(src.get("path"), path):
+        return {**rec, "building_id": src.get("building_id") or rec["building_id"]}
+    ctx = ctx or {}
+    bid = None
+    if ctx.get("kind") == "canonical":
+        bid = (ctx.get("ids") or {}).get(rec["id"])
+        # Registered after this build was made: the build could not look for it, its id is stable.
+        if bid is None and rec.get("dataset") == ctx.get("dataset") and _after(rec.get("created_at"), ctx.get("built_at")):
+            bid = rec["building_id"]
+    elif ctx.get("kind") == "base":
+        for cand in (rec.get("source_id"), src.get("building_id"), rec["building_id"]):
+            if cand and OSM_ID_RE.match(str(cand)):
+                bid = cand
+                break
+    if bid is None:
+        return None
+    return {**rec, "building_id": bid, "source": {**src, **DEFAULT_SOURCE, "name": path.name, "path": str(path)}}
 
 
 def ranges_overlap(a: list[Any], b: list[Any]) -> bool:
@@ -280,6 +328,9 @@ class Library:
                 continue  # half-copied folder: the rest of the library still lists
         return out
 
+    def records(self) -> list[dict[str, Any]]:
+        return self._records()
+
     def list(self) -> list[dict[str, Any]]:
         recs = self._records()
         recs.sort(key=lambda r: (r["name"] or r["building_id"]).casefold())
@@ -311,19 +362,21 @@ class Library:
                 seen[src["path"]] = src
         return list(seen.values())
 
-    def render(self, path: Path) -> list[dict[str, Any]]:
-        """The landmarks registered from this PMTiles that have a GLB, by name: the version in use
-        is drawn, else the newest version (the manifest keeps the versions in use only)."""
-        recs = [r for r in self._records()
-                if r["versions"] and same_file((r.get("source") or {}).get("path"), path)]
+    def on_file(self, path: Path, ctx: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """The landmarks that stand on this PMTiles, as drawn there (in_file)."""
+        return [r for r in (in_file(rec, path, ctx) for rec in self._records()) if r is not None]
+
+    def render(self, path: Path, ctx: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """The landmarks of this PMTiles that have a GLB, by name: the version in use is drawn,
+        else the newest version (the manifest keeps the versions in use only)."""
+        recs = [r for r in self.on_file(path, ctx) if r["versions"]]
         recs.sort(key=lambda r: (r["name"] or r["building_id"]).casefold())
         return [render_item(r) for r in recs]
 
-    def released(self, path: Path) -> list[dict[str, Any]]:
-        """The landmarks registered from this PMTiles with a version in use (records): those
+    def released(self, path: Path, ctx: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """The landmarks of this PMTiles with a version in use (records as drawn there): those
         cast their ground shadow from the GLB (app/landmark_shadow.py)."""
-        return [r for r in self._records()
-                if r["in_use"] is not None and same_file((r.get("source") or {}).get("path"), path)]
+        return [r for r in self.on_file(path, ctx) if r["in_use"] is not None]
 
     def source_paths(self) -> dict[str, str]:
         """Landmark id -> the PMTiles it was registered from."""
@@ -339,6 +392,8 @@ class Library:
             items.append({
                 "id": rec["id"],
                 "building_id": rec["building_id"],
+                "source_id": rec.get("source_id"),
+                "dataset": rec.get("dataset"),
                 "name": rec["name"],
                 "link": rec["link"],
                 "version": v["version"],
@@ -382,23 +437,46 @@ class Library:
         rec["history"].append({"at": t, "by": user(), **event})
 
     def register(self, *, building_id: str, name: str, link: str, footprint: dict[str, Any],
-                 source: dict[str, Any]) -> dict[str, Any]:
+                 source: dict[str, Any], dataset: str | None = None, source_id: str | None = None) -> dict[str, Any]:
+        """Add a building. On a canonical build, `dataset` and `source_id` bind it to the dataset
+        (every build of it draws the landmark), not only to the file it was clicked on."""
         building_id = _text(building_id, "building_id")
         if not building_id:
             raise LibraryError("Thiếu building_id.")
         name, link = _text(name, "Tên"), _text(link, "ID liên kết")
+        source_id = _text(source_id, "source_id") or None
         with self._lock:
             for rec in self._records():
-                if rec["building_id"] == building_id:
-                    raise LibraryError(f"Building {building_id} đã có trong thư viện ({rec['name'] or rec['id']}).")
-            lid = self._new_id(building_id)
+                ids = {rec["building_id"], rec.get("source_id"), (rec.get("source") or {}).get("building_id")} - {None, ""}
+                if building_id in ids or (source_id and source_id in ids):
+                    raise LibraryError(f"Building {source_id or building_id} đã có trong thư viện ({rec['name'] or rec['id']}).")
+            lid = self._new_id(source_id or building_id)
             (self.root / lid).mkdir(parents=True)
             t = now()
             rec = {
                 "schema": SCHEMA, "id": lid, "building_id": building_id, "name": name, "link": link,
-                "footprint": footprint, "source": source, "created_at": t, "updated_at": t,
+                "footprint": footprint, "source": {**source, "building_id": building_id}, "created_at": t, "updated_at": t,
                 "in_use": None, "versions": [], "history": [{"at": t, "by": user(), "action": "register"}],
             }
+            if dataset:
+                rec.update(dataset=dataset, source_id=source_id)
+            self._write(rec)
+        return view(rec)
+
+    def bind(self, lid: str, *, dataset: str, building_id: str, source_id: str | None, build_id: str) -> dict[str, Any]:
+        """Bind a landmark to the canonical building a build found for it (app.canonical): its
+        building_id becomes that id. The first binding keeps the old id in source.building_id."""
+        with self._lock:
+            rec = self.read(lid)
+            source_id = source_id or rec.get("source_id")
+            if (rec.get("dataset"), rec["building_id"], rec.get("source_id")) == (dataset, building_id, source_id):
+                return view(rec)
+            src = rec.setdefault("source", {})
+            src.setdefault("building_id", rec["building_id"])
+            previous = rec["building_id"]
+            rec.update(schema=SCHEMA, dataset=dataset, building_id=building_id, source_id=source_id)
+            self._touch(rec, {"action": "bind", "dataset": dataset, "from": previous, "to": building_id,
+                              "build": build_id})
             self._write(rec)
         return view(rec)
 

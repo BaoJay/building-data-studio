@@ -157,11 +157,11 @@ def for_version(folder: Path, rec: dict[str, Any], version: dict[str, Any], pres
     return out
 
 
-def released(library, path: Path, preset_id: str) -> tuple[list[LandmarkShadow], list[str]]:
+def released(library, path: Path, preset_id: str, ctx: dict[str, Any] | None = None) -> tuple[list[LandmarkShadow], list[str]]:
     """The released landmarks of one PMTiles with their GLB shadow for a preset, and why some
-    fell back to their LoD1 shadow (one line each)."""
+    fell back to their LoD1 shadow (one line each). ctx: what the file is (Library.in_file)."""
     found, problems = [], []
-    for rec in library.released(path):
+    for rec in library.released(path, ctx):
         version = library.version(rec, rec["in_use"])
         src = rec.get("source") or {}
         if not src.get("id_field"):

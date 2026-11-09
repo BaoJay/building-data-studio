@@ -283,7 +283,7 @@ def build_height_rule(raw: dict[str, Any], fields: dict[str, dict[str, Any]]) ->
         levels_col=levels_col,
         levels_is_text=is_text(levels_col),
         m_per_level=float(raw.get("m_per_level", 3.5)),
-        default_m=float(raw.get("default_m", 4.0)),
+        default_m=float(raw.get("default_m", 3.5)),
         min_valid_m=float(raw.get("min_valid_m", 2.0)),
         max_valid_m=float(raw.get("max_valid_m", 500.0)),
         max_levels=float(raw.get("max_levels", 200)),

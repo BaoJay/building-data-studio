@@ -32,32 +32,32 @@ def test_valid_height_is_used_and_rounded() -> None:
 
 
 def test_falls_back_to_levels_then_default() -> None:
-    assert evaluate(BASE, [(None, 5, None), (None, None, None)]) == [(17.5, "levels", 0), (4.0, "default", 0)]
+    assert evaluate(BASE, [(None, 5, None), (None, None, None)]) == [(17.5, "levels", 0), (3.5, "default", 0)]
 
 
 def test_too_tall_height_is_outlier_and_falls_back() -> None:
-    assert evaluate(BASE, [(49380, None, None), (49380, 10, None)]) == [(4.0, "default", 1), (35.0, "levels", 1)]
+    assert evaluate(BASE, [(49380, None, None), (49380, 10, None)]) == [(3.5, "default", 1), (35.0, "levels", 1)]
 
 
 def test_zero_height_is_outlier() -> None:
-    assert evaluate(BASE, [(0, None, None)]) == [(4.0, "default", 1)]
+    assert evaluate(BASE, [(0, None, None)]) == [(3.5, "default", 1)]
 
 
 def test_invalid_levels_flagged() -> None:
-    assert evaluate(BASE, [(None, 0, None), (None, 14108, None)]) == [(4.0, "default", 1), (4.0, "default", 1)]
+    assert evaluate(BASE, [(None, 0, None), (None, 14108, None)]) == [(3.5, "default", 1), (3.5, "default", 1)]
 
 
 def test_provenance_default_means_no_measurement() -> None:
     rule = HeightRule(height_col="height", prov_col="prov", prov_missing=("default",))
     assert evaluate(rule, [(4, None, "default"), (30, None, "osm_height")]) == [
-        (4.0, "default", 0),
+        (3.5, "default", 0),
         (30.0, "height", 0),
     ]
 
 
 def test_clamp_mode() -> None:
     rule = HeightRule(height_col="height", max_valid_m=500, outlier_mode="clamp")
-    assert evaluate(rule, [(900, None, None), (0, None, None)]) == [(500.0, "clamped", 1), (4.0, "default", 1)]
+    assert evaluate(rule, [(900, None, None), (0, None, None)]) == [(500.0, "clamped", 1), (3.5, "default", 1)]
 
 
 def test_keep_mode_keeps_raw_value_but_flags_it() -> None:
@@ -68,7 +68,7 @@ def test_keep_mode_keeps_raw_value_but_flags_it() -> None:
 def test_text_columns_are_parsed_leniently() -> None:
     rule = HeightRule(height_col="height", height_is_text=True, levels_col="levels", levels_is_text=True)
     rows = [("12,5 m", None, None), ("abc", "4", None), ("", None, None)]
-    assert evaluate(rule, rows) == [(12.5, "height", 0), (14.0, "levels", 0), (4.0, "default", 0)]
+    assert evaluate(rule, rows) == [(12.5, "height", 0), (14.0, "levels", 0), (3.5, "default", 0)]
 
 
 def test_no_columns_gives_default_everywhere() -> None:
@@ -110,8 +110,8 @@ def test_height_m_input_is_replaced_and_kept_as_h_raw() -> None:
     conn.executemany("INSERT INTO t VALUES (?, ?, NULL)", [("a", 12.34), ("b", -8), ("c", 49380)])
     cur = conn.execute(sql)
     assert [d[0] for d in cur.description] == ["id", "h_raw", "height_m", "h_src", "h_outlier", "geom"]
-    assert cur.fetchall() == [("a", 12.34, 12.3, "height", 0, None), ("b", -8, 4.0, "default", 1, None),
-                              ("c", 49380, 4.0, "default", 1, None)]
+    assert cur.fetchall() == [("a", 12.34, 12.3, "height", 0, None), ("b", -8, 3.5, "default", 1, None),
+                              ("c", 49380, 3.5, "default", 1, None)]
 
 
 def test_other_height_columns_add_no_h_raw() -> None:

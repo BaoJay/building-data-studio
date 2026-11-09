@@ -653,3 +653,16 @@ input[type="range"] { accent-color: var(--accent); width: 100%; margin: 0; }
   }
   .drawer-open { top: auto; bottom: 72px; right: var(--space-3); }
 }
+
+/* ---------- canonical building data ---------- */
+.canon-form { display: grid; gap: var(--space-3); margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.canon-form [hidden] { display: none; }
+.canon-group { display: grid; gap: var(--space-2); align-content: start; margin: 0; padding: var(--space-3); border: 1px solid var(--line); min-width: 0; }
+.canon-group legend { font-size: 12.5px; color: var(--ink-2); padding: 0 4px; }
+.canon-group textarea { width: 100%; font-family: var(--font-mono); font-size: 12px; resize: vertical; }
+.canon-builds { margin-top: var(--space-3); }
+.canon-builds summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+.canon-build-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: var(--space-2); }
+.canon-build-list li { display: grid; gap: var(--space-1); padding: var(--space-2) 0; border-top: 1px solid var(--line); }
+.canon-build-list code { overflow-wrap: anywhere; }
+@media (max-width: 720px) { .canon-form .row2 { grid-template-columns: 1fr; } }

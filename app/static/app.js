@@ -20,13 +20,13 @@ const CRS_PRESETS = [
   ["EPSG:3406", "EPSG:3406 — VN-2000 / UTM 49N"],
 ];
 const STATUS_LABEL = { queued: "Đang chờ", running: "Đang chạy", done: "Hoàn tất", failed: "Lỗi", cancelled: "Đã huỷ" };
-const KIND_LABEL = { convert: "Convert", diff: "So sánh", base: "Base OSM" };
+const KIND_LABEL = { convert: "Convert", diff: "So sánh", base: "Base OSM", canonical: "Canonical" };
 const TAB_KEY = "building-data-studio.tab.v1";
 const PREF_KEY = "building-data-studio.prefs.v1";
 const LEGACY_PREF_KEY = "building-converter.prefs.v1"; // before the rename
 const DEFAULTS = {
   want_gpkg: true, want_pmtiles: true, out_dir: "", gpkg_layer: "buildings", gpkg_crs: "EPSG:4326",
-  m_per_level: 3.5, default_m: 4, min_valid_m: 2, max_valid_m: 500, max_levels: 200, outlier_mode: "fallback",
+  m_per_level: 3.5, default_m: 3.5, min_valid_m: 2, max_valid_m: 500, max_levels: 200, outlier_mode: "fallback",
   decimals: 1, tiles_layer: "buildings", minzoom: 13, maxzoom: 15, drop: "drop-densest", extend_zooms: true,
   simplification: "", max_tile_kb: 500, shared_borders: false, attribution: "", makevalid: false, keep_temp: false,
   shadows: false, shadow_min_height: 0,
@@ -45,8 +45,21 @@ const state = {
   catCols: new Set(),
   reportKey: null,
   outputsKey: null,
-  prefs: { ...DEFAULTS, ...loadJSON(PREF_KEY, LEGACY_PREF_KEY) },
+  prefs: migratePrefs({ ...DEFAULTS, ...loadJSON(PREF_KEY, LEGACY_PREF_KEY) }),
 };
+
+// The default height was 4 m until [B-03] set it to 3.5 m (one level): a remembered 4 was the old
+// default, moved once (a 4 typed after that stays).
+function migratePrefs(prefs) {
+  const key = "building-data-studio.default-height-3.5";
+  if (loadJSON(key).done) return prefs;
+  if (prefs.default_m === 4) {
+    prefs.default_m = DEFAULTS.default_m;
+    saveJSON(PREF_KEY, prefs);
+  }
+  saveJSON(key, { done: true });
+  return prefs;
+}
 
 const savePrefs = (prefs) => saveJSON(PREF_KEY, prefs);
 
@@ -75,6 +88,10 @@ async function init() {
   }
   $("#baseActions").addEventListener("click", onBaseAction);
   loadBase();
+  $("#canonCard").addEventListener("click", onCanonAction);
+  $("#canonForm").addEventListener("change", syncCanonForm);
+  $("#canonForm").addEventListener("submit", onCanonSubmit);
+  loadCanonical();
   loadHistory();
 }
 
@@ -116,7 +133,9 @@ function renderBase(st) {
 
   const buttons = [];
   if (b) {
-    buttons.push(`<a class="btn primary" href="/preview" target="_blank" rel="noopener" title="Building LoD1 và các landmark 3D đang dùng">Xem bản đồ 3D</a>`,
+    // /preview without a file opens the canonical build in use when there is one: the base needs its own link.
+    const href = canon.status?.active ? previewUrl(b.pmtiles_token, { name: b.name }) : "/preview";
+    buttons.push(`<a class="btn primary" href="${esc(href)}" target="_blank" rel="noopener" title="Building LoD1 và các landmark 3D đang dùng">Xem bản đồ 3D</a>`,
       `<a class="btn" href="/api/files/${encodeURIComponent(b.gpkg_token)}?download=1" title="${esc(b.gpkg)}">Tải GeoPackage</a>`,
       `<button class="btn" type="button" data-base="folder">Mở thư mục</button>`);
   }
@@ -155,6 +174,200 @@ async function onBaseAction(e) {
     loadBase();
     loadHistory();
   }
+}
+
+// ------------------------------------------------------------------ canonical building data
+// OSM + Google Open Buildings (+ GBA) -> one dataset (app/canonical.py). The build in use is what
+// the 3D preview opens; earlier builds can be put back in use (rollback).
+const CANON_KEY = "building-data-studio.canonical.v1";
+const canon = { timer: null, status: null, formOpen: false };
+
+async function loadCanonical() {
+  clearTimeout(canon.timer);
+  let st;
+  try { st = await api("/api/canonical"); } catch { return; }
+  const wasActive = isActive(canon.status?.job);
+  canon.status = st;
+  renderCanonical(st);
+  if (base.status && Boolean(st.active) !== Boolean(canon.prevActive)) renderBase(base.status);
+  canon.prevActive = Boolean(st.active);
+  if (isActive(st.job)) canon.timer = setTimeout(loadCanonical, 2000);
+  else if (wasActive) loadHistory();
+}
+
+function renderCanonical(st) {
+  const a = st.active;
+  const job = st.job;
+  const active = isActive(job);
+  let info;
+  if (a) {
+    const by = a.counts?.by_winning_source || {};
+    const parts = Object.entries(by).map(([k, v]) => `${esc(k)} ${fmtInt(v)}`).join(" · ");
+    info = `<div class="base-count">${fmtInt(a.counts?.total)} building <span class="hint">(${parts})</span></div>
+      <div class="hint"><code>${esc(a.build_id)}</code> · ${esc(a.aoi?.label || "")} · cấu hình <code>${esc(a.config_version)}</code> · build lúc ${esc(new Date(a.built_at).toLocaleString("vi-VN"))}</div>`;
+  } else if (active) {
+    info = `<div class="hint">Đang build canonical lần đầu. Lần đầu app tải Google Open Buildings (Hà Nội khoảng 1,4 GB), các lần sau dùng lại.</div>`;
+  } else {
+    info = `<div class="hint">Chưa có canonical. Bấm <b>Build canonical</b>: app tải OSM và Google Open Buildings, ghép (conflation) rồi xuất Parquet + GeoPackage + PMTiles theo schema VMAP.</div>`;
+  }
+  if (job?.status === "failed") {
+    info += `<div class="alert bad"><span class="icon">!</span><div>Lần build gần nhất bị lỗi: ${esc(job.error || "xem log")}</div></div>`;
+  }
+  $("#canonInfo").innerHTML = info;
+  const buttons = [];
+  if (a) {
+    buttons.push(`<a class="btn primary" href="/preview" target="_blank" rel="noopener" title="Canonical đang dùng, cùng các landmark 3D">Xem bản đồ 3D</a>`,
+      `<a class="btn" href="/api/files/${encodeURIComponent(a.parquet_token)}?download=1">Tải Parquet</a>`,
+      `<a class="btn" href="/api/files/${encodeURIComponent(a.gpkg_token)}?download=1">Tải GeoPackage</a>`,
+      `<button class="btn" type="button" data-canon="folder">Mở thư mục</button>`);
+  }
+  if (job) buttons.push(`<button class="btn" type="button" data-canon="job">${active ? "Xem tiến trình" : "Log lần build"}</button>`);
+  if (!active) buttons.push(`<button class="btn${a ? "" : " primary"}" type="button" data-canon="form" aria-expanded="${canon.formOpen}">Build canonical…</button>`);
+  $("#canonActions").innerHTML = buttons.join("");
+
+  $("#canonProgress").hidden = !active;
+  if (active) {
+    const steps = job.steps || [];
+    const cur = steps.find((s) => s.status === "running");
+    const done = steps.filter((s) => s.status === "done" || s.status === "skipped").length;
+    $("#canonStep").textContent = job.status === "queued" ? "Đang chờ job khác chạy xong…"
+      : `Bước ${Math.min(done + 1, steps.length)}/${steps.length}: ${cur?.title || "…"}${cur?.progress ? ` (${fmtNum(cur.progress, 0)}%)` : ""}`;
+    $("#canonBar").style.width = `${steps.length ? (100 * (done + (cur?.progress || 0) / 100)) / steps.length : 0}%`;
+  }
+  const form = $("#canonForm");
+  if (active) canon.formOpen = false;
+  if (canon.formOpen && form.hidden) form.innerHTML = canonFormHtml(st);
+  form.hidden = !canon.formOpen;
+  renderCanonBuilds(st);
+}
+
+function canonFormHtml(st) {
+  const saved = loadJSON(CANON_KEY);
+  const pick = (k, d) => (saved[k] ?? d);
+  const aoi = pick("aoi", "area");
+  const osm = pick("osm_source", "overpass");
+  const osmSnap = st.snapshots?.osm?.[0];
+  const gobSnap = st.snapshots?.gob?.[0];
+  const radio = (name, value, cur, label, extra = "") =>
+    `<label class="check"><input type="radio" name="${name}" value="${esc(value)}" ${cur === value ? "checked" : ""} ${extra}> ${label}</label>`;
+  const presets = (st.presets || []).map((p) => radio("aoi", `h3:${p.key}`, aoi, `${esc(p.label)} <span class="hint">(${p.cells} ô)</span>`)).join("");
+  return `
+    <div class="row2">
+      <fieldset class="canon-group"><legend>Vùng build</legend>
+        ${radio("aoi", "area", aoi, `Toàn ${esc(st.label)} <span class="hint">(mặc định)</span>`)}
+        ${presets}
+        ${radio("aoi", "h3:custom", aoi, "Danh sách ô H3")}
+        <label class="field" data-show="h3:custom"><span>Ô H3 (cách nhau bằng dấu phẩy, khoảng trắng hoặc xuống dòng)</span>
+          <textarea name="h3_cells" rows="3" spellcheck="false">${esc(pick("h3_cells", ""))}</textarea></label>
+      </fieldset>
+      <fieldset class="canon-group"><legend>Nguồn OSM</legend>
+        ${radio("osm_source", "overpass", osm, "Tải mới qua Overpass <span class=\"hint\">(vài phút với cả Hà Nội)</span>")}
+        ${radio("osm_source", "file", osm, "File .osm.pbf")}
+        <label class="field" data-show-osm="file"><span>Đường dẫn file .osm.pbf (vd Geofabrik vietnam-latest.osm.pbf)</span>
+          <input type="text" name="osm_file" value="${esc(pick("osm_file", ""))}" placeholder="/Users/…/vietnam-latest.osm.pbf"></label>
+        ${radio("osm_source", "snapshot", osmSnap ? osm : "", osmSnap
+          ? `Snapshot đã tải <span class="hint">(${esc(osmSnap.snapshot_id)}, ${fmtInt(osmSnap.rows)} đối tượng)</span>`
+          : `Snapshot đã tải <span class="hint">(chưa có)</span>`, osmSnap ? "" : "disabled")}
+      </fieldset>
+    </div>
+    <div class="row2">
+      <fieldset class="canon-group"><legend>Google Open Buildings v3</legend>
+        <div class="hint">${gobSnap ? `Dùng lại snapshot ${esc(gobSnap.snapshot_id)} (${fmtInt(gobSnap.rows)} footprint) nếu nó phủ vùng build.` : "Chưa tải: lần build đầu tự tải (Hà Nội nằm trong ô S2 3135, khoảng 1,4 GB)."}
+          Giữ footprint có confidence ≥ 0,75.</div>
+        <label class="check"><input type="checkbox" name="gob_refresh" ${pick("gob_refresh", false) ? "checked" : ""}> Tải lại từ Google</label>
+      </fieldset>
+      <fieldset class="canon-group"><legend>Tuỳ chọn</legend>
+        <label class="field"><span>File GBA (Global Building Atlas, tuỳ chọn): footprint gba_ms và chiều cao</span>
+          <input type="text" name="gba_file" value="${esc(pick("gba_file", ""))}" placeholder=".parquet / .gpkg / .geojson / .fgb"></label>
+        <label class="field"><span>File POI Parquet (tuỳ chọn): luật tier 4, POI neo trong footprint</span>
+          <input type="text" name="poi_file" value="${esc(pick("poi_file", ""))}" placeholder="poi-dump-….parquet"></label>
+        <label class="field"><span>File canonical production để giữ building_id ${st.registry ? "(đã có ID registry, không bắt buộc)" : "(nên chọn ở lần build đầu)"}</span>
+          <input type="text" name="seed_file" value="${esc(pick("seed_file", ""))}" placeholder="canonical_building_v7_….parquet"></label>
+      </fieldset>
+    </div>
+    <label class="check"><input type="checkbox" name="activate" ${pick("activate", true) ? "checked" : ""}> Xong thì đặt làm canonical đang dùng (trang 3D mở bản này)</label>
+    <div class="btn-row"><button class="btn primary" type="submit">Bắt đầu build</button><button class="btn" type="button" data-canon="close">Đóng</button>
+      <span class="hint">Cấu hình <code>${esc(st.configs?.[0] || "")}</code> · tier <code>${esc(st.tier_rules?.[0] || "")}</code></span></div>`;
+}
+
+function syncCanonForm() {
+  const form = $("#canonForm");
+  const aoi = form.querySelector('input[name="aoi"]:checked')?.value;
+  const osm = form.querySelector('input[name="osm_source"]:checked')?.value;
+  form.querySelectorAll("[data-show]").forEach((el) => { el.hidden = el.dataset.show !== aoi; });
+  form.querySelectorAll("[data-show-osm]").forEach((el) => { el.hidden = el.dataset.showOsm !== osm; });
+}
+
+function readCanonForm() {
+  const form = $("#canonForm");
+  const v = (name) => form.elements[name]?.value?.trim() || "";
+  const aoi = form.querySelector('input[name="aoi"]:checked')?.value || "area";
+  const saved = {
+    aoi, h3_cells: v("h3_cells"), osm_source: form.querySelector('input[name="osm_source"]:checked')?.value || "overpass",
+    osm_file: v("osm_file"), gob_refresh: form.elements.gob_refresh.checked, gba_file: v("gba_file"), poi_file: v("poi_file"),
+    seed_file: v("seed_file"), activate: form.elements.activate.checked,
+  };
+  saveJSON(CANON_KEY, saved);
+  const body = { ...saved, area: canon.status.area, aoi: aoi.startsWith("h3:") ? "h3" : "area" };
+  if (aoi.startsWith("h3:") && aoi !== "h3:custom") body.h3_preset = aoi.slice(3);
+  if (aoi !== "h3:custom") delete body.h3_cells;
+  return body;
+}
+
+function renderCanonBuilds(st) {
+  const builds = st.builds || [];
+  $("#canonBuilds").hidden = !builds.length;
+  if (!builds.length) return;
+  $("#canonBuildList").innerHTML = builds.map((b) => `<li>
+    <div class="canon-build-head"><code>${esc(b.build_id)}</code>${b.active ? ' <span class="badge done">đang dùng</span>' : ""}
+      ${b.landmark_warnings ? ` <span class="badge running">${b.landmark_warnings} cảnh báo landmark</span>` : ""}</div>
+    <div class="hint">${esc(b.aoi)} · ${fmtInt(b.counts?.total)} building · <code>${esc(b.config_version)}</code> · ${esc(new Date(b.built_at).toLocaleString("vi-VN"))}</div>
+    <div class="btn-row">
+      <a class="btn small" href="${esc(previewUrl(b.pmtiles_token, { name: b.build_id }))}" target="_blank" rel="noopener">Xem 3D</a>
+      <a class="btn small" href="/api/files/${encodeURIComponent(b.report_token)}" target="_blank" rel="noopener">Báo cáo</a>
+      <button class="btn small" type="button" data-canon="reveal" data-token="${esc(b.folder_token)}">Thư mục</button>
+      ${b.active ? "" : `<button class="btn small" type="button" data-canon="activate" data-folder="${esc(b.folder)}">Đặt làm đang dùng</button>`}
+    </div></li>`).join("");
+}
+
+async function onCanonAction(e) {
+  const btn = e.target.closest("[data-canon]");
+  const st = canon.status;
+  if (!btn || !st) return;
+  const what = btn.dataset.canon;
+  if (what === "folder") reveal(st.active.folder_token);
+  else if (what === "reveal") reveal(btn.dataset.token);
+  else if (what === "job") showJob(st.job.id, true);
+  else if (what === "form" || what === "close") {
+    canon.formOpen = what === "form" ? !canon.formOpen : false;
+    $("#canonForm").hidden = true;  // re-rendered from the latest status
+    renderCanonical(st);
+    if (canon.formOpen) syncCanonForm();
+  } else if (what === "activate") {
+    if (!window.confirm(`Đặt build ${btn.dataset.folder} làm canonical đang dùng? Trang 3D và landmark sẽ mở bản này.`)) return;
+    try {
+      canon.status = await api("/api/canonical/activate", { method: "POST", body: { area: st.area, folder: btn.dataset.folder } });
+      renderCanonical(canon.status);
+      toast("Đã đổi canonical đang dùng.");
+    } catch (err) { toast(err.message); }
+  }
+}
+
+async function onCanonSubmit(e) {
+  e.preventDefault();
+  const btn = e.submitter;
+  if (btn) btn.disabled = true;
+  try {
+    await api("/api/canonical/build", { method: "POST", body: readCanonForm() });
+    canon.formOpen = false;
+    toast("Đã bắt đầu build canonical.");
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  loadCanonical();
+  loadHistory();
 }
 
 function renderTools(health) {
@@ -591,7 +804,7 @@ function renderOptions(p) {
       <label class="check">${chk("shadows", pr.shadows)} Thêm layer bóng <code>shadows</code> cho Bình minh / Ban ngày / Hoàng hôn (thử nghiệm)
         <span class="hint">— cần chiều cao height_m, tile từ zoom 15; cả nước mất thêm vài phút</span></label>
       <label class="field" id="shadowMinField"><span>Chỉ đổ bóng building cao hơn (m)</span>${num("shadow_min_height", pr.shadow_min_height, 'min="0" step="0.5"')}
-        <span class="hint">0 = mọi building. 4 = bỏ nhà đang dùng chiều cao mặc định 4 m: layer bóng nhẹ hơn ~6 lần.</span></label>
+        <span class="hint">0 = mọi building. 3.5 = bỏ nhà đang dùng chiều cao mặc định 3,5 m: layer bóng nhẹ hơn nhiều.</span></label>
       <label class="field"><span>Attribution</span><input type="text" name="attribution" value="${esc(pr.attribution)}" placeholder="vd: © OpenStreetMap contributors"></label>
     </fieldset>
 

@@ -15,6 +15,8 @@ Trang xem 3D (`/preview`) hiện building LoD1 cùng mọi **landmark 3D** (file
 
 **Base Hà Nội**: building OpenStreetMap của toàn thành phố, app tự tạo một lần. Trang xem 3D mở thẳng base này, không cần upload hay convert file (xem [Base Hà Nội](#base-hà-nội-building-osm-toàn-thành-phố)).
 
+**Canonical Building Data**: ghép OSM với Google Open Buildings (và GBA nếu có) thành một bộ building chuẩn. Cột giống `canonical_building` của platform, `building_id` giữ nguyên qua các lần build, landmark 3D không bị mất khi build bản mới. Khi đã có, trang xem 3D mở canonical đang dùng thay cho base (xem [Canonical Building Data](#canonical-building-data-osm--google-open-buildings)).
+
 ```
 .xlsx (một sheet) ── cột WKT / GeoJSON, hoặc way ID OSM ── Overpass + buffer ──► GeoPackage dựng sẵn ─┐
                                                                                                     ▼
@@ -128,14 +130,14 @@ Overture (S3, GeoParquet) ─ DuckDB ─┬─ divisions: ranh giới VN-HN ─�
 | `building_id` | id OSM: `way/123` hoặc `relation/456` (mở được tại `openstreetmap.org/way/123`) |
 | `parent_building_id` | với khối con (`building:part`): id OSM của building chứa nó |
 | `name`, `class`, `subtype` | tên, loại building (`apartments`, `school`…). Khối con lấy `class` của building cha |
-| `height`, `num_floors` | chiều cao (m) và số tầng từ tag OSM. `height_m` lấy `height`, rồi `num_floors × 3,5 m`, rồi 4 m |
+| `height`, `num_floors` | chiều cao (m) và số tầng từ tag OSM. `height_m` lấy `height`, rồi `num_floors × 3,5 m`, rồi 3,5 m (một tầng) |
 | `min_height`, `min_floor` | đáy khối (m) / tầng bắt đầu. `min_height` trống thì tính `min_floor × 3,5 m` |
 | `roof_*`, `facade_*` | mái và mặt ngoài (hình dạng, màu, vật liệu) từ tag OSM |
 | `osm_version`, `osm_timestamp`, `overture_id` | phiên bản và thời điểm sửa cuối của way / relation trên OSM, GERS id của Overture |
 
 Building ngầm (`is_underground`) bị bỏ. Một building được giữ khi chạm ranh giới; một khối con được giữ khi building cha của nó được giữ.
 
-Số liệu lần tạo đầu (Overture `2026-10-21.0`, ảnh chụp OSM ngày 2026-09-12): **212.373 building + 1.517 khối con** trên 3.354 km². Chỉ **5,4%** có chiều cao thật (`height` hoặc số tầng), còn lại dùng 4 m mặc định. GeoPackage nặng 81 MB, PMTiles 20 MB. Để so sánh, Overture có tổng cộng khoảng 4,2 triệu building trong khung bao Hà Nội; phần lớn là footprint Google / Microsoft nhận diện bằng AI.
+Số liệu lần tạo đầu (Overture `2026-10-21.0`, ảnh chụp OSM ngày 2026-09-12): **212.373 building + 1.517 khối con** trên 3.354 km². Chỉ **5,4%** có chiều cao thật (`height` hoặc số tầng), còn lại dùng chiều cao mặc định (lúc đó là 4 m, nay là 3,5 m). GeoPackage nặng 81 MB, PMTiles 20 MB. Để so sánh, Overture có tổng cộng khoảng 4,2 triệu building trong khung bao Hà Nội; phần lớn là footprint Google / Microsoft nhận diện bằng AI.
 
 Dữ liệu nằm trong `base/hanoi/` cạnh `output/` và không commit vào git. Mỗi lần tạo là một thư mục mới; `base/hanoi/base.json` trỏ tới bản đang dùng. Các tuỳ chọn:
 
@@ -170,13 +172,128 @@ App tự làm những việc Overture đã làm sẵn:
 - **Chiều cao** (`app/osmtags.py`): đọc `height` ở dạng `12`, `12,5`, `12 m`, `40'`, `12'6"`. Từ chối khoảng (`10-12`), chữ, số âm, và giá trị trên 1.000 m. `building:levels` chấp nhận `3;4` (lấy số lớn hơn). `min_height` trống thì dùng `building:min_level × 3,5 m`. `height_m` vẫn do pipeline convert quyết định như cũ.
 - **`building:part`** (chuẩn Simple 3D Buildings): `building:part=*` (khác `no`) là khối con. Khối con nhận làm cha **building outline nhỏ nhất chứa một điểm của nó** (OSM không có liên kết tường minh). Khối con không có outline vẫn là building thường nên không bị ẩn. Outline có khối con nhận `has_parts` và bị ẩn khi dựng 3D.
 - **Multipolygon**: ghép các way `outer`/`inner` thành vòng; relation thiếu member (way không khép kín) bị bỏ và đếm trong log.
-- **Nguồn chiều cao** (`height_lineage`, chỉ trong GeoPackage, không đưa vào PMTiles): `osm:height` (tag `height`), `osm:levels*3.5m` (`building:levels` × 3,5 m), `default:4m`, suy ra từ `h_src` nên luôn khớp `height_m`. Thứ tự ưu tiên giữ nguyên: tag OSM, rồi số tầng, rồi 4 m; không lấy chiều cao từ Overture.
+- **Nguồn chiều cao** (`height_lineage`, chỉ trong GeoPackage, không đưa vào PMTiles): `osm:height` (tag `height`), `osm:levels*3.5m` (`building:levels` × 3,5 m), `default:3.5m`, suy ra từ `h_src` nên luôn khớp `height_m`. Thứ tự ưu tiên giữ nguyên: tag OSM, rồi số tầng, rồi 3,5 m; không lấy chiều cao từ Overture.
 - **Tag lỗi**: tag số không dùng được (`height=tall`, `building:levels=0`…) được ghi vào `*_tag_issues.csv` (kèm link OSM) để sửa trực tiếp trên OSM.
 - Bỏ building `location=underground` / `tunnel=*`. Ranh giới lấy từ relation OSM có `ISO3166-2=VN-HN`.
 
 So với Overture: không có footprint Google / Microsoft (vốn đã bị loại ở base này), nhưng cũng không có bước chuẩn hoá `class` và `roof_*` đã được Overture xử lý; các cột này lấy nguyên từ tag OSM.
 
 Dữ liệu OSM theo giấy phép ODbL. PMTiles của base ghi sẵn attribution `© OpenStreetMap contributors (ODbL) · Overture Maps <release>`; giữ dòng này khi đưa base lên app.
+
+### Canonical Building Data (OSM + Google Open Buildings)
+
+Thẻ **Canonical Building Data** ở trang chính ghép nhiều nguồn footprint thành **một** bộ building chuẩn: mỗi công trình ngoài thực tế là một dòng. Thuật toán theo *Tài liệu chi tiết thuật toán Building Conflation* (tu-liem-v1.3), với các quy tắc đã chốt cho Building Data Studio (cấu hình `osm-first-v1`). File Parquet có đúng các cột của `canonical_building` trên platform (21 field của schema VMAP), thêm `height_lineage` và vài cột để kiểm tra.
+
+```
+Ingest            OSM (Overpass, hoặc file .osm.pbf) · Google Open Buildings v3 (app tự tải) · GBA (file, tuỳ chọn)
+  │               mỗi nguồn là một snapshot không sửa, trong canonical/sources/
+Normalize         polygon hợp lệ trong vùng · GOB confidence ≥ 0,75 · bỏ footprint máy < 10 m² · tách GBA theo nguồn gốc
+  │
+Entity matching   đồ thị chồng lấn giữa các nguồn · merge edge khi IoU ≥ 0,25 hoặc coverage ≥ 0,40 · connected component
+  │
+Conflation        OSM > GOB > GBA-ms: footprint lấy nguyên của nguồn thắng, nguồn thấp hơn là bằng chứng
+  │
+Build             building_id ổn định · khoá landmark · chiều cao · building_tier · kiểm tra invariants
+                  → .parquet + .gpkg + .pmtiles (schema VMAP) + review_osm.gpkg / review_gob.gpkg + báo cáo
+```
+
+#### Build
+
+Bấm **Build canonical…**, chọn rồi **Bắt đầu build**:
+
+| Mục | Lựa chọn |
+|---|---|
+| Vùng build | **Toàn Hà Nội** (mặc định), **48 ô H3 r8** (release 25/11, 38,6 km²), hoặc dán danh sách ô H3. Building được tính vào vùng theo điểm bên trong footprint; nguồn được đọc rộng thêm 200 m để mép vùng ghép giống giữa vùng |
+| Nguồn OSM | **Overpass** (tải mới, vài phút với cả Hà Nội), **file .osm.pbf** (vd Geofabrik), hoặc **snapshot đã tải** ở lần trước |
+| Google Open Buildings | App tự tải các ô S2 cấp 6 phủ vùng. Hà Nội nằm trọn trong ô `3135`, khoảng 1,4 GB, chỉ tải lần đầu; file gốc giữ ở `canonical/sources/gob/raw/`. Tick **Tải lại** để lấy bản mới |
+| File GBA | Tuỳ chọn. Global Building Atlas (`.parquet`, `.gpkg`, `.geojson`, `.fgb`), cần cột chiều cao và cột nguồn gốc (`source` / `origin`). Bản ghi gốc Microsoft là footprint `gba_ms`; mọi bản ghi có chiều cao là ứng viên chiều cao. Không có cột nguồn gốc thì chỉ dùng chiều cao |
+| File POI | Tuỳ chọn. POI dump Parquet (`latitude`, `longitude`, `place_category_code`) cho luật tier 4 |
+| File canonical production | Nên chọn ở lần build đầu (vd `canonical_building_v7_20261028.parquet`): toà đã có trên production giữ nguyên `building_id`. App nhớ trong ID registry, lần sau không cần |
+| Đặt làm đang dùng | Bỏ tick để build thử mà không đổi bản trang 3D đang mở |
+
+Từ terminal:
+
+```bash
+.venv/bin/python -m app.canonical hanoi                                            # toàn Hà Nội, OSM qua Overpass
+.venv/bin/python -m app.canonical hanoi --h3 hanoi-48 --osm vietnam-latest.osm.pbf # 48 ô H3, OSM từ file
+.venv/bin/python -m app.canonical hanoi --osm snapshot --seed canonical_building_v7_20261028.parquet --no-activate
+```
+
+Hoặc `POST /api/canonical/build` với `{"aoi": "h3", "h3_preset": "hanoi-48", "osm_source": "file", "osm_file": "…"}`.
+
+#### Quy tắc ghép (`osm-first-v1`)
+
+| Trường hợp | Kết quả |
+|---|---|
+| OSM và GOB chồng nhau đủ để thành merge edge | Giữ footprint OSM. GOB là bằng chứng (`source_ids`, `group_id`) |
+| Chỉ có GOB | Lên tile luôn: `winning_source = google_open_building`, `confidence` = điểm của Google, `source_id` = plus code |
+| GOB chồng một phần lên OSM nhưng không đủ merge (IoU ≥ 0,10 hoặc coverage ≥ 0,20) | Bỏ GOB, không đưa vào review |
+| GOB chỉ chạm mép OSM (dưới ngưỡng trên) | Giữ cả hai |
+| GBA gốc Microsoft (`gba_ms`) | Footprint độc lập, xếp sau GOB; chỉ thắng ở chỗ OSM và GOB đều không có |
+| 1 OSM – nhiều GOB / nhiều OSM – 1 GOB / nhiều – nhiều, hoặc 1:1 mà IoU nhóm < 0,50 | `split` / `aggregate` / `ambiguous`: giữ OSM, đưa vào danh sách review |
+
+Footprint luôn copy nguyên từ nguồn thắng (không union, average hay snap). Ngưỡng nằm trong `Params` của `app/conflation.py`. Không sửa một cấu hình đã dùng: thêm cấu hình mới (vd `osm-first-v2`) vào `CONFIGS`. Mỗi build ghi `config_version` và `params_hash` vào `build.json`.
+
+#### Chiều cao
+
+| Ưu tiên | Nguồn | `height_provenance` | `height_lineage` |
+|---|---|---|---|
+| 1 | Tag `height` của OSM (2–500 m) | `osm_height` | `osm:height` |
+| 2 | `building:levels` × 3,5 m (1–100 tầng) | `osm_levels` | `osm:levels*3.5m` |
+| 3 | GBA: polygon GBA chồng nhiều nhất lên footprint này, IoU ≥ 0,50 | `gba` | `gba:<nguồn gốc>:<id GBA>` |
+| 4 | Mặc định 3,5 m (một tầng) | `default` | `default:3.5m` |
+
+Khối con (`building:part`) lấy tag riêng, số tầng riêng, rồi chiều cao của building cha (`parent:way/…`). `min_height` lấy tag `min_height`, rồi `building:min_level × 3,5 m`, chỉ khi thấp hơn `height_m`. `height` và `h_m` trong PMTiles là bản sao của `height_m`.
+
+#### Các cột
+
+| Cột | Giá trị |
+|---|---|
+| `building_id` | UUID ổn định qua các build (xem dưới) |
+| `source_id` | id trong nguồn thắng: `way/123`, plus code của GOB, id GBA |
+| `winning_source` | `osm`, `google_open_building`, `gba_ms`, hoặc `landmark` (footprint cũ của landmark bị mất toà) |
+| `winning_observation_id` | id của bản ghi nguồn thắng (cố định theo nguồn + phiên bản) |
+| `group_id` | id của component khi nhiều footprint được ghép; trống khi đứng riêng |
+| `confidence` | điểm confidence của GOB; trống với OSM |
+| `status` | `active` |
+| `resolution_mode`, `decided_by`, `updated_by` | `auto`; toà có landmark: `manual` / `landmark` |
+| `build_id`, `config_version`, `updated_at` | `build-bldg-YYYYMMDD-HHMMSS`, `osm-first-v1`, thời điểm build |
+| `description` | `Rule osm-first-v1, build build-bldg-…: footprint from osm, height from osm_levels` |
+| `parent_building_id`, `min_height` | khối con: `building_id` của toà cha; đáy khối (chuỗi, như schema) |
+| `building_tier` | theo luật `building_tier_v1` (dưới) |
+| Chỉ trong Parquet / GPKG | `height_lineage`, `name`, `building_levels`, `footprint_area_m2`, `conflation_relation_type`, `group_iou`, `source_ids`, `conflation_reasons`, `tier_flags` |
+
+#### building_id ổn định
+
+`canonical/hanoi/id_registry.parquet` nhớ mỗi bản ghi nguồn (`osm:way/123`, `gob:<plus code>`…) đã thuộc `building_id` nào. Build mới tìm theo footprint thắng trước, rồi theo các bằng chứng: một nhà OSM mới vẽ đúng chỗ một footprint Google cũ sẽ **kế thừa** id của footprint Google đó. Không tìm được thì sinh UUIDv7 mới. Một id không bao giờ được giao cho toà khác. Registry chỉ được ghi khi build thành công. Báo cáo ghi số id giữ / kế thừa / mới.
+
+#### building_tier
+
+Luật `building_tier_v1` theo *[B-05] Quy chuẩn Building Tier* (khớp luật đầu tiên): `T1_iconic` (pin trong `config/building_tier/iconic_pins.geojson`, hoặc toà có landmark), `T1_landmark`, `T2_commercial`, `T2_highrise_residential`, `T2_large`, `T3_residential`. Cao tầng = ≥ 9 tầng hoặc chiều cao đo được ≥ 30 m. Khối con lấy tier của toà cha. Cờ `minor_structure` và `tiny_footprint_qc` (< 15 m²) nằm trong `tier_flags`. Luật mới (`building_tier_v2`…) là một hàm mới trong `RULES` của `app/buildingtier.py`, chạy sau conflation nên không đổi ingest, footprint, chiều cao hay danh sách review.
+
+#### Danh sách review cho MapOps
+
+Mỗi build có `review_osm.gpkg` và `review_gob.gpkg` (thêm `review_gba.gpkg` khi có GBA), layer `review`: footprint nguồn của mọi trường hợp cần xem, cùng `issue_type` (`ambiguous`, `split`, `aggregate`, `coverage_gap`, `large_footprint` > 5.000 m², `landmark_lost`, `landmark_footprint_changed`), `severity`, `group_id`, `role` (winner / evidence), `canonical_building_id`, `group_iou`. Mở cả hai file trên QGIS để so footprint OSM và GOB của cùng một `group_id`. `conflation_bridge.parquet` lưu mọi cặp chồng lấn giữa các nguồn (IoU, coverage, khoảng cách tâm, match score), kể cả cặp dưới ngưỡng.
+
+#### Kiểm tra trước khi lưu
+
+Build chỉ được lưu khi qua hết: geometry hợp lệ, `building_id` không trùng, mỗi bản ghi nguồn thuộc tối đa một building, `one_to_one` có IoU nhóm ≥ 0,50, coverage gap có reason, chiều cao trong 2–500 m, khối con có toà cha, `min_height` < `height_m`. Không qua thì build báo lỗi; canonical đang dùng, ID registry và landmark giữ nguyên.
+
+#### Thư mục, báo cáo và rollback
+
+```
+canonical/                                  (BDS_CANONICAL_DIR)
+  sources/osm/<snapshot>/osm.parquet         + source.json
+  sources/gob/<snapshot>/gob.parquet         + source.json; raw/<ô S2>_buildings.csv.gz
+  hanoi/canonical.json                       build đang dùng
+  hanoi/id_registry.parquet
+  hanoi/canonical_building_hanoi__<giờ>/     .parquet .gpkg .pmtiles review_*.gpkg conflation_bridge.parquet
+                                             canonical_report.md build.json report.md log.txt
+```
+
+`canonical_report.md` ghi nguồn và snapshot, số liệu normalize, đồ thị, quan hệ, nguồn chiều cao, tier, id, invariants, review và landmark. Bảng **Các build** trên thẻ có **Xem 3D**, **Báo cáo** và **Đặt làm đang dùng** (rollback về một build cũ). Thư mục `canonical/` không commit vào git.
+
+So sánh hai build (hoặc với file production) bằng tab **So sánh 2 file**, khớp theo `building_id`.
 
 ### Convert một file
 
@@ -218,7 +335,7 @@ Mỗi building lấy **giá trị hợp lệ đầu tiên** theo thứ tự:
 |---|---|---|
 | 1 | Cột chiều cao, nếu nằm trong khoảng hợp lệ (mặc định 2–500 m) | `height` |
 | 2 | Số tầng × mét/tầng (mặc định 3,5 m; số tầng 1–200) | `levels` |
-| 3 | Chiều cao mặc định (mặc định 4 m) | `default` |
+| 3 | Chiều cao mặc định (mặc định 3,5 m, tức một tầng theo quy ước B-03) | `default` |
 
 - **Cột nguồn chiều cao** (vd `height_provenance`): các dòng có giá trị trong *“Giá trị = không có số liệu thật”* (mặc định `default`) được xem là **không có số đo**. Như vậy báo cáo phân biệt được chiều cao thật với chiều cao mặc định.
 - **`h_outlier = 1`** khi giá trị gốc nằm ngoài khoảng hợp lệ, ví dụ 0 m hoặc 49.380 m. Phần *Giá trị ngoài khoảng hợp lệ* có 3 cách xử lý:
@@ -365,7 +482,7 @@ Số đo trên `canonical_building_v2` (1.197.099 building, máy dev 15 nhân, 7
 
 Cả lượt convert có bóng (mọi building) mất khoảng 4,5 phút, RAM đỉnh khoảng 3 GB (lúc 7 tiến trình gộp chạy song song).
 
-96,9% building của bản này đang dùng chiều cao mặc định 4 m (`h_src = default`), nên ngưỡng 4 m bỏ gần hết bóng của nhà "đoán chiều cao" và làm layer nhẹ đi khoảng 30 lần.
+96,9% building của bản này đang dùng chiều cao mặc định (`h_src = default`, lúc đo là 4 m, nay là 3,5 m), nên ngưỡng 4 m bỏ gần hết bóng của nhà "đoán chiều cao" và làm layer nhẹ đi khoảng 30 lần.
 
 ### Bay quanh toà cao nhất
 
@@ -379,7 +496,7 @@ Trang xem 3D (`/preview`) là nơi duy nhất xem và quản lý landmark: panel
 
 **Trên bản đồ**:
 
-- Mọi landmark **đang dùng** của chính file PMTiles đang mở được vẽ cùng lúc, mỗi mô hình với hướng, tỉ lệ, điểm neo và toạ độ neo của version đang dùng. Server so file bằng đường dẫn thật (`source.path` lúc đăng ký), kể cả base mặc định. Landmark đăng ký trên file khác vẫn có trong danh sách, nhưng không vẽ trên file này.
+- Mọi landmark **đang dùng** của file PMTiles đang mở được vẽ cùng lúc, mỗi mô hình với hướng, tỉ lệ, điểm neo và toạ độ neo của version đang dùng. Landmark của Canonical Building Data được vẽ trên **mọi build** của canonical (theo `building_id`) và trên base OSM (theo `source_id`), xem [Landmark qua các version build](#landmark-qua-các-version-build). Landmark khác chỉ được vẽ trên file nó được đăng ký (server so đường dẫn thật, `source.path`); ở file khác nó vẫn có trong danh sách nhưng không được vẽ.
 - File GLB chỉ được tải khi landmark ở trong vùng đang xem (cộng thêm 25% mỗi phía), tối đa 3 file cùng lúc, và giữ trong bộ nhớ tối đa 24 mô hình. Đổi bản đồ nền hay chế độ ánh sáng không tải lại file.
 - **Đổi file theo zoom (LOD)**: version có nhiều file theo `asset.extras.zoom_range` (ví dụ Tasco z17 `[17, null]`, z16 `[16, 17]`, z15 `[15, 16]`; khoảng `min ≤ zoom < max`) thì bản đồ vẽ file của zoom đang xem, giống app Mobile. Trong lúc file mới đang tải, file cũ vẫn ở trên bản đồ nên extrusion không nháy. Ngoài mọi khoảng zoom (ví dụ zoom 14,5) landmark không được vẽ và building giữ extrusion LoD1, trừ landmark đang mở trong drawer: nó hiện file gần nhất để còn chỉnh, và drawer ghi rõ app sẽ không vẽ ở zoom đó. Version chỉ có một file không ghi `zoom_range` thì vẽ ở mọi zoom như trước.
 - Extrusion của building, gồm các khối con (`parent_building_id`), chỉ bị ẩn khi file GLB đã tải xong. File lỗi (ví dụ nén Draco) thì extrusion vẫn giữ, lỗi hiện trong drawer. Bóng: landmark có version đang dùng đổ bóng theo mesh GLB của version đó (Bình minh, Ban ngày, Hoàng hôn; Ban đêm không đổ bóng), gộp chung với bóng building xung quanh nên không đậm lên ở chỗ chồng nhau. Landmark chưa có version đang dùng, hoặc file GLB không đọc được hình học (nén Draco / meshopt), giữ bóng hộp LoD1. Bóng đi theo placement đã lưu: đang kéo thử placement hay xem version khác thì bóng chưa đổi. Mỗi tam giác của GLB được đặt như mô hình trên bản đồ (heading, tỉ lệ, điểm neo), chiếu xuống mặt đất theo tia nắng rồi gộp lại. Khác bóng LoD1, bóng landmark không bị footprint của chính building đó cắt đi: mô hình thường không phủ kín footprint LoD1, nên bóng phủ cả phần đất trống quanh mô hình trong footprint (dưới thân mô hình thì bị mô hình che). Kết quả tính một lần cho mỗi (file GLB, placement, chế độ) và lưu ở `landmarks/<id>/shadows/`. Với PMTiles có sẵn layer `shadows`, bóng GLB được vẽ đè lên, bóng hộp LoD1 trong file vẫn nằm dưới.
@@ -405,6 +522,26 @@ Trang xem 3D (`/preview`) là nơi duy nhất xem và quản lý landmark: panel
 - **Tải manifest** tải `landmarks-manifest.json`. File này liệt kê version đang dùng của mọi landmark, kèm đường dẫn file, sha256 và placement, để gửi team Mobile hoặc đối chiếu với MapOps. Version có file theo zoom có thêm `lods`: `[{lod_zoom, zoom_range, file, sha256, size}]`, file chi tiết nhất đứng đầu (chính là `file`). Mỗi landmark có thêm `shadows` (file GeoJSON bóng theo từng chế độ có nắng, đường dẫn tương đối trong thư mục landmark như `file`), và `shadow_presets` ở đầu file ghi màu, độ mờ và hướng nắng của từng chế độ. App vẽ các file này như layer `shadows` (thay bóng LoD1 của building đó).
 
 Dữ liệu nằm trong thư mục `landmarks/` cạnh `output/`. Thư mục này không commit vào git. Đổi chỗ lưu bằng biến môi trường `BDS_LANDMARK_DIR`, ví dụ trỏ tới một thư mục Google Drive dùng chung với team. Mỗi landmark là một thư mục `landmarks/<id>/`, gồm `landmark.json` và `v1.glb`, `v2.glb`… (cùng `v2_z16.glb`, `v2_z15.glb` cho các file theo zoom). **Xoá landmark** chỉ chuyển thư mục đó vào `landmarks/_trash/`, không xoá file nào.
+
+#### Landmark qua các version build
+
+Landmark gắn với **dataset và `building_id`** của Canonical Building Data, không gắn với một file PMTiles. `building_id` là UUID của canonical, giữ nguyên qua các build, cũng là id app Mobile dùng để nhận ra landmark. Record lưu thêm `dataset` (vd `hanoi`) và `source_id` (way OSM của toà).
+
+- **Mỗi build tìm lại toà của từng landmark**: theo `building_id`, rồi theo `source_id` OSM, cuối cùng theo footprint (IoU ≥ 0,50). Kết quả nằm trong `build.json` (`landmarks.ids`) và báo cáo.
+- **Toà có landmark bị khoá**: giữ `building_id`, `resolution_mode = manual`, `decided_by = landmark`, `building_tier = T1_iconic`. Footprint nguồn đổi nhiều (IoU < 0,90 so với footprint lúc đăng ký) thì giữ footprint cũ và cảnh báo `landmark_footprint_changed`.
+- **Mất toà** (way OSM bị xoá, toà bị tách…): build vẫn chạy, giữ footprint cũ của landmark với cùng `building_id` (`winning_source = landmark`), ghi cảnh báo `landmark_lost` vào báo cáo và `review_osm.gpkg`.
+- **Landmark đăng ký trước đây trên base OSM** (`building_id` = `way/…`) được chuyển sang UUID ở build canonical đầu tiên có toà đó. Lịch sử ghi *Gắn với canonical*, id cũ giữ ở `source.building_id`, nên base OSM vẫn vẽ được landmark.
+- **Tải manifest** ghi `building_id` (UUID), `source_id` và `dataset` của từng landmark.
+
+**Upload landmark cho đúng**:
+
+1. Build canonical (thẻ **Canonical Building Data**) và đặt làm đang dùng.
+2. Mở **Xem bản đồ 3D**: trang mở canonical đang dùng (ô **Building từ PMTiles** ghi *canonical đang dùng*). Không đăng ký trên một file `.pmtiles` kéo thả hay trên base OSM.
+3. Click toà. Nếu click trúng khối con, chọn **cả building cha** để mọi khối con cùng được ẩn dưới mô hình.
+4. Nhập tên rồi bấm **Đăng ký landmark**. Ô ID liên kết để trống thì app tự điền way OSM của toà.
+5. Chọn **cả bộ GLB z15 / z16 / z17** và upload trong một lần. GLB nên có `asset.extras.anchor` (đặt mô hình theo Bắc thật) và không nén Draco / meshopt / KTX2.
+6. Kiểm tra hướng, tỉ lệ, toạ độ neo, bấm **Lưu placement** rồi **Dùng**.
+7. Build canonical lần sau giữ landmark này. Nếu báo cáo có cảnh báo landmark, mở `review_osm.gpkg` để xem toà đó.
 
 ### Landmark dưới `light` của style
 
@@ -562,7 +699,9 @@ Giới hạn của PoC: không gian là polygon không lỗ (giếng trời vẽ
 | Thẻ Base báo lỗi `Không đọc được danh sách release Overture` / lỗi HTTP khi tải building | Kiểm tra internet / VPN (app đọc `overturemaps-us-west-2.s3.amazonaws.com`), rồi bấm **Tạo base**. Có thể đặt cố định `BDS_OVERTURE_RELEASE=2026-10-21.0` |
 | Trang 3D báo “Chưa có base Hà Nội” | Base chưa tạo, hoặc đã bị xoá khỏi `base/hanoi/`: bấm **Tạo base** ở trang chính |
 | Không muốn app tự tạo base khi khởi động | `./run.sh --no-base` hoặc `BDS_BASE_AUTOBUILD=0` |
-| Landmark có trong danh sách nhưng không hiện trên bản đồ | Landmark đăng ký trên file PMTiles khác (drawer ghi *PMTiles khác*, có link mở đúng file), chưa có version **đang dùng**, hoặc file GLB lỗi (drawer ghi lỗi, ví dụ nén Draco: xuất lại GLB không nén) |
+| Landmark có trong danh sách nhưng không hiện trên bản đồ | Landmark đăng ký trên file PMTiles khác và chưa gắn với canonical (drawer ghi *PMTiles khác*: build canonical một lần để gắn), chưa có version **đang dùng**, hoặc file GLB lỗi (drawer ghi lỗi, ví dụ nén Draco: xuất lại GLB không nén) |
+| Build canonical báo lỗi *Invariant không đạt* | Xem dòng lỗi trong log: build không được lưu, bản đang dùng giữ nguyên. Thường do dữ liệu nguồn lỗi; mở `_work/` của build đó để xem |
+| Build canonical tải Google Open Buildings bị ngắt | Bấm build lại: file đang tải dở (`.part`) được tải tiếp, không tải lại từ đầu |
 
 ## 13. Phát triển
 
@@ -594,6 +733,12 @@ BC_DIFF_A=/đường/dẫn/A BC_DIFF_B=/đường/dẫn/B .venv/bin/python -m py
 | `app/glb.py` | Đọc GLB không cần thư viện 3D: số mesh / tam giác, hộp bao, kiểu nén |
 | `app/osmdirect.py`, `app/osmtags.py`, `app/osmgeom.py` | Base lấy thẳng từ OSM (Overpass hoặc file `.osm.pbf`): chuẩn hoá height / `building:part`, ghép multipolygon, cùng `base.json` với `osmbase` |
 | `app/osmbase.py` | Base Hà Nội: ranh giới và building OSM từ Overture (DuckDB), chạy qua pipeline convert, ghi `base/hanoi/base.json` |
+| `app/canonical.py` | Canonical Building Data: các bước ingest → normalize → matching → conflation → build, snapshot nguồn, `canonical.json`, rollback, landmark, CLI |
+| `app/conflation.py` | Thuật toán conflation (DuckDB + union-find): normalize, overlap graph, component, footprint thắng, chiều cao, danh sách review; tham số trong `CONFIGS` |
+| `app/idregistry.py` | `building_id` ổn định qua các build (ID registry, UUIDv7, giữ id của file production) |
+| `app/buildingtier.py` | `building_tier` theo [B-05], mỗi phiên bản luật một hàm (`RULES`) |
+| `app/gob.py`, `app/s2cell.py` | Tải Google Open Buildings v3 theo ô S2 (tính token S2 không cần thư viện), snapshot GeoParquet |
+| `config/building_tier/` | Pin của danh sách "3D Building Landmark" cho luật tier 1 |
 | `map-styles/` | Các style.json app Mobile đang dùng (bản lưu để đối chiếu, xem `map-styles/README.md`) |
 | `schemas/` | Schema PMTiles đã thống nhất với VMAP (`vmap-buildings.json`): layer, zoom, field và kiểu |
 | `app/static/` | Giao diện (HTML/CSS/JS thuần): `app.js` (convert), `diff.js` (so sánh), `util.js`; trang bản đồ 3D / diff (`preview.js`); `basemap.js` (bản đồ nền và chế độ ánh sáng); landmark trong trang xem 3D: `landmark-workspace.js` (state, thao tác, URL), `landmark-drawer.js` (giao diện drawer), `landmark-store.js` (tải GLB theo vùng nhìn, cache, filter extrusion; không phụ thuộc trình duyệt, test bằng Node), `landmark-model.js` (vẽ nhiều GLB trong một custom layer) và `landmark-light.js` (công thức ánh sáng landmark, để các team khác port); `building-edges.js` (ô **Edge**: viền mái, cạnh đứng, chân tường của từng building như Edge trong SketchUp, một custom layer WebGL trên extrusion, từ z15); `tour.js` (bay quanh toà cao nhất: chọn điểm dừng, camera; test bằng Node); indoor map PoC: `indoor.js` (editor, bản đồ, drawer) và `indoor-model.js` (mô hình IndoorGML, đồ thị, tìm đường, kiểm tra, xuất file; không phụ thuộc trình duyệt, test bằng Node); MapLibre + pmtiles.js + three.js 0.186.1 (vendored, chế độ diff không tải three.js) |

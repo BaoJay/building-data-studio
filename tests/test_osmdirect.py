@@ -252,7 +252,7 @@ def test_lineage_statements_follow_h_src():
     for sql in osmdirect.lineage_statements("b"):
         conn.execute(sql)
     assert dict(conn.execute(f"SELECT id, {osmdirect.LINEAGE_COLUMN} FROM b")) == {
-        "a": "osm:height", "b": "osm:levels*3.5m", "c": "default:4m", "d": "osm:height:clamped"}
+        "a": "osm:height", "b": "osm:levels*3.5m", "c": "default:3.5m", "d": "osm:height:clamped"}
 
 
 # ------------------------------------------------------------------ DuckDB
@@ -346,5 +346,5 @@ def test_direct_build_end_to_end(tmp_path: Path):
     with closing(sqlite3.connect(manifest["gpkg_path"])) as conn:
         lineage = dict(conn.execute("SELECT building_id, height_lineage FROM buildings"))
     assert lineage["way/100"] == "osm:height" and lineage["way/200"] == "osm:levels*3.5m"
-    assert lineage["way/103"] == "osm:height" and lineage["way/102"] == "default:4m"
+    assert lineage["way/103"] == "osm:height" and lineage["way/102"] == "default:3.5m"
     assert "way/300" not in rows and "way/400" not in rows

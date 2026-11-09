@@ -1,0 +1,111 @@
+{
+ "type": "FeatureCollection",
+ "name": "iconic_pins",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Tòa nhà Tasco",
+    "osm_id": "way/845002110",
+    "source": "canonical_building_v7 T1_iconic"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     105.78284411,
+     21.01568665
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Keangnam Landmark 72",
+    "osm_id": "way/1327061631",
+    "source": "canonical_building_v7 T1_iconic"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     105.78358632,
+     21.01735325
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Lăng Chủ tịch Hồ Chí Minh",
+    "osm_id": "way/37625751",
+    "source": "canonical_building_v7 T1_iconic"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     105.83468878,
+     21.0367831
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Nhà Quốc hội",
+    "osm_id": "way/695966191",
+    "source": "canonical_building_v7 T1_iconic"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     105.83752135,
+     21.0371201
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Văn phòng Chính phủ",
+    "osm_id": "way/697161741",
+    "source": "canonical_building_v7 T1_iconic"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     105.83381023,
+     21.04098135
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Phủ Chủ tịch",
+    "osm_id": "way/37629570",
+    "source": "canonical_building_v7 T1_iconic"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     105.83443223,
+     21.0393022
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "TASCO Mall",
+    "osm_id": "way/1092144098",
+    "source": "canonical_building_v7 T1_iconic"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     105.89348767,
+     21.05082995
+    ]
+   }
+  }
+ ]
+}

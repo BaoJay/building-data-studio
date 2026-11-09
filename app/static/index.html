@@ -35,6 +35,23 @@
       </div>
     </section>
 
+    <section class="card base-card canon-card" id="canonCard" aria-live="polite">
+      <h2>Canonical Building Data <span class="hint">OSM + Google Open Buildings (+ GBA) → một bộ building chuẩn, building_id giữ nguyên qua các build</span></h2>
+      <div class="base-body">
+        <div class="base-info" id="canonInfo"><div class="hint">Đang đọc…</div></div>
+        <div class="btn-row" id="canonActions"></div>
+      </div>
+      <div class="base-progress" id="canonProgress" hidden>
+        <div class="hint" id="canonStep"></div>
+        <div class="progress"><span id="canonBar"></span></div>
+      </div>
+      <form class="canon-form" id="canonForm" hidden></form>
+      <details class="canon-builds" id="canonBuilds" hidden>
+        <summary>Các build (rollback: đặt lại một build cũ làm canonical đang dùng)</summary>
+        <ul class="canon-build-list" id="canonBuildList"></ul>
+      </details>
+    </section>
+
     <nav class="tabs" role="tablist" aria-label="Chức năng">
       <button class="tab" role="tab" type="button" data-tab-btn="convert" aria-selected="true">Convert</button>
       <button class="tab" role="tab" type="button" data-tab-btn="diff" aria-selected="false">So sánh 2 file (trước release)</button>

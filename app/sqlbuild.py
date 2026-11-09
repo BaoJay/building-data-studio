@@ -47,7 +47,7 @@ class HeightRule:
     levels_col: str | None = None
     levels_is_text: bool = False
     m_per_level: float = 3.5
-    default_m: float = 4.0
+    default_m: float = 3.5  # one level ([B-03]): a building with neither height nor levels
     min_valid_m: float = 2.0
     max_valid_m: float = 500.0
     max_levels: float = 200.0

@@ -302,9 +302,9 @@ def fetch_tiles(client: Overpass, boxes: list[tuple[float, float, float, float]]
 
 OSMCONF = """\
 # osmconf for Building Data Studio: building and building:part areas, every tag in all_tags.
-[general]
+# Global keys come before the first [layer]; all_tags / other_tags are layer keys (GDAL ignores
+# them anywhere else and falls back to other_tags, which holds no tag that is also a column).
 closed_ways_are_polygons=building,building:part
-all_tags=yes
 report_all_tags=yes
 
 [points]
@@ -318,6 +318,8 @@ osm_way_id=yes
 osm_version=yes
 osm_timestamp=yes
 attributes=
+other_tags=no
+all_tags=yes
 """
 
 
@@ -378,14 +380,14 @@ def assemble_sql() -> list[str]:
 
 
 LINEAGE_COLUMN = "height_lineage"
-DEFAULT_HEIGHT_M = 4.0  # sqlbuild's default when there is neither a height nor levels
+DEFAULT_HEIGHT_M = 3.5  # sqlbuild's default when there is neither a height nor levels
 
 
 def lineage_statements(table: str, m_per_level: float = M_PER_LEVEL, default_m: float = DEFAULT_HEIGHT_M) -> list[str]:
     """SQL (GeoPackage / SQLite) adding `height_lineage`: where each height_m came from, for QA.
 
     Derived from `h_src`, which the convert step already decided, so the two never disagree:
-    osm:height (the tag), osm:levels*3.5m (building:levels x metres per level), default:4m, and
+    osm:height (the tag), osm:levels*3.5m (building:levels x metres per level), default:3.5m, and
     osm:height:clamped for a tag above the valid range when the rule clamps.
     """
     t = '"' + table.replace('"', '""') + '"'

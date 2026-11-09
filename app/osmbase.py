@@ -56,6 +56,7 @@ DEFAULT_ROOT = f"s3://{S3_BUCKET}/release"
 LIST_URL = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/?list-type=2&prefix=release/&delimiter=/"
 OSM_DATASET = "OpenStreetMap"
 M_PER_LEVEL = 3.5  # the convert default; also turns min_level into min_height
+DEFAULT_HEIGHT_M = 3.5  # one level, when a building has neither height nor levels ([B-03])
 TILE_ATTRIBUTES = ("building_id", "height_m", "h_src", "min_height", "has_parts", "is_part", "parent_building_id",
                    "name", "class", "height", "num_floors")
 OUTPUT_COLUMNS = ("building_id", "parent_building_id", "name", "class", "subtype", "height", "num_floors",
@@ -284,7 +285,7 @@ def write_manifest(base_dir: Path, area: Area, data: dict[str, Any]) -> Path:
 # ------------------------------------------------------------------ build job
 
 def base_config(area: Area, base_dir: Path) -> JobConfig:
-    """The convert settings of a base: OSM height, then levels × 3.5 m, then 4 m; parts by OSM id."""
+    """The convert settings of a base: OSM height, then levels × 3.5 m, then 3.5 m; parts by OSM id."""
     return JobConfig(
         input_path=Path(),  # set once the run folder exists (BasePipeline.__init__)
         layer=None,
@@ -299,7 +300,7 @@ def base_config(area: Area, base_dir: Path) -> JobConfig:
         columns=None,
         where=None,
         makevalid=False,
-        height={"height_col": "height", "levels_col": "num_floors", "m_per_level": M_PER_LEVEL},
+        height={"height_col": "height", "levels_col": "num_floors", "m_per_level": M_PER_LEVEL, "default_m": DEFAULT_HEIGHT_M},
         parts=("building_id", "parent_building_id"),
         tiles=TilesConfig(minzoom=12, maxzoom=16, attributes=TILE_ATTRIBUTES),
         category_cols=("class",),

@@ -273,8 +273,8 @@ def test_every_vmap_style_names_its_light_preset():
 EMISSIVE_GAIN = {
     "led": {"dawn": 0.4, "day": 0, "dusk": 0.9, "night": 1.0},
     "led_wash": {"dawn": 0.3, "day": 0, "dusk": 0.8, "night": 1.0},
-    "lobby": {"dawn": 0.3, "day": 0, "dusk": 0.6, "night": 0.8},
-    "windows": {"dawn": 0, "day": 0, "dusk": 0, "night": 0},
+    "lobby": {"dawn": 0.3, "day": 0, "dusk": 0.8, "night": 1.0},
+    "windows": {"dawn": 0.3, "day": 0, "dusk": 0.8, "night": 1.0},
     "other": {"dawn": 0.3, "day": 0, "dusk": 0.6, "night": 1.0},
 }
 GLASS = {

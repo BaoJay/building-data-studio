@@ -184,9 +184,11 @@ function showShadow(map, look) {
   map.setLayoutProperty("bldg-shadow", "visibility", "visible");
 }
 
-// The OSM buildings of the city built by app/osmbase.py, shown when no file is given: the
-// buildings new landmarks are registered on by default.
+// Shown when no file is given: the canonical build in use (app/canonical.py), else the OSM
+// buildings of the city (app/osmbase.py). New landmarks are registered on it by default.
 async function loadBase() {
+  const canon = await fetch("/api/canonical").then((r) => r.json()).catch(() => null);
+  if (canon?.active) return { ...canon.active, pmtiles_token: canon.active.pmtiles_token };
   const st = await fetch("/api/base").then((r) => r.json()).catch(() => null);
   if (st?.base) return st.base;
   const building = ["queued", "running"].includes(st?.job?.status);

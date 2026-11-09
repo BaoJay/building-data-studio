@@ -29,7 +29,7 @@ SIZE = 0.0003
 # id, lon, lat, height_m, provenance
 A = [
     ("A", 106.700, 10.770, 30.0, "osm_height"),
-    ("B", 106.701, 10.770, 4.0, "default"),
+    ("B", 106.701, 10.770, 3.5, "default"),  # the app default (one level)
     ("C", 106.702, 10.770, 12.0, "osm_height"),
     ("D", 106.703, 10.770, 9.0, "osm_levels"),
     ("X", EDGE_LON - SIZE / 2, 10.772, 20.0, "osm_height"),

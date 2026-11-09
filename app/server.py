@@ -25,6 +25,7 @@ from starlette.staticfiles import StaticFiles
 
 from . import (
     __version__,
+    canonical,
     diff,
     glb,
     landmark,
@@ -53,6 +54,7 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 registry = FileRegistry()
 library = landmark_library.Library(landmark_library.default_dir())
 BASE_DIR = osmbase.default_dir()
+CANONICAL_DIR = canonical.default_dir()
 
 
 # Job kinds the client may submit, and how the worker runs every kind.
@@ -61,6 +63,7 @@ RUNNERS = {
     "convert": lambda job: pipeline.execute(job, registry),
     "diff": lambda job: diff.execute(job, registry),
     "base": lambda job: osmbase.execute(job, registry, BASE_DIR),
+    "canonical": lambda job: canonical.execute(job, registry, CANONICAL_DIR, library),
 }
 
 
@@ -369,6 +372,101 @@ async def build_base(request: Request) -> Response:
     return JSONResponse({"id": job.id, **base_status(area)}, status_code=202)
 
 
+# ------------------------------------------------------------------ canonical building data
+
+def canonical_status(area_key: str = osmbase.DEFAULT_AREA) -> dict[str, Any]:
+    """The canonical build in use, the recent builds, the sources already downloaded and the
+    latest build job of this session."""
+    area = osmbase.AREAS[area_key]
+    out: dict[str, Any] = {
+        "area": area.key, "label": area.label, "dir": str(canonical.area_dir(CANONICAL_DIR, area)),
+        "dir_token": registry.register(CANONICAL_DIR), "ready": False, "job": None,
+        "presets": [{"key": k, "label": v["label"], "cells": len(v["cells"])} for k, v in canonical.H3_PRESETS.items()
+                    if v["area"] == area.key],
+        "configs": list(canonical.conflation.CONFIGS), "tier_rules": list(canonical.buildingtier.RULES),
+        "snapshots": {k: canonical.list_snapshots(CANONICAL_DIR, k, 3) for k in ("osm", "gob")},
+        "registry": (canonical.area_dir(CANONICAL_DIR, area) / canonical.idregistry.FILE_NAME).is_file(),
+    }
+    active = canonical.read_active(CANONICAL_DIR, area)
+    if active:
+        out.update(ready=True, active={
+            **{k: v for k, v in active.items() if not k.endswith("_path")},
+            **{f"{k}_token": registry.register(Path(active[f"{k}_path"])) for k in ("pmtiles", "gpkg", "parquet", "folder")
+               if active.get(f"{k}_path")},
+        })
+    builds = []
+    for b in canonical.list_builds(CANONICAL_DIR, area, limit=10):
+        folder = Path(b["folder_path"])
+        builds.append({
+            "build_id": b["build_id"], "folder": folder.name, "built_at": b["built_at"], "aoi": b["aoi"]["label"],
+            "counts": b.get("counts"), "config_version": b["config_version"], "tier_rule": b.get("tier_rule"),
+            "active": bool(active) and active["folder"] == folder.name,
+            "folder_token": registry.register(folder),
+            "pmtiles_token": registry.register(folder / b["files"]["pmtiles"]),
+            "report_token": registry.register(folder / b["files"]["report"]),
+            "files": {k: registry.register(folder / v) for k, v in b["files"].items() if (folder / v).exists()},
+            "landmark_warnings": sum(1 for e in b.get("landmarks", {}).get("report", []) if e.get("warning")),
+        })
+    out["builds"] = builds
+    job = _canonical_job(area.key)
+    if job is not None:
+        d = job.to_dict(log_since=1 << 30)
+        out["job"] = {k: d[k] for k in ("id", "status", "error", "steps", "started", "ended")}
+    return out
+
+
+def _canonical_job(area_key: str) -> Job | None:
+    return next((j for j in jobs.list() if j.kind == "canonical" and j.config.get("area") == area_key), None)
+
+
+async def get_canonical(request: Request) -> Response:
+    area = request.query_params.get("area") or osmbase.DEFAULT_AREA
+    if area not in osmbase.AREAS:
+        return _error(f"Không có khu vực {area}.", 404)
+    return JSONResponse(await _in_thread(canonical_status, area), headers=NO_CACHE)
+
+
+async def build_canonical(request: Request) -> Response:
+    """Queue a canonical build (options: app.canonical.parse_options)."""
+    body = await _json(request)
+    try:
+        opts = canonical.parse_options(body)
+    except pipeline.ConfigError as exc:
+        return _error(str(exc))
+    job = _canonical_job(opts.area.key)
+    if job is not None and job.status in ("queued", "running"):
+        return _error("Đang có một build canonical chạy; đợi xong hoặc huỷ nó trước.", 409)
+    job = jobs.submit({**body, "area": opts.area.key}, name=canonical.out_name(opts.area), kind="canonical")
+    return JSONResponse({"id": job.id, **await _in_thread(canonical_status, opts.area.key)}, status_code=202)
+
+
+async def activate_canonical(request: Request) -> Response:
+    """Put an earlier build in use again (rollback), or a build made without activating it."""
+    body = await _json(request)
+    area = osmbase.AREAS.get(str(body.get("area") or osmbase.DEFAULT_AREA))
+    if area is None:
+        return _error("Không có khu vực này.", 404)
+    try:
+        await _in_thread(canonical.activate, CANONICAL_DIR, area, str(body.get("folder") or ""))
+    except pipeline.ConfigError as exc:
+        return _error(str(exc), 404)
+    return JSONResponse(await _in_thread(canonical_status, area.key), headers=NO_CACHE)
+
+
+def landmark_context(path: Path) -> dict[str, Any] | None:
+    """What a PMTiles is to the landmark library: a canonical build (and the building_id of each
+    landmark in it), a build of the OSM base (ids are OSM ids), or neither."""
+    ctx = canonical.file_context(CANONICAL_DIR, path)
+    if ctx is not None:
+        return ctx
+    try:
+        if path.resolve().is_relative_to(BASE_DIR.resolve()):
+            return {"kind": "base"}
+    except OSError:
+        pass
+    return None
+
+
 async def building_shadows(request: Request) -> Response:
     """Prototype: dissolved ground shadows of the buildings of a registered PMTiles over one
     area, cast along the light of a VMAP preset. ?download=1 saves the GeoJSON."""
@@ -394,7 +492,8 @@ async def building_shadows(request: Request) -> Response:
         # the preview shows them as their LoD1 box (?landmarks=0).
         landmarks, fallbacks = [], []
         if q.get("landmarks") != "0":
-            landmarks, fallbacks = await _in_thread(landmark_shadow.released, library, path, preset)
+            landmarks, fallbacks = await _in_thread(landmark_shadow.released, library, path, preset,
+                                                    landmark_context(path))
         req = shadows.Request(
             path=path,
             layer=layer,
@@ -499,16 +598,26 @@ async def list_landmarks(request: Request) -> Response:
         current = _source_file(request.query_params["f"])
         paths = await _in_thread(library.source_paths)
         tokens = {s["path"]: s["token"] for s in sources}
+        here = {}
+        if current is not None:  # the landmarks standing on this file, with their building_id in it
+            here = {r["id"]: r for r in await _in_thread(library.on_file, current, landmark_context(current))}
         for item in items:
             path = paths.get(item["id"], "")
-            item["same_source"] = current is not None and landmark_library.same_file(path, current)
+            item["same_source"] = item["id"] in here
+            if item["id"] in here:
+                item["building_id"] = here[item["id"]]["building_id"]
             item["source_token"] = tokens.get(path)
     base = (await _in_thread(base_status)).get("base")
     if base:
-        # The base comes first: the 3D preview opens it when no file is given.
         token = base["pmtiles_token"]
         sources = [{"token": token, "name": base["name"], "layer": "buildings", "id_field": "building_id",
                     "base": True, "view": base["view"]}, *(s for s in sources if s["token"] != token)]
+    active = await _in_thread(canonical.read_active, CANONICAL_DIR, osmbase.AREAS[osmbase.DEFAULT_AREA])
+    if active:
+        # The canonical build in use comes first: the 3D preview opens it when no file is given.
+        token = registry.register(Path(active["pmtiles_path"]))
+        sources = [{"token": token, "name": active["name"], "layer": "buildings", "id_field": "building_id",
+                    "canonical": True, "view": active["view"]}, *(s for s in sources if s["token"] != token)]
     return JSONResponse({"dir": str(library.root), "dir_token": registry.register(library.root),
                          "landmarks": items, "sources": sources}, headers=NO_CACHE)
 
@@ -521,7 +630,7 @@ async def render_landmarks(request: Request) -> Response:
     path = _source_file(request.query_params.get("f", ""))
     if path is None:
         return _error("File PMTiles không tồn tại.", 404)
-    items = await _in_thread(library.render, path)
+    items = await _in_thread(library.render, path, landmark_context(path))
     for item in items:
         item["glb"] = f"/api/landmarks/{item['id']}/versions/{item['version']}/glb"
         for lod in item["lods"]:  # one file per zoom range: ?z= picks it
@@ -543,8 +652,15 @@ async def register_landmark(request: Request) -> Response:
                                            "matched", "pieces", "height_field")}
         source = {"name": path.name, "path": str(path), "layer": req.layer, "id_field": req.id_field,
                   "zoom": req.zoom, "parent_field": req.parent}
+        ctx = landmark_context(path)
+        dataset = source_id = None
+        if ctx and ctx["kind"] == "canonical":  # bound to the dataset: drawn on every later build
+            dataset = ctx["dataset"]
+            source_id = await _in_thread(canonical.source_id_of, path, req.building_id)
+        link = str(body.get("link") or "") or (source_id or "")
         rec = await _in_thread(lambda: library.register(building_id=req.building_id, name=str(body.get("name") or ""),
-                                                        link=str(body.get("link") or ""), footprint=footprint, source=source))
+                                                        link=link, footprint=footprint, source=source,
+                                                        dataset=dataset, source_id=source_id))
     except ValueError as exc:  # LandmarkError, LibraryError, ShadowError
         return _error(str(exc))
     except tools.ToolMissingError as exc:
@@ -765,6 +881,9 @@ routes = [
     Route("/api/reveal", reveal, methods=["POST"]),
     Route("/api/base", get_base, methods=["GET"]),
     Route("/api/base/build", build_base, methods=["POST"]),
+    Route("/api/canonical", get_canonical, methods=["GET"]),
+    Route("/api/canonical/build", build_canonical, methods=["POST"]),
+    Route("/api/canonical/activate", activate_canonical, methods=["POST"]),
     Route("/api/vmap/presets", vmap_presets),
     Route("/api/vmap/style.json", vmap_style),
     Route("/api/vmap/assets/{path:path}", vmap_asset),

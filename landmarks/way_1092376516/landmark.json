@@ -1,7 +1,7 @@
 {
-  "schema": 1,
+  "schema": 2,
   "id": "way_1092376516",
-  "building_id": "way/1092376516",
+  "building_id": "01a12f2e-bd5e-7f7d-8046-d6d615b37df9",
   "name": "Tập đoàn Công nghiệp – Viễn thông Quân đội",
   "link": "",
   "footprint": {
@@ -243,10 +243,11 @@
     "layer": "buildings",
     "id_field": "building_id",
     "zoom": 16,
-    "parent_field": "parent_building_id"
+    "parent_field": "parent_building_id",
+    "building_id": "way/1092376516"
   },
   "created_at": "2026-11-03T02:49:11+00:00",
-  "updated_at": "2026-11-03T02:51:27+00:00",
+  "updated_at": "2026-11-09T10:23:07+07:00",
   "in_use": 1,
   "versions": [
     {
@@ -320,6 +321,17 @@
       "by": "baojay",
       "action": "placement",
       "version": 1
+    },
+    {
+      "at": "2026-11-09T10:23:07+07:00",
+      "by": "giabaonguyenhoang",
+      "action": "bind",
+      "dataset": "hanoi",
+      "from": "way/1092376516",
+      "to": "01a12f2e-bd5e-7f7d-8046-d6d615b37df9",
+      "build": "build-bldg-20261109-102229"
     }
-  ]
+  ],
+  "dataset": "hanoi",
+  "source_id": "way/1092376516"
 }

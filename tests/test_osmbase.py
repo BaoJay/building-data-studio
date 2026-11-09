@@ -164,7 +164,7 @@ def test_build_base_end_to_end(overture: Path, tmp_path: Path):
         "way/100": (None, 120.0, "height", 1, 0, None, "office"),
         "way/200": (None, 17.5, "levels", 0, 0, None, None),
         "way/101": ("way/100", 150.0, "height", 0, 1, 20.0, "office"),
-        "way/102": ("way/100", 4.0, "default", 0, 1, 7.0, "office"),  # min_level 2 × 3.5 m
+        "way/102": ("way/100", 3.5, "default", 0, 1, 7.0, "office"),  # min_level 2 × 3.5 m
     }
     report = json.loads((Path(manifest["folder_path"]) / "report.json").read_text(encoding="utf-8"))
     assert report["accounting"]["pmtiles_features"] == 4

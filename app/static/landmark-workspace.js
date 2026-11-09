@@ -277,7 +277,8 @@ class Workspace {
     if (!opts.some((s) => s.token === this.host.token)) opts.unshift({ token: this.host.token, name: this.host.name() });
     // Files of the same name (outputs of several runs) are told apart by their folder.
     const twice = (s) => opts.filter((o) => o.name === s.name).length > 1;
-    const label = (s) => (s.path && twice(s) ? s.path.split(/[\\/]/).slice(-2).join("/") : s.name) + (s.base ? " (base)" : "");
+    const label = (s) => (s.path && twice(s) ? s.path.split(/[\\/]/).slice(-2).join("/") : s.name)
+      + (s.canonical ? " (canonical đang dùng)" : s.base ? " (base OSM)" : "");
     $("#srcSel").innerHTML = opts.map((s) => `<option value="${esc(s.token)}">${esc(label(s))}</option>`).join("");
     $("#srcSel").value = this.host.token;
     $("#srcField").hidden = opts.length < 2;
@@ -291,11 +292,12 @@ class Workspace {
     location.assign(this.sourceUrl(token));
   }
 
-  // /preview on a PMTiles (the base of the city opens without f, so the link outlives the
-  // session's file tokens), with a landmark open.
+  // /preview on a PMTiles, with a landmark open. The default file (the canonical build in use, else
+  // the OSM base) opens without f, so the link outlives the session's file tokens.
   sourceUrl(token, lid = null) {
     const s = this.lib.sources.find((x) => x.token === token);
-    return this.host.previewUrl(s?.base ? null : token, s?.base ? null : s?.name, lid);
+    const fallback = s?.canonical || (s?.base && !this.lib.sources.some((x) => x.canonical));
+    return this.host.previewUrl(fallback ? null : token, fallback ? null : s?.name, lid);
   }
 
   // ---------------------------------------------------------------- map layers

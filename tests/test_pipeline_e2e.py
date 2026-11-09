@@ -97,9 +97,9 @@ def test_plain_parquet_to_gpkg_and_pmtiles(plain_parquet: Path, tmp_path: Path) 
     assert _rows(gpkg) == {
         "A": (30.0, 30.0, "height", 0, 1, 0),
         "A1": (45.0, 45.0, "height", 0, 0, 1),
-        "B": (4.0, 4.0, "default", 0, 0, 0),
-        "C": (49380.0, 4.0, "default", 1, 0, 0),
-        "D": (0.0, 4.0, "default", 1, 0, 0),
+        "B": (4.0, 3.5, "default", 0, 0, 0),
+        "C": (49380.0, 3.5, "default", 1, 0, 0),
+        "D": (0.0, 3.5, "default", 1, 0, 0),
         "E": (12.36, 12.4, "height", 0, 0, 0),
     }
     report = result["report"]

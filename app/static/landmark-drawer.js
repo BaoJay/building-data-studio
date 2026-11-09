@@ -179,6 +179,7 @@ function historyHtml(rec) {
       case "placement": return `Lưu placement v${ev.version}`;
       case "lod": return `Thêm file z${ev.lod_zoom} cho v${ev.version}`;
       case "edit": return `Sửa ${ev.fields.map((f) => (f === "name" ? "tên" : "ID liên kết")).join(", ")}`;
+      case "bind": return `Gắn với canonical ${ev.dataset}: ${ev.to} (trước là ${ev.from}, build ${ev.build})`;
       case "use":
         if (ev.to == null) return `Bỏ dùng v${ev.from}`;
         return ev.from == null ? `Dùng v${ev.to}` : `Dùng v${ev.to} thay v${ev.from}`;

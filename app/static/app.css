@@ -109,6 +109,8 @@ label.check { display: block; cursor: pointer; padding-left: 23px; text-indent: 
 label.check input[type="checkbox"] { vertical-align: -2px; margin-right: 8px; }
 .field { display: grid; gap: var(--space-1); }
 .field > span { font-size: 12.5px; color: var(--ink-2); }
+.path-row { display: flex; gap: var(--space-1); align-items: center; }
+.path-row > input { flex: 1; min-width: 0; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 

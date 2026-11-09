@@ -250,6 +250,10 @@ function canonFormHtml(st) {
   const gobSnap = st.snapshots?.gob?.[0];
   const radio = (name, value, cur, label, extra = "") =>
     `<label class="check"><input type="radio" name="${name}" value="${esc(value)}" ${cur === value ? "checked" : ""} ${extra}> ${label}</label>`;
+  // A path box plus "Chọn…", which opens the OS file dialog on the server (the user's own machine).
+  const pathInput = (name, placeholder, accept) => `<span class="path-row">
+    <input type="text" name="${name}" value="${esc(pick(name, ""))}" placeholder="${esc(placeholder)}" spellcheck="false">
+    <button class="btn small" type="button" data-canon="browse" data-target="${name}" data-accept="${accept}">Chọn…</button></span>`;
   const presets = (st.presets || []).map((p) => radio("aoi", `h3:${p.key}`, aoi, `${esc(p.label)} <span class="hint">(${p.cells} ô)</span>`)).join("");
   return `
     <div class="row2">
@@ -264,7 +268,7 @@ function canonFormHtml(st) {
         ${radio("osm_source", "overpass", osm, "Tải mới qua Overpass <span class=\"hint\">(vài phút với cả Hà Nội)</span>")}
         ${radio("osm_source", "file", osm, "File .osm.pbf")}
         <label class="field" data-show-osm="file"><span>Đường dẫn file .osm.pbf (vd Geofabrik vietnam-latest.osm.pbf)</span>
-          <input type="text" name="osm_file" value="${esc(pick("osm_file", ""))}" placeholder="/Users/…/vietnam-latest.osm.pbf"></label>
+          ${pathInput("osm_file", "…/vietnam-latest.osm.pbf", ".pbf .osm")}</label>
         ${radio("osm_source", "snapshot", osmSnap ? osm : "", osmSnap
           ? `Snapshot đã tải <span class="hint">(${esc(osmSnap.snapshot_id)}, ${fmtInt(osmSnap.rows)} đối tượng)</span>`
           : `Snapshot đã tải <span class="hint">(chưa có)</span>`, osmSnap ? "" : "disabled")}
@@ -278,11 +282,11 @@ function canonFormHtml(st) {
       </fieldset>
       <fieldset class="canon-group"><legend>Tuỳ chọn</legend>
         <label class="field"><span>File GBA (Global Building Atlas, tuỳ chọn): footprint gba_ms và chiều cao</span>
-          <input type="text" name="gba_file" value="${esc(pick("gba_file", ""))}" placeholder=".parquet / .gpkg / .geojson / .fgb"></label>
+          ${pathInput("gba_file", ".parquet / .gpkg / .geojson / .fgb", ".parquet .gpkg .geojson .fgb")}</label>
         <label class="field"><span>File POI Parquet (tuỳ chọn): luật tier 4, POI neo trong footprint</span>
-          <input type="text" name="poi_file" value="${esc(pick("poi_file", ""))}" placeholder="poi-dump-….parquet"></label>
+          ${pathInput("poi_file", "poi-dump-….parquet", ".parquet")}</label>
         <label class="field"><span>File canonical production để giữ building_id ${st.registry ? "(đã có ID registry, không bắt buộc)" : "(nên chọn ở lần build đầu)"}</span>
-          <input type="text" name="seed_file" value="${esc(pick("seed_file", ""))}" placeholder="canonical_building_v7_….parquet"></label>
+          ${pathInput("seed_file", "canonical_building_v7_….parquet", ".parquet")}</label>
       </fieldset>
     </div>
     <label class="check"><input type="checkbox" name="activate" ${pick("activate", true) ? "checked" : ""}> Xong thì đặt làm canonical đang dùng (trang 3D mở bản này)</label>
@@ -338,6 +342,13 @@ async function onCanonAction(e) {
   if (what === "folder") reveal(st.active.folder_token);
   else if (what === "reveal") reveal(btn.dataset.token);
   else if (what === "job") showJob(st.job.id, true);
+  else if (what === "browse") {
+    btn.disabled = true;
+    try {
+      const { path } = await api("/api/pick-file", { method: "POST", body: { accept: btn.dataset.accept.split(" ") } });
+      if (path) $("#canonForm").elements[btn.dataset.target].value = path;
+    } catch (err) { toast(err.message); } finally { btn.disabled = false; }
+  }
   else if (what === "form" || what === "close") {
     canon.formOpen = what === "form" ? !canon.formOpen : false;
     $("#canonForm").hidden = true;  // re-rendered from the latest status

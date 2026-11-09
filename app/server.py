@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -694,6 +696,64 @@ async def delete_landmark(request: Request) -> Response:
     return JSONResponse({"ok": True, "moved_to": str(dest)})
 
 
+# ------------------------------------------------------------------ hidden buildings
+# Soft delete: building ids hidden in the 3D preview, kept in <library>/_hidden.json per dataset
+# (a canonical build's dataset, so it survives rebuilds; else the PMTiles path). Tiles are untouched.
+_hidden_lock = threading.Lock()
+
+
+def _hidden_file() -> Path:
+    return library.root / "_hidden.json"
+
+
+def _hidden_key(path: Path) -> str:
+    ctx = landmark_context(path)
+    return f"dataset:{ctx['dataset']}" if ctx and ctx["kind"] == "canonical" else f"file:{path.resolve()}"
+
+
+def _read_hidden() -> dict[str, list[str]]:
+    try:
+        data = json.loads(_hidden_file().read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def set_hidden(path: Path, building_id: str | None, hidden: bool) -> list[str]:
+    """Hide or show one building (building_id None and hidden False: show them all)."""
+    key = _hidden_key(path)
+    with _hidden_lock:
+        data = _read_hidden()
+        ids = [] if building_id is None else [i for i in data.get(key, []) if i != building_id] + ([building_id] if hidden else [])
+        if ids:
+            data[key] = ids
+        else:
+            data.pop(key, None)
+        library.root.mkdir(parents=True, exist_ok=True)
+        tmp = _hidden_file().with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8")
+        os.replace(tmp, _hidden_file())
+    return ids
+
+
+async def hidden_buildings(request: Request) -> Response:
+    """GET ?f=<token>: the ids hidden on that PMTiles. POST {f, id, hidden}: hide or show one;
+    POST {f, all: true, hidden: false}: show them all again."""
+    body = await _json(request) if request.method == "POST" else dict(request.query_params)
+    path = _source_file(str(body.get("f", "")))
+    if path is None:
+        return _error("File PMTiles không tồn tại.", 404)
+    if request.method == "GET":
+        return JSONResponse({"ids": (await _in_thread(_read_hidden)).get(await _in_thread(_hidden_key, path), [])}, headers=NO_CACHE)
+    if body.get("all") and body.get("hidden") is False:
+        return JSONResponse({"ids": await _in_thread(set_hidden, path, None, False)})
+    bid = body.get("id")
+    if not isinstance(bid, str) or not bid or len(bid) > 200:
+        return _error("Thiếu id building.")
+    ids = await _in_thread(set_hidden, path, bid, bool(body.get("hidden", True)))
+    return JSONResponse({"ids": ids})
+
+
 async def _receive_glb(request: Request, keep) -> Response:
     """Stream a .glb (?name=) into the landmark folder, then keep(tmp path, name) -> record."""
     lid = request.path_params["lid"]
@@ -828,6 +888,48 @@ def open_in_file_manager(path: Path) -> None:
     subprocess.Popen(cmd)  # noqa: S603 — fixed argv, no shell
 
 
+_WIN_PICK = r"""[Console]::OutputEncoding = [Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+$d = New-Object System.Windows.Forms.OpenFileDialog
+$d.Title = 'Building Data Studio: chọn file'
+$d.Filter = '{filter}'
+$owner = New-Object System.Windows.Forms.Form -Property @{{TopMost = $true}}
+if ($d.ShowDialog($owner) -eq 'OK') {{ $d.FileName }}"""
+
+
+def pick_file_dialog(exts: list[str]) -> str | None:
+    """The OS open-file dialog on this machine (the server's, which is the user's): the chosen
+    path as the server sees it, or None when cancelled. exts are already-validated '.abc' suffixes."""
+    if sys.platform == "darwin":
+        r = subprocess.run(["osascript", "-e", "POSIX path of (choose file)"], capture_output=True, text=True)  # noqa: S603, S607
+        return r.stdout.strip() or None  # cancel exits 1 with no output
+    if os.name == "nt" or _is_wsl():
+        pattern = ";".join(f"*{e}" for e in exts)
+        filt = (f"File {pattern}|{pattern}|" if exts else "") + "Tất cả|*.*"
+        r = subprocess.run(["powershell.exe", "-NoProfile", "-STA", "-Command", _WIN_PICK.format(filter=filt)],  # noqa: S603, S607
+                           capture_output=True, text=True, encoding="utf-8")
+        win = r.stdout.strip()
+        if not win or os.name == "nt":
+            return win or None
+        return subprocess.run(["wslpath", "-u", win], capture_output=True, text=True, check=True).stdout.strip()  # noqa: S603, S607
+    if shutil.which("zenity"):
+        r = subprocess.run(["zenity", "--file-selection"], capture_output=True, text=True)  # noqa: S603, S607
+        return r.stdout.strip() or None
+    raise OSError("máy này không có hộp chọn file (cần zenity), hãy dán đường dẫn")
+
+
+async def pick_file(request: Request) -> Response:
+    """Open the native file dialog and return {path} (null when cancelled). Localhost only."""
+    body = await _json(request)
+    accept = body.get("accept") if isinstance(body.get("accept"), list) else []
+    exts = [e for e in accept if isinstance(e, str) and re.fullmatch(r"\.[A-Za-z0-9]{1,10}", e)]
+    try:
+        path = await _in_thread(pick_file_dialog, exts)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _error(f"Không mở được hộp chọn file: {exc}", 500)
+    return JSONResponse({"path": path})
+
+
 def _source_file(token: str) -> Path | None:
     """The file behind a token, or None when the token is unknown or its file is gone."""
     path = registry.get(token)
@@ -879,6 +981,7 @@ routes = [
     Route("/api/jobs/{job_id}/cancel", cancel_job, methods=["POST"]),
     Route("/api/files/{token}", get_file, methods=["GET", "HEAD"]),
     Route("/api/reveal", reveal, methods=["POST"]),
+    Route("/api/pick-file", pick_file, methods=["POST"]),
     Route("/api/base", get_base, methods=["GET"]),
     Route("/api/base/build", build_base, methods=["POST"]),
     Route("/api/canonical", get_canonical, methods=["GET"]),
@@ -889,6 +992,7 @@ routes = [
     Route("/api/vmap/assets/{path:path}", vmap_asset),
     Route("/api/shadows", building_shadows),
     Route("/api/building", building_footprint),
+    Route("/api/hidden", hidden_buildings, methods=["GET", "POST"]),
     Route("/api/landmarks", list_landmarks, methods=["GET"]),
     Route("/api/landmarks", register_landmark, methods=["POST"]),
     Route("/api/landmarks/manifest.json", landmarks_manifest),

@@ -109,6 +109,8 @@ label.check { display: block; cursor: pointer; padding-left: 23px; text-indent: 
 label.check input[type="checkbox"] { vertical-align: -2px; margin-right: 8px; }
 .field { display: grid; gap: var(--space-1); }
 .field > span { font-size: 12.5px; color: var(--ink-2); }
+.path-row { display: flex; gap: var(--space-1); align-items: center; }
+.path-row > input { flex: 1; min-width: 0; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
@@ -469,6 +471,8 @@ body.resizing-panel { cursor: ew-resize; user-select: none; }
   padding: 10px var(--space-3); max-width: 360px; box-shadow: var(--shadow-float);
 }
 .maplibregl-popup-tip { border-top-color: var(--line-strong) !important; border-bottom-color: var(--line-strong) !important; }
+.ctx-menu .maplibregl-popup-content { display: grid; gap: var(--space-2); padding: 8px 10px; }
+.ctx-menu .maplibregl-popup-tip { display: none; }
 .maplibregl-popup-close-button { color: var(--ink-2); font-size: 16px; }
 .maplibregl-ctrl-group:not(:empty) {
   background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow-float);

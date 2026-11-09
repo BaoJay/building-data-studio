@@ -551,13 +551,15 @@ function edgeColor() {
 
 function addBuildingLayers(map) {
   const layerId = state.layer;
-  ["bldg-edges", "bldg-3d", LMK_LOD1, "bldg-2d", "bldg-line"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
+  ["bldg-edges", "bldg-3d", LMK_LOD1, "bldg-2d", "bldg-line", "bldg-sel"].forEach((id) => { if (map.getLayer(id)) map.removeLayer(id); });
   map.addLayer({ id: "bldg-2d", type: "fill", source: "bldg", "source-layer": layerId, paint: { "fill-opacity": 0.85 } });
   map.addLayer({ id: "bldg-line", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-color": palette(mapTheme()).outline, "line-opacity": 0.3, "line-width": 0.5 } });
   map.addLayer({ id: "bldg-3d", type: "fill-extrusion", source: "bldg", "source-layer": layerId, paint: { "fill-extrusion-opacity": 0.92, "fill-extrusion-vertical-gradient": true } });
   // Above the models (their custom layer goes under bldg-3d) and sharing their depth: the faces
   // of the box in front of the model tint it, the parts of the model out of the box stay plain.
   map.addLayer({ id: LMK_LOD1, type: "fill-extrusion", source: "bldg", "source-layer": layerId, layout: { visibility: "none" }, paint: { "fill-extrusion-opacity": 0.4, "fill-extrusion-vertical-gradient": true } });
+  // The selected building's footprint on the ground, readable on every theme (as a landmark's).
+  map.addLayer({ id: "bldg-sel", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-width": 3 } });
 }
 
 function colorExpression() {
@@ -668,6 +670,8 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-2d", "fill-color", expr);
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
+  map.setFilter("bldg-sel", state.selected && state.idCol ? matchBuilding(state.selected) : ["==", 1, 0]);
+  map.setPaintProperty("bldg-sel", "line-color", palette(mapTheme()).highlight);
   if (map.getLayer(LMK_LOD1)) {
     map.setPaintProperty(LMK_LOD1, "fill-extrusion-color", palette(mapTheme()).ochre);
     map.setPaintProperty(LMK_LOD1, "fill-extrusion-height", height);

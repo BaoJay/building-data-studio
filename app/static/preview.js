@@ -681,7 +681,8 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-2d", "fill-color", expr);
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
-  map.setFilter("bldg-sel", state.selected && state.idCol ? matchBuilding(state.selected) : ["==", 1, 0]);
+  // Not ["==", 1, 0]: MapLibre reads that as an invalid legacy filter and drops it (null = every building).
+  map.setFilter("bldg-sel", state.selected && state.idCol ? matchBuilding(state.selected) : ["boolean", false]);
   map.setPaintProperty("bldg-sel", "line-color", palette(mapTheme()).highlight);
   if (map.getLayer(LMK_LOD1)) {
     map.setPaintProperty(LMK_LOD1, "fill-extrusion-color", palette(mapTheme()).ochre);

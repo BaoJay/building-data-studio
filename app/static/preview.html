@@ -109,7 +109,10 @@
     <button class="btn small" id="tourStop" type="button" title="Hoặc Esc, hoặc chạm vào bản đồ">Dừng</button>
   </div>
   <div class="zbadge" id="zBadge"></div>
-  <button class="btn small drawer-open" id="drawerOpen" type="button" hidden aria-controls="lmDrawer" aria-expanded="false">Landmark</button>
+  <div class="drawer-open">
+    <button class="btn small" id="glbOpen" type="button" hidden aria-haspopup="dialog" aria-controls="glbDialog">Thuộc tính GLB</button>
+    <button class="btn small" id="drawerOpen" type="button" hidden aria-controls="lmDrawer" aria-expanded="false">Landmark</button>
+  </div>
   </div>
   <aside class="drawer" id="lmDrawer" hidden aria-label="Landmark">
     <div class="drawer-head">
@@ -118,6 +121,20 @@
     </div>
     <div class="drawer-body" id="lmBody" aria-live="polite"><div class="hint">Đang tải thư viện landmark…</div></div>
   </aside>
+
+  <dialog class="glb-dialog" id="glbDialog" aria-labelledby="glbDialogTitle">
+    <div class="drawer-head">
+      <h2 id="glbDialogTitle">Thuộc tính GLB cho Mobile</h2>
+      <button class="btn small" type="button" data-act="close-glb">Đóng</button>
+    </div>
+    <div class="drawer-body">
+      <div class="hint">Mọi giá trị trong GLB mà renderer của studio đang đọc, đã implement. Renderer LMK3 của Mobile cần đọc đúng các thuộc tính này
+        (công thức và shader: <code>app/static/landmark-light.js</code>). Cột cuối là giá trị của GLB đang xem.</div>
+      <div id="lmkContract"></div>
+      <div class="btn-row"><button class="btn small" type="button" data-act="copy-contract">Sao chép (Markdown)</button><span class="hint" id="contractCopied"></span></div>
+      <textarea id="contractText" class="mono" rows="8" hidden readonly aria-label="Danh sách thuộc tính (Markdown)"></textarea>
+    </div>
+  </dialog>
 
   <script type="importmap">{ "imports": { "three": "/static/vendor/three/build/three.module.js" } }</script>
   <script src="/static/vendor/maplibre-gl.js"></script>

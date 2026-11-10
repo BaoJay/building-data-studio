@@ -439,22 +439,12 @@ function qaHtml(ws) {
         <details class="lmk-uniforms"><summary>Uniform ánh sáng (để đối chiếu khi port)</summary><pre id="lmkUniforms"></pre></details>
       </div>
     </details>
-  </section>
-  <section class="lm-sec">
-    <details class="lmk" id="contractSec" ${ws.contractOpen ? "open" : ""}>
-      <summary>Thuộc tính GLB cho Mobile</summary>
-      <div class="lmk-body">
-        <div class="hint">Mọi giá trị trong GLB mà renderer của studio đang đọc, đã implement. Renderer LMK3 của Mobile cần đọc đúng các thuộc tính này
-          (công thức và shader: <code>app/static/landmark-light.js</code>). Cột cuối là giá trị của GLB đang xem.</div>
-        <div id="lmkContract"></div>
-        <div class="btn-row"><button class="btn small" type="button" data-act="copy-contract">Sao chép (Markdown)</button><span class="hint" id="contractCopied"></span></div>
-        <textarea id="contractText" class="mono" rows="8" hidden readonly aria-label="Danh sách thuộc tính (Markdown)"></textarea>
-      </div>
-    </details>
   </section>`;
 }
 
 export function renderQa(ws) {
+  $("#glbOpen").hidden = !ws.draft;
+  renderContract(ws);
   const info = $("#lmkInfo");
   if (!info) return;
   const model = ws.shownModel();
@@ -478,7 +468,6 @@ export function renderQa(ws) {
   if (d) rows.push(lightRows(ws));
   info.innerHTML = rows.join("");
   $("#lmkUniforms").textContent = model && d ? uniformDump(ws, d) : "";
-  renderContract(ws);
 }
 
 // Which ground shadow the landmark casts (app/landmark_shadow.py): its GLB once a version is in

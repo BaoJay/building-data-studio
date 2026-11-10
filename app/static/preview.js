@@ -257,6 +257,12 @@ async function main() {
   map.on("zoom", () => updateZoomUI(map));
   map.on("moveend", () => updateZoomUI(map));
   map.on("click", (e) => onClick(map, e));
+  // Esc unselects, unless it already closes something else (tour, anchor pick, a dialog) or edits a field.
+  addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || tour.ctrl || landmark.ws?.picking || document.querySelector("dialog[open]")) return;
+    if (e.target.closest?.("input, textarea, select, [contenteditable]")) return;
+    deselect(map);
+  });
   // A right drag rotates the map: only a right click without a drag opens the menu.
   let rightDown = null;
   map.on("mousedown", (e) => { if (e.originalEvent.button === 2) rightDown = e.point; });
@@ -706,7 +712,7 @@ function applyStyle(map) {
 function onClick(map, e) {
   if (landmark.ws?.onClick(e)) return;
   const feats = map.queryRenderedFeatures(e.point, { layers: ["bldg-3d", "bldg-2d"].filter((id) => map.getLayoutProperty(id, "visibility") !== "none") });
-  if (!feats.length) return;
+  if (!feats.length) return deselect(map);  // a click on the basemap
   const props = feats[0].properties;
   const id = state.idCol && props[state.idCol] != null ? String(props[state.idCol]) : null;
   if (landmark.ws && id) {
@@ -719,6 +725,13 @@ function onClick(map, e) {
     applyStyle(map);
   }
   showPopup(map, e.lngLat, props);
+}
+
+function deselect(map) {
+  if (landmark.ws) return landmark.ws.close();
+  if (!state.selected) return;
+  state.selected = null;
+  applyStyle(map);
 }
 
 // Right click on a building: selects it (as a left click) and opens a menu of actions on it.

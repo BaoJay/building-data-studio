@@ -570,7 +570,14 @@ table.lmk-main th:nth-child(1) { width: 32%; }
 table.lmk-main th:nth-child(2) { width: 42%; }
 table.lmk-main code { overflow-wrap: anywhere; }
 .gain-panel { width: 400px; max-width: calc(100vw - 32px); padding: var(--space-2) var(--space-3); background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float); font-size: 12px; }
-.gain-panel summary { cursor: pointer; font-weight: 600; }
+.gain-panel summary { cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 6px; list-style: none; }
+.gain-panel summary::-webkit-details-marker { display: none; }
+.gain-icon { width: 16px; height: 16px; flex: none; }
+/* Closed: a 29px button under the compass, like the navigation buttons. */
+.gain-panel:not([open]) { width: 29px; height: 29px; padding: 0; border-radius: var(--radius-sm); }
+.gain-panel:not([open]) summary { width: 100%; height: 100%; justify-content: center; }
+.gain-panel:not([open]) summary:hover { background: var(--surface-2); }
+.gain-panel:not([open]) .gain-title { display: none; }
 .gain-panel table.lmk-contract { font-size: 11.5px; margin-top: var(--space-2); }
 .gain-panel table.lmk-contract th, .gain-panel table.lmk-contract td { padding: 2px 4px 2px 0; }
 .lmk-dot { display: inline-block; width: 11px; height: 11px; margin-right: 2px; border: 1px solid var(--line); vertical-align: -1px; }

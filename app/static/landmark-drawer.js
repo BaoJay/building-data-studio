@@ -589,7 +589,7 @@ export function renderContract(ws) {
   const gains = gainsHtml(preset);
   $("#gainBody").innerHTML = gains;
   $("#gainPreset").textContent = preset || "";
-  $("#gainPanel").hidden = false;
+  $("#gainPanel").hidden = !preset;  // only a VMAP style carries a light preset
   const mats = model ? `<details class="lmk-uniforms"><summary>${model.materialInfo.length} vật liệu của GLB này (nhóm, cách trộn, gain ở preset ${esc(preset || "—")})</summary>
       <div class="tbl-wrap"><table class="props lmk-contract"><thead><tr><th>Vật liệu</th><th>emissive_group</th><th>Trộn</th><th>Gain</th><th>surface_type</th><th>texCoord</th></tr></thead><tbody>`
     + materialRows(ws, model).map((r) => `<tr><td class="mono">${esc(r.name)}</td><td>${esc(r.group)}</td><td>${esc(r.mode)}</td><td>${esc(r.gain)}</td><td>${esc(r.surface)}</td><td>${esc(r.texCoord)}</td></tr>`).join("")

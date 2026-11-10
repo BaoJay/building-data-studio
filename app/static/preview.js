@@ -455,6 +455,8 @@ async function createMap(view, bldgSource, hoverLayers) {
     style: await basemapStyle($("#baseSel").value, bldgSource),
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+  // Under the compass: the emissive gains of the VMAP light presets (filled by landmark-drawer.js).
+  map.addControl({ onAdd: () => $("#gainPanel"), onRemove: () => {} }, "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
   map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
   window.map = map;

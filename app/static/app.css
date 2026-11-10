@@ -569,6 +569,10 @@ table.lmk-main { table-layout: fixed; }
 table.lmk-main th:nth-child(1) { width: 32%; }
 table.lmk-main th:nth-child(2) { width: 42%; }
 table.lmk-main code { overflow-wrap: anywhere; }
+.gain-panel { width: 400px; max-width: calc(100vw - 32px); padding: var(--space-2) var(--space-3); background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float); font-size: 12px; }
+.gain-panel summary { cursor: pointer; font-weight: 600; }
+.gain-panel table.lmk-contract { font-size: 11.5px; margin-top: var(--space-2); }
+.gain-panel table.lmk-contract th, .gain-panel table.lmk-contract td { padding: 2px 4px 2px 0; }
 .lmk-dot { display: inline-block; width: 11px; height: 11px; margin-right: 2px; border: 1px solid var(--line); vertical-align: -1px; }
 #contractText { width: 100%; font: 11.5px/1.45 var(--font-mono); }
 

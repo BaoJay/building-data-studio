@@ -257,6 +257,12 @@ async function main() {
   map.on("zoom", () => updateZoomUI(map));
   map.on("moveend", () => updateZoomUI(map));
   map.on("click", (e) => onClick(map, e));
+  // Esc unselects, unless it already closes something else (tour, anchor pick, a dialog) or edits a field.
+  addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || tour.ctrl || landmark.ws?.picking || document.querySelector("dialog[open]")) return;
+    if (e.target.closest?.("input, textarea, select, [contenteditable]")) return;
+    deselect(map);
+  });
   // A right drag rotates the map: only a right click without a drag opens the menu.
   let rightDown = null;
   map.on("mousedown", (e) => { if (e.originalEvent.button === 2) rightDown = e.point; });
@@ -449,6 +455,8 @@ async function createMap(view, bldgSource, hoverLayers) {
     style: await basemapStyle($("#baseSel").value, bldgSource),
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+  // Under the compass: the emissive gains of the VMAP light presets (filled by landmark-drawer.js).
+  map.addControl({ onAdd: () => $("#gainPanel"), onRemove: () => {} }, "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
   map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
   window.map = map;
@@ -681,7 +689,8 @@ function applyStyle(map) {
   map.setPaintProperty("bldg-2d", "fill-color", expr);
   map.setPaintProperty("bldg-2d", "fill-opacity", mobile ? mobile.opacity : 0.85);
   ["bldg-2d", "bldg-line"].forEach((id) => map.setFilter(id, filter));
-  map.setFilter("bldg-sel", state.selected && state.idCol ? matchBuilding(state.selected) : ["==", 1, 0]);
+  // Not ["==", 1, 0]: MapLibre reads that as an invalid legacy filter and drops it (null = every building).
+  map.setFilter("bldg-sel", state.selected && state.idCol ? matchBuilding(state.selected) : ["boolean", false]);
   map.setPaintProperty("bldg-sel", "line-color", palette(mapTheme()).highlight);
   if (map.getLayer(LMK_LOD1)) {
     map.setPaintProperty(LMK_LOD1, "fill-extrusion-color", palette(mapTheme()).ochre);
@@ -705,7 +714,7 @@ function applyStyle(map) {
 function onClick(map, e) {
   if (landmark.ws?.onClick(e)) return;
   const feats = map.queryRenderedFeatures(e.point, { layers: ["bldg-3d", "bldg-2d"].filter((id) => map.getLayoutProperty(id, "visibility") !== "none") });
-  if (!feats.length) return;
+  if (!feats.length) return deselect(map);  // a click on the basemap
   const props = feats[0].properties;
   const id = state.idCol && props[state.idCol] != null ? String(props[state.idCol]) : null;
   if (landmark.ws && id) {
@@ -718,6 +727,13 @@ function onClick(map, e) {
     applyStyle(map);
   }
   showPopup(map, e.lngLat, props);
+}
+
+function deselect(map) {
+  if (landmark.ws) return landmark.ws.close();
+  if (!state.selected) return;
+  state.selected = null;
+  applyStyle(map);
 }
 
 // Right click on a building: selects it (as a left click) and opens a menu of actions on it.

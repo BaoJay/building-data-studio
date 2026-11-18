@@ -439,22 +439,12 @@ function qaHtml(ws) {
         <details class="lmk-uniforms"><summary>Uniform ánh sáng (để đối chiếu khi port)</summary><pre id="lmkUniforms"></pre></details>
       </div>
     </details>
-  </section>
-  <section class="lm-sec">
-    <details class="lmk" id="contractSec" ${ws.contractOpen ? "open" : ""}>
-      <summary>Thuộc tính GLB cho Mobile</summary>
-      <div class="lmk-body">
-        <div class="hint">Mọi giá trị trong GLB mà renderer của studio đang đọc, đã implement. Renderer LMK3 của Mobile cần đọc đúng các thuộc tính này
-          (công thức và shader: <code>app/static/landmark-light.js</code>). Cột cuối là giá trị của GLB đang xem.</div>
-        <div id="lmkContract"></div>
-        <div class="btn-row"><button class="btn small" type="button" data-act="copy-contract">Sao chép (Markdown)</button><span class="hint" id="contractCopied"></span></div>
-        <textarea id="contractText" class="mono" rows="8" hidden readonly aria-label="Danh sách thuộc tính (Markdown)"></textarea>
-      </div>
-    </details>
   </section>`;
 }
 
 export function renderQa(ws) {
+  $("#glbOpen").hidden = !ws.draft;
+  renderContract(ws);
   const info = $("#lmkInfo");
   if (!info) return;
   const model = ws.shownModel();
@@ -478,7 +468,6 @@ export function renderQa(ws) {
   if (d) rows.push(lightRows(ws));
   info.innerHTML = rows.join("");
   $("#lmkUniforms").textContent = model && d ? uniformDump(ws, d) : "";
-  renderContract(ws);
 }
 
 // Which ground shadow the landmark casts (app/landmark_shadow.py): its GLB once a version is in
@@ -597,11 +586,10 @@ export function renderContract(ws) {
   const contract = `<div class="tbl-wrap"><table class="props lmk-contract lmk-main"><thead><tr><th>Thuộc tính</th><th>Dùng để / quy tắc</th><th>GLB này</th></tr></thead><tbody>`
     + LL.GLB_CONTRACT.map((c) => `<tr><td><code>${esc(c.where).replace(/([.,]) ?/g, "$1<wbr>")}</code></td><td><b>${esc(c.use)}.</b> ${esc(c.rule)}</td><td>${esc(values[c.key] ?? "—")}</td></tr>`).join("")
     + `</tbody></table></div>`;
-  const gains = `<div class="tbl-wrap"><table class="props lmk-contract"><thead><tr><th>Gain emissive</th>${LL.PRESETS.map((p) => `<th${p === preset ? ' class="on"' : ""}>${p}</th>`).join("")}</tr></thead><tbody>`
-    + Object.entries(GAIN_ROWS).map(([row, label]) => `<tr><td>${esc(label)}</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${fmtNum(LL.EMISSIVE_GAIN[row][p], 1)}</td>`).join("")}</tr>`).join("")
-    + `<tr><td>Kính: phản chiếu</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${fmtNum(LL.GLASS[p].reflect, 1)}</td>`).join("")}</tr>`
-    + `<tr><td>Kính: zenith / horizon / ground</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${["zenith", "horizon", "ground"].map((k) => `<i class="lmk-dot" style="background:${LL.GLASS[p][k]}" title="${k} ${LL.GLASS[p][k]}"></i>`).join("")}</td>`).join("")}</tr>`
-    + `</tbody></table></div>`;
+  const gains = gainsHtml(preset);
+  $("#gainBody").innerHTML = gains;
+  $("#gainPreset").textContent = preset || "";
+  $("#gainPanel").hidden = !preset;  // only a VMAP style carries a light preset
   const mats = model ? `<details class="lmk-uniforms"><summary>${model.materialInfo.length} vật liệu của GLB này (nhóm, cách trộn, gain ở preset ${esc(preset || "—")})</summary>
       <div class="tbl-wrap"><table class="props lmk-contract"><thead><tr><th>Vật liệu</th><th>emissive_group</th><th>Trộn</th><th>Gain</th><th>surface_type</th><th>texCoord</th></tr></thead><tbody>`
     + materialRows(ws, model).map((r) => `<tr><td class="mono">${esc(r.name)}</td><td>${esc(r.group)}</td><td>${esc(r.mode)}</td><td>${esc(r.gain)}</td><td>${esc(r.surface)}</td><td>${esc(r.texCoord)}</td></tr>`).join("")
@@ -610,6 +598,16 @@ export function renderContract(ws) {
   const open = box.querySelector("details")?.open;  // the material list stays open across redraws
   box.innerHTML = contract + gains + mats + ignored;
   if (open) box.querySelector("details")?.setAttribute("open", "");
+}
+
+// Emissive gains and glass of the four VMAP light presets, the one in use marked. Also shown
+// outside the contract, in the map's gain panel (it follows the preset, not the landmark).
+function gainsHtml(preset) {
+  return `<div class="tbl-wrap"><table class="props lmk-contract"><thead><tr><th>Gain emissive</th>${LL.PRESETS.map((p) => `<th${p === preset ? ' class="on"' : ""}>${p}</th>`).join("")}</tr></thead><tbody>`
+    + Object.entries(GAIN_ROWS).map(([row, label]) => `<tr><td>${esc(label)}</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${fmtNum(LL.EMISSIVE_GAIN[row][p], 1)}</td>`).join("")}</tr>`).join("")
+    + `<tr><td>Kính: phản chiếu</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${fmtNum(LL.GLASS[p].reflect, 1)}</td>`).join("")}</tr>`
+    + `<tr><td>Kính: zenith / horizon / ground</td>${LL.PRESETS.map((p) => `<td${p === preset ? ' class="on"' : ""}>${["zenith", "horizon", "ground"].map((k) => `<i class="lmk-dot" style="background:${LL.GLASS[p][k]}" title="${k} ${LL.GLASS[p][k]}"></i>`).join("")}</td>`).join("")}</tr>`
+    + `</tbody></table></div>`;
 }
 
 const GAIN_ROWS = {

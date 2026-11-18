@@ -110,7 +110,7 @@ class Workspace {
     this.localSeq = 0;
     this.pendingSig = "";  // pending() when the LoD1 colours were last set
     this.shadowSig = "";  // shadowRev() when the shadows were last asked for
-    Object.assign(this, { search: "", picking: false, confirmUse: undefined, editing: false, uploading: false, compare: false, flat: false, qaOpen: false, contractOpen: false });
+    Object.assign(this, { search: "", picking: false, confirmUse: undefined, editing: false, uploading: false, compare: false, flat: false, qaOpen: false });
     this.marker = null;
     this.urlTimer = null;
     this.store = new ModelStore({ load: (e, signal, file) => this.loadModel(e, signal, file), dispose: disposeModel, onChange: () => this.onModels() });
@@ -157,8 +157,14 @@ class Workspace {
     body.addEventListener("change", (e) => this.onDrawerChange(e));
     body.addEventListener("toggle", (e) => {
       if (e.target.id === "qaSec") this.qaOpen = e.target.open;
-      if (e.target.id === "contractSec") this.contractOpen = e.target.open;
     }, true);
+    $("#glbOpen").addEventListener("click", () => $("#glbDialog").showModal());
+    $("#glbDialog").addEventListener("click", (e) => {
+      const act = e.target.closest("[data-act]")?.dataset.act;
+      // A click on the backdrop lands on the dialog itself.
+      if (act === "close-glb" || e.target.id === "glbDialog") $("#glbDialog").close();
+      if (act === "copy-contract") ui.copyContract(this);
+    });
     $("#srcSel").addEventListener("change", (e) => this.openSource(e.target.value));
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && this.picking) {
@@ -846,7 +852,6 @@ class Workspace {
         ui.syncPlacement(this);
         break;
       }
-      case "copy-contract": ui.copyContract(this); break;
       case "save-place": this.savePlacement(); break;
       case "reset-place":
         this.setDraft({ ...this.previewVersion().placement });

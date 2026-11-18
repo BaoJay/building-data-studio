@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-11-10",
+  "axes": "glTF +X East, +Y up, -Z North, metres; GLB origin = anchor",
+  "heading": "degrees clockwise seen from above; 0 = GLB +X east",
+  "lods": "draw the file whose zoom_range [min, max) holds the zoom (max null: no limit); none outside every range: keep the LoD1 extrusion",
+  "landmarks": [
+    {
+      "id": "way_845002110",
+      "name": "Tasco Tower",
+      "osm": "way/845002110",
+      "anchor": {
+        "lat": 21.0156627,
+        "lon": 105.7828616
+      },
+      "placement": {
+        "lon": 105.7828616,
+        "lat": 21.0156627,
+        "heading": 0,
+        "scale": 1,
+        "anchor": "origin"
+      },
+      "lods": [
+        {
+          "lod_zoom": 17,
+          "zoom_range": [
+            17,
+            null
+          ],
+          "file": "Tasco_Tower_v2_shell_lit_z17.glb",
+          "sha256": "7090f29b131cdbcaa40bed798422483764a873afc5a2dd44952963fb8513fa7b",
+          "size": 885864
+        },
+        {
+          "lod_zoom": 16,
+          "zoom_range": [
+            16,
+            17
+          ],
+          "file": "Tasco_Tower_v2_shell_lit_z16.glb",
+          "sha256": "9ed50d517d96346db480df08ed12588f12b131d7e5d2ee596ae668d028c3d6a2",
+          "size": 829056
+        },
+        {
+          "lod_zoom": 15,
+          "zoom_range": [
+            15,
+            16
+          ],
+          "file": "Tasco_Tower_v2_shell_lit_z15.glb",
+          "sha256": "9e440c34801670ec319b43cadfa330770fb52f185d2e3ad5cedc165709663196",
+          "size": 803804
+        }
+      ],
+      "shadows": {
+        "dawn": "shadows/Tasco_Tower_shadow_dawn.geojson",
+        "day": "shadows/Tasco_Tower_shadow_day.geojson",
+        "dusk": "shadows/Tasco_Tower_shadow_dusk.geojson"
+      }
+    }
+  ]
+}

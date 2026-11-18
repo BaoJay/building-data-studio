@@ -67,9 +67,10 @@
 //                onto the walls around the LED (lightmap JPEG on TEXCOORD_1), added on top.
 // emissiveFactor is linear (glTF): it is turned into sRGB on the CPU (srgbEmissive), since the
 // formula works on raw sRGB ([1, 0.8, 0.5] -> [1, 0.906, 0.735]; linear would turn orange).
-// emissiveTexture may read TEXCOORD_1 (its texCoord: 1): the led_wash lightmap and window / LED
-// masks do, while the base colour tiles on TEXCOORD_0. Sampling it with TEXCOORD_0 repeats the
-// glow per tile: keep texCoord in a port. The preset comes from the style's metadata
+// emissiveTexture reads the UV set its own texCoord names: 1 for the led_wash lightmap (sampling
+// it with TEXCOORD_0 repeats the glow per tile), 0 for the _WIN window masks (same UV as the base
+// colour; their primitives have no TEXCOORD_1). Keep texCoord per material in a port. Window light
+// comes only from the GLB: no procedural, random or time-based windows. The preset comes from the style's metadata
 // "tasco:light-preset"; a style without one has no emissive.
 //
 // Glass (material.extras.surface_type "glass"), a reflection cheap enough for mobile: no cubemap,
@@ -231,8 +232,9 @@ export function isNightStyle(metadata) {
 export const EMISSIVE_GAIN = Object.freeze({
   led: Object.freeze({ dawn: 0.4, day: 0, dusk: 0.9, night: 1.0 }),       // led_warm, led_white, led_line, glow, sign*, logo*
   led_wash: Object.freeze({ dawn: 0.3, day: 0, dusk: 0.8, night: 1.0 }),  // baked LED light on the walls
-  lobby: Object.freeze({ dawn: 0.3, day: 0, dusk: 0.6, night: 0.8 }),
-  windows: Object.freeze({ dawn: 0, day: 0, dusk: 0, night: 0 }),         // windows*: off (Tasco has none)
+  // windows* / lobby (handoff 10/11/2026): only _WIN materials carry them, mask on TEXCOORD_0, on/off per pane.
+  lobby: Object.freeze({ dawn: 0.3, day: 0, dusk: 0.8, night: 1.0 }),
+  windows: Object.freeze({ dawn: 0.3, day: 0, dusk: 0.8, night: 1.0 }),
   other: Object.freeze({ dawn: 0.3, day: 0, dusk: 0.6, night: 1.0 }),     // any other group
 });
 

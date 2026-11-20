@@ -7,6 +7,7 @@ import { $, esc, fetchOk, toast } from "/static/util.js";
 import { COMPASS, basemapStyle, bindBasemapControls, initBasemap, loadVmapPresets, mapTheme, mobileBuilding, palette, recall, remember, vmap, vmapPreset } from "/static/basemap.js";
 import { flyHome, runTour, tallest } from "/static/tour.js";
 import { BuildingEdges } from "/static/building-edges.js";
+import { bindH3, ensureH3Layers, h3OnClick } from "/static/h3-layer.js";
 
 
 // height_m is the height the convert writes; h_m is the one of files written before it.
@@ -253,6 +254,7 @@ async function main() {
     selectLayer(map, meta, layers[0]);
     updateZoomUI(map);
     openWorkspace(map);
+    bindH3(map);
   });
   map.on("zoom", () => updateZoomUI(map));
   map.on("moveend", () => updateZoomUI(map));
@@ -273,7 +275,7 @@ async function main() {
 
   // Picking the mobile basemap also switches the buildings to the mobile look. A switch made
   // before the first "load" leaves the building layers to selectLayer (no layer chosen yet).
-  bindBasemapControls(map, () => bldgSource, () => { if (!state.layer) return; addBuildingLayers(map); applyStyle(map); landmark.ws?.ensureLayers(); }, (key) => {
+  bindBasemapControls(map, () => bldgSource, () => { if (!state.layer) return; addBuildingLayers(map); applyStyle(map); landmark.ws?.ensureLayers(); ensureH3Layers(); }, (key) => {
     if (key === "vmap" && $("#colorSel").querySelector('option[value="mobile"]')) {
       state.colorBy = "mobile";
       $("#colorSel").value = "mobile";
@@ -579,6 +581,7 @@ function addBuildingLayers(map) {
   map.addLayer({ id: LMK_LOD1, type: "fill-extrusion", source: "bldg", "source-layer": layerId, layout: { visibility: "none" }, paint: { "fill-extrusion-opacity": 0.4, "fill-extrusion-vertical-gradient": true } });
   // The selected building's footprint on the ground, readable on every theme (as a landmark's).
   map.addLayer({ id: "bldg-sel", type: "line", source: "bldg", "source-layer": layerId, paint: { "line-width": 3 } });
+  ensureH3Layers();
 }
 
 function colorExpression() {
@@ -712,6 +715,7 @@ function applyStyle(map) {
 // A landmark (its model or footprint) opens in the drawer; a building opens there with its
 // attributes (a popup until the workspace is loaded, or when it could not be).
 function onClick(map, e) {
+  if (h3OnClick(e)) return;
   if (landmark.ws?.onClick(e)) return;
   const feats = map.queryRenderedFeatures(e.point, { layers: ["bldg-3d", "bldg-2d"].filter((id) => map.getLayoutProperty(id, "visibility") !== "none") });
   if (!feats.length) return deselect(map);  // a click on the basemap
@@ -854,6 +858,7 @@ async function mainDiff(url, header, meta) {
 
   map.on("load", () => {
     addDiffLayers(map);
+    bindH3(map);
     if (!hasCenter) fitGrid(map);
     updateZoomUI(map);
     if (hasCenter && state.selected) {
@@ -864,8 +869,8 @@ async function mainDiff(url, header, meta) {
     }
   });
   map.on("zoom", () => updateZoomUI(map));
-  map.on("click", (e) => onDiffClick(map, e));
-  bindBasemapControls(map, () => bldgSource, () => addDiffLayers(map));
+  map.on("click", (e) => { if (!h3OnClick(e)) onDiffClick(map, e); });
+  bindBasemapControls(map, () => bldgSource, () => { addDiffLayers(map); ensureH3Layers(); });
   $("#diffLegend").addEventListener("change", (e) => {
     const kind = e.target.dataset.kind;
     if (!kind) return;

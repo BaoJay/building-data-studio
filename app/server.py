@@ -961,6 +961,45 @@ async def _json(request: Request) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+
+# ------------------------------------------------------------------ H3 grid for /preview
+
+async def h3_grid(request: Request) -> Response:
+    """GeoJSON of the H3 cells (default r8) over ?bbox=west,south,east,north."""
+    from . import h3grid
+
+    q = request.query_params
+    try:
+        res = int(q.get("res") or h3grid.GRID_RES)
+        if not 0 <= res <= 15:
+            raise h3grid.H3Error("res phải từ 0 đến 15.")
+        return JSONResponse(await _in_thread(h3grid.grid, q.get("bbox", ""), res))
+    except (h3grid.H3Error, ValueError) as exc:
+        return _error(str(exc))
+
+
+async def h3_cells(request: Request) -> Response:
+    """GeoJSON of a pasted list of H3 cells (POST {"cells": "..."}); tokens that are not H3
+    cells come back in "invalid"."""
+    from . import h3grid
+
+    try:
+        body = await request.json()
+        text = body.get("cells", "") if isinstance(body, dict) else ""
+        text = " ".join(map(str, text)) if isinstance(text, list) else str(text)
+        return JSONResponse(await _in_thread(h3grid.cells, text))
+    except h3grid.H3Error as exc:
+        return _error(str(exc))
+    except ValueError:
+        return _error("Body phải là JSON {\"cells\": \"...\"}.")
+
+
+async def h3_presets(request: Request) -> Response:
+    from . import h3grid
+
+    return JSONResponse({"presets": h3grid.presets()})
+
+
 async def _in_thread(fn, *args):
     import anyio.to_thread
 
@@ -991,6 +1030,9 @@ routes = [
     Route("/api/vmap/style.json", vmap_style),
     Route("/api/vmap/assets/{path:path}", vmap_asset),
     Route("/api/shadows", building_shadows),
+    Route("/api/h3/grid", h3_grid),
+    Route("/api/h3/cells", h3_cells, methods=["POST"]),
+    Route("/api/h3/presets", h3_presets),
     Route("/api/building", building_footprint),
     Route("/api/hidden", hidden_buildings, methods=["GET", "POST"]),
     Route("/api/landmarks", list_landmarks, methods=["GET"]),

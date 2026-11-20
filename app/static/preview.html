@@ -48,6 +48,26 @@
       <label class="check"><input type="checkbox" id="showGrid" checked> Hiện lưới thống kê</label>
     </div>
     <label class="check"><input type="checkbox" id="threeD" checked> Dựng 3D</label>
+    <div class="field h3-controls" id="h3Controls">
+      <span>Ô H3 r8 (chia ô QC)</span>
+      <label class="check"><input type="checkbox" id="h3Grid"> Hiện lưới H3 r8 trong khung nhìn</label>
+      <div class="hint" id="h3GridNote"></div>
+      <label class="check"><input type="checkbox" id="h3Pick"> Click để chọn ô (thay vì chọn building)</label>
+      <textarea id="h3Input" rows="3" spellcheck="false" placeholder="Dán ID ô H3, cách nhau bằng dấu phẩy, khoảng trắng hoặc xuống dòng"></textarea>
+      <div class="btn-row">
+        <button class="btn small" id="h3Show" type="button">Hiện lên bản đồ</button>
+        <button class="btn small" id="h3Preset" type="button" hidden></button>
+        <button class="btn small" id="h3ClearList" type="button">Xoá danh sách</button>
+      </div>
+      <div class="hint" id="h3ListNote"></div>
+      <div class="btn-row">
+        <button class="btn small primary" id="h3Copy" type="button" disabled>Copy 0 ô đã chọn</button>
+        <button class="btn small" id="h3SelectList" type="button" disabled>Chọn hết ô đã dán</button>
+        <button class="btn small" id="h3ClearSel" type="button" disabled>Bỏ chọn</button>
+      </div>
+      <div class="hint" id="h3SelNote"></div>
+      <div class="hint mono" id="h3Hover"></div>
+    </div>
     <div class="field" id="edgeControls">
       <label class="check"><input type="checkbox" id="edges"> Edge (đường cạnh từng building)</label>
       <div class="hint" id="edgeNote">Vẽ viền mái, cạnh đứng và chân tường của từng building như Edge trong SketchUp, để tách các nhà liền vách.</div>

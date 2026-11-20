@@ -687,3 +687,7 @@ input[type="range"] { accent-color: var(--accent); width: 100%; margin: 0; }
 .canon-build-list li { display: grid; gap: var(--space-1); padding: var(--space-2) 0; border-top: 1px solid var(--line); }
 .canon-build-list code { overflow-wrap: anywhere; }
 @media (max-width: 720px) { .canon-form .row2 { grid-template-columns: 1fr; } }
+
+/* H3 cells of the /preview panel (h3-layer.js) */
+.h3-controls textarea { width: 100%; font-family: var(--font-mono); font-size: 12px; resize: vertical; }
+.h3-controls .hint:empty { display: none; }

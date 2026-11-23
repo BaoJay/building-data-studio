@@ -493,6 +493,16 @@ Nút **Bay quanh toà cao nhất** trong panel trái của trang xem 3D lấy 6 
 
 Chỉ xét building đã tải trong khung nhìn: thu nhỏ bản đồ (vd zoom 13 với base Hà Nội) để tìm trong vùng rộng hơn. Máy bật "giảm chuyển động" (prefers-reduced-motion) thì camera nhảy thẳng tới từng toà, dừng 4 giây, không bay lượn.
 
+### Status building (sync với MapOps)
+
+Field `status` của MapOps (`active` / `retired`) quyết định building có được vẽ hay không: building `retired` bị ẩn khỏi trang xem 3D (cả 2D, edge và khối con của nó), building `active` vẽ như bình thường.
+
+- **Từ MapOps sang app**: app đọc `status` có sẵn trong PMTiles (file export từ MapOps, hay có schema `vmap-buildings`). File không có field `status` thì mọi building được coi là `active`.
+- **Đổi trong app**: chuột phải vào building → **Ẩn building (status → retired)**. Để hiện lại, bật **Xem building retired** ở panel trái (building retired được tô đỏ), chuột phải vào nó → **Hiện lại (status → active)**. Một thay đổi áp cho cả building, kể cả các khối con.
+- **Từ app sang MapOps**: thay đổi không sửa tile mà lưu trong `<thư mục landmark>/_status.json`, theo dataset (một bản canonical giữ thay đổi qua các lần build lại) hoặc theo đường dẫn PMTiles. Nút **Tải CSV status cho MapOps** tải các thay đổi dạng `building_id,status,updated_at` để import vào MapOps. Đổi một building về đúng status trong tile thì thay đổi đó bị bỏ, không nằm trong CSV. **Bỏ mọi thay đổi** đưa mọi building về status trong tile.
+
+Danh sách building đã ẩn của bản cũ (`_hidden.json`) được chuyển thành `retired` ở lần đầu mở app, file cũ đổi tên thành `_hidden.json.migrated`.
+
 ### Landmark 3D trong trang xem 3D
 
 Trang xem 3D (`/preview`) là nơi duy nhất xem và quản lý landmark: panel bên trái điều khiển bản đồ (layer, tô màu, 2D/3D, bóng, bản đồ nền, chế độ ánh sáng), bản đồ ở giữa, drawer **Landmark** bên phải. Nút **Đóng** thu drawer lại để bản đồ rộng ra, nút **Landmark** trên bản đồ mở lại. Trên màn hình hẹp, drawer là một tấm trượt từ dưới lên và panel trái tự thu gọn.

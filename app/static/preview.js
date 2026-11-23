@@ -16,7 +16,7 @@ const BASE_ATTRS = ["min_height", "render_min_height", "min_height_m"];
 const params = new URLSearchParams(location.search);
 let token = params.get("f");  // no f: the base of the city (see main)
 const PARENT_ATTRS = ["parent_building_id", "parent_id"];
-const state = { hidden: [], layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
+const state = { changes: {}, showRetired: false, statusAttr: null, layer: null, fields: {}, stats: {}, heightAttr: null, baseAttr: null, parentAttr: null, idCol: params.get("idcol"), selected: params.get("id"), colorBy: "height", minzoom: 0, maxzoom: 22 };
 // The landmark workspace (landmark-workspace.js), once loaded.
 const landmark = { ws: null, failed: false };
 // How a landmark with its GLB loaded is drawn (landmark-store.js LANDMARK_VIEWS), kept in the
@@ -247,7 +247,7 @@ async function main() {
   const zoom = hasCenter ? Number(params.get("z") || 17) : base?.view.zoom || Math.max(header.centerZoom, header.minZoom + 1);
   const bldgSource = { type: "vector", url: `pmtiles://${url}`, attribution: meta.attribution || "" };
 
-  state.hidden = await fetchOk(`/api/hidden?f=${encodeURIComponent(token)}`).then((r) => r.json()).then((d) => d.ids, () => []);
+  state.changes = await fetchOk(`/api/status?f=${encodeURIComponent(token)}`).then((r) => r.json()).then((d) => d.changes, () => ({}));
   const map = await createMap({ center, zoom, pitch: 55, bearing: -15 }, bldgSource, ["bldg-3d", "bldg-2d"]);
 
   map.on("load", () => {
@@ -269,8 +269,11 @@ async function main() {
   let rightDown = null;
   map.on("mousedown", (e) => { if (e.originalEvent.button === 2) rightDown = e.point; });
   map.on("contextmenu", (e) => { if (!rightDown || rightDown.dist(e.point) < 5) onContextMenu(map, e); });
-  $("#unhideBtn").addEventListener("click", () => setHidden(map, null, false));
-  syncHiddenNote();
+  $("#statusReset").addEventListener("click", () => {
+    if (confirm("Bỏ mọi thay đổi status làm trong app? Building sẽ theo lại status trong tile (MapOps).")) setStatus(map, null, null);
+  });
+  $("#showRetired").addEventListener("change", (e) => { state.showRetired = e.target.checked; applyStyle(map); });
+  $("#statusExport").href = `/api/status/export?f=${encodeURIComponent(token)}`;
   bindEdges(map);
 
   // Picking the mobile basemap also switches the buildings to the mobile look. A switch made
@@ -481,12 +484,45 @@ function matchBuilding(id) {
   return ["any", ...match];
 }
 
-// What every building layer leaves out: outlines with parts (has_parts) and the buildings hidden
-// by the user (soft delete, see setHidden). null: nothing.
+// ------------------------------------------------------------------ status (MapOps)
+// MapOps marks a building `status` active or retired; a retired one is not drawn. The status
+// comes from the tiles, unless changed in the app (state.changes, kept by /api/status and
+// exported as CSV for MapOps). A change is keyed on the whole building: it covers its parts.
+function changedIds(status) {
+  return Object.keys(state.changes).filter((id) => state.changes[id].status === status);
+}
+
+// Matches the buildings whose status is retired. null: none can be.
+function retiredExpr() {
+  if (!state.idCol) return null;
+  const retired = changedIds("retired");
+  const active = changedIds("active");
+  const any = [];
+  if (retired.length) any.push(matchBuildings(retired, state.idCol, state.parentAttr));
+  if (state.statusAttr) {
+    const fromTiles = ["==", ["to-string", ["get", state.statusAttr]], "retired"];
+    any.push(active.length ? ["all", fromTiles, ["!", matchBuildings(active, state.idCol, state.parentAttr)]] : fromTiles);
+  }
+  return any.length > 1 ? ["any", ...any] : any[0] || null;
+}
+
+// The status a building is drawn with: the app's change of it (or of its building), else the tiles'.
+function tileStatus(props) {
+  return state.statusAttr && String(props[state.statusAttr]) === "retired" ? "retired" : "active";
+}
+
+function effectiveStatus(props, target) {
+  const change = state.changes[target] || state.changes[String(props[state.idCol])];
+  return change ? change.status : tileStatus(props);
+}
+
+// What every building layer leaves out: outlines with parts (has_parts) and the retired
+// buildings (unless asked to see them, then coloured apart). null: nothing.
 function partsFilter() {
   const out = [];
   if (!$("#hideParentsWrap").hidden && $("#hideParents").checked) out.push(["!", ["any", ["==", ["get", "has_parts"], true], ["==", ["get", "has_parts"], 1]]]);
-  if (state.hidden.length && state.idCol) out.push(["!", matchBuildings(state.hidden, state.idCol, state.parentAttr)]);
+  const retired = state.showRetired ? null : retiredExpr();
+  if (retired) out.push(["!", retired]);
   return out.length > 1 ? ["all", ...out] : out[0] || null;
 }
 
@@ -501,6 +537,7 @@ function selectLayer(map, meta, layerId) {
   if (!state.heightAttr) $("#threeD").checked = false;
   state.baseAttr = BASE_ATTRS.find((a) => a in state.fields) || null;
   state.parentAttr = PARENT_ATTRS.find((a) => a in state.fields) || null;
+  state.statusAttr = "status" in state.fields ? "status" : null;
   if (!state.idCol || !(state.idCol in state.fields)) {
     state.idCol = ["building_id", "id", "osm_id"].find((a) => a in state.fields) || null;
   }
@@ -522,6 +559,7 @@ function selectLayer(map, meta, layerId) {
   state.colorBy = $("#baseSel").value === "vmap" && vmap.presets.length ? "mobile" : options[0][0];
   $("#colorSel").value = state.colorBy;
 
+  syncStatusNote();
   addBuildingLayers(map);
   applyStyle(map);
   landmark.ws?.layerChanged();
@@ -618,6 +656,11 @@ function colorExpression() {
   } else {
     expr = pal.plain;
     legend = "";
+  }
+  const retired = state.showRetired ? retiredExpr() : null;
+  if (retired) {
+    expr = ["case", retired, pal.outlier, expr];
+    legend += item(pal.outlier, "Retired (ẩn trên 3D, chuột phải → Hiện lại)");
   }
   const pending = landmark.ws && state.idCol ? landmark.ws.pending() : [];
   if (pending.length) {
@@ -740,7 +783,8 @@ function deselect(map) {
   applyStyle(map);
 }
 
-// Right click on a building: selects it (as a left click) and opens a menu of actions on it.
+// Right click on a building: selects it (as a left click) and opens a menu of actions on it:
+// retire it (hidden), or make a retired one active again (seen with "Xem building retired").
 // Landmarks are left out: their model would stay drawn over the hidden building.
 function onContextMenu(map, e) {
   if (!state.idCol || landmark.ws?.picking || landmark.ws?.onClick(e)) return;
@@ -752,38 +796,53 @@ function onContextMenu(map, e) {
   const id = String(props[state.idCol]);
   const parent = state.parentAttr && props[state.parentAttr] != null ? String(props[state.parentAttr]) : null;
   const target = parent || id;  // a part stands for its whole building, as when selected
+  const retired = effectiveStatus(props, target) === "retired";
+  const label = retired ? "Hiện lại (status → active)" : "Ẩn building (status → retired)";
   const menu = new maplibregl.Popup({ closeButton: false, className: "ctx-menu", maxWidth: "240px" })
     .setLngLat(e.lngLat)
-    .setHTML(`<div class="hint">${esc(props.name || target)}</div><button class="btn small" type="button" data-act="hide">Ẩn building</button>`)
+    .setHTML(`<div class="hint">${esc(props.name || target)} · ${retired ? "retired" : "active"}</div><button class="btn small" type="button" data-act="status">${label}</button>`)
     .addTo(map);
-  menu.getElement().querySelector('[data-act="hide"]').addEventListener("click", () => {
+  menu.getElement().querySelector('[data-act="status"]').addEventListener("click", () => {
     menu.remove();
-    setHidden(map, target, true);
+    const status = retired ? "active" : "retired";
+    // Back to what the tiles say: no change to keep (nor to send to MapOps).
+    setStatus(map, target, status === tileStatus(props) ? null : status, status);
   });
 }
 
-// Soft delete: the id goes to a list kept by the server (/api/hidden); the tiles are untouched.
-// id null with hidden false: show every hidden building again.
-async function setHidden(map, id, hidden) {
+// Change the status of one building (status null: back to the tiles' status; `shown` is the
+// status it is then drawn with). id null with status null: drop every change.
+async function setStatus(map, id, status, shown = status) {
   try {
-    const res = await fetchOk("/api/hidden", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(id == null ? { f: token, all: true, hidden: false } : { f: token, id, hidden }) });
-    state.hidden = (await res.json()).ids;
+    const res = await fetchOk("/api/status", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(id == null ? { f: token, all: true, status: null } : { f: token, id, status }) });
+    state.changes = (await res.json()).changes;
   } catch (err) {
     toast(`Không lưu được: ${err.message}`);
     return;
   }
-  if (hidden && state.selected === id) {
+  if (shown === "retired" && state.selected === id && !state.showRetired) {
     if (landmark.ws) landmark.ws.close(); else state.selected = null;
   }
-  syncHiddenNote();
+  syncStatusNote();
   applyStyle(map);
-  toast(hidden ? "Đã ẩn building. Hiện lại ở panel bên trái." : "Đã hiện lại các building đã ẩn.");
+  toast(id == null ? "Đã bỏ mọi thay đổi status." : shown === "retired"
+    ? "Đã ẩn building (status = retired). Bật “Xem building retired” để hiện lại."
+    : "Đã hiện lại building (status = active).");
 }
 
-function syncHiddenNote() {
-  $("#hiddenRow").hidden = !state.hidden.length;
-  $("#hiddenNote").textContent = `${state.hidden.length} building đang ẩn (chuột phải vào building → Ẩn). Dữ liệu gốc không bị xoá.`;
+function syncStatusNote() {
+  $("#statusRow").hidden = !state.idCol;
+  const retired = changedIds("retired").length;
+  const active = changedIds("active").length;
+  const n = retired + active;
+  const source = state.statusAttr
+    ? "Building có status retired trong tile (MapOps) bị ẩn."
+    : "Tile không có field status: chỉ ẩn các building đổi sang retired trong app.";
+  $("#statusNote").textContent = `${source} ${n ? `${n} thay đổi trong app (${retired} retired, ${active} active), tải CSV để import vào MapOps.` : "Chưa có thay đổi nào trong app."}`
+    + " Chuột phải vào building để đổi status.";
+  $("#statusExport").hidden = !n;
+  $("#statusReset").hidden = !n;
 }
 
 function showPopup(map, lngLat, props) {

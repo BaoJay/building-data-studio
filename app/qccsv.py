@@ -3,6 +3,7 @@ them in Excel or Google Sheets rather than QGIS.
 
     <build>/canonical_building_<area>.parquet ─┐
     <build>/review_<source>.gpkg ──────────────┴─ DuckDB spatial ──► <build>/qc/*.csv
+    any convert input ── normalised GeoPackage (EPSG:4326) ──────────► <output>/<name>.csv
 
 Each row keeps its attributes; the footprint becomes a point on its surface (lat, lon), a Google
 Maps link and the H3 r8 cell it falls in (the cells the /preview map draws to split QC between
@@ -48,6 +49,17 @@ def export_build(folder: Path, files: dict[str, str], log: Callable[[str], None]
     return written
 
 
+def export_file(gpkg: Path, layer: str, geom: str, stem: Path, log: Callable[[str], None] = lambda _: None) -> list[Path]:
+    """One layer of a GeoPackage in EPSG:4326 (the convert pipeline's normalised file) -> stem.csv (or parts)."""
+    import duckdb
+
+    from .osmbase import load_extension
+
+    with duckdb.connect() as con:
+        load_extension(con, "spatial")
+        return _export(con, f"ST_Read({sql_str(str(gpkg))}, layer = {sql_str(layer)})", geom, stem, log, drop=("fid",))
+
+
 def _h3_cells(con, path: Path) -> None:
     """qc_h3(qc_i, h3_r8) from qc_pt's points, with the h3 library (a DuckDB UDF would need numpy)."""
     import csv
@@ -68,7 +80,8 @@ def _h3_cells(con, path: Path) -> None:
 def _export(con, source: str, geom: str, stem: Path, log: Callable[[str], None],
             drop: tuple[str, ...] = ()) -> list[Path]:
     """One source -> stem.csv, or stem_part1.csv, stem_part2.csv… when it is too long for Excel."""
-    exclude = ", ".join(f'"{c}"' for c in (geom, *drop))
+    cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()}
+    exclude = ", ".join(f'"{c}"' for c in (geom, *drop) if c in cols)
     con.execute(f"""CREATE OR REPLACE TEMP TABLE qc_pt AS
         SELECT row_number() OVER () AS qc_i, round(ST_Y(p), 7) AS lat, round(ST_X(p), 7) AS lon, * EXCLUDE (p)
         FROM (SELECT *, ST_PointOnSurface("{geom}") AS p FROM {source})""")

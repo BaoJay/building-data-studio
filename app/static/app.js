@@ -25,7 +25,7 @@ const TAB_KEY = "building-data-studio.tab.v1";
 const PREF_KEY = "building-data-studio.prefs.v1";
 const LEGACY_PREF_KEY = "building-converter.prefs.v1"; // before the rename
 const DEFAULTS = {
-  want_gpkg: true, want_pmtiles: true, out_dir: "", gpkg_layer: "buildings", gpkg_crs: "EPSG:4326",
+  want_gpkg: true, want_pmtiles: true, want_csv: false, out_dir: "", gpkg_layer: "buildings", gpkg_crs: "EPSG:4326",
   m_per_level: 3.5, default_m: 3.5, min_valid_m: 2, max_valid_m: 500, max_levels: 200, outlier_mode: "fallback",
   decimals: 1, tiles_layer: "buildings", minzoom: 13, maxzoom: 15, drop: "drop-densest", extend_zooms: true,
   simplification: "", max_tile_kb: 500, shared_borders: false, attribution: "", makevalid: false, keep_temp: false,
@@ -734,6 +734,7 @@ function renderOptions(p) {
       <legend>Output</legend>
       <label class="check">${chk("want_gpkg", pr.want_gpkg)} GeoPackage (.gpkg) <span class="hint">— kiểm tra trên QGIS</span></label>
       <label class="check">${chk("want_pmtiles", pr.want_pmtiles)} PMTiles (.pmtiles) <span class="hint">— publish cho app mobile</span></label>
+      <label class="check" title="Mỗi building một dòng: h3_r8, lat, lon, link Google Maps và các cột; file dài hơn giới hạn Excel được chia part">${chk("want_csv", pr.want_csv)} CSV (.csv) <span class="hint">— cho QC mở bằng Excel / Google Sheets</span></label>
       <label class="field"><span>Tên file output</span><input type="text" name="out_name" value="${esc(p.name.replace(/\.[^.]+$/, ""))}"></label>
       <label class="field"><span>Thư mục output</span><input type="text" name="out_dir" value="${esc(pr.out_dir)}"></label>
       <span class="hint">Mỗi lần chạy tạo thư mục con <code>tên__ngày-giờ</code>, không ghi đè lần chạy trước.</span>
@@ -953,7 +954,7 @@ function collectConfig() {
   // With the schema on, the layer and zooms shown are the schema's: keep the user's own in the prefs.
   const own = (name, value) => (schemaOn ? state.prefs[name] : value);
   const prefs = {
-    want_gpkg: el.want_gpkg.checked, want_pmtiles: el.want_pmtiles.checked, out_dir: val("out_dir"),
+    want_gpkg: el.want_gpkg.checked, want_pmtiles: el.want_pmtiles.checked, want_csv: el.want_csv.checked, out_dir: val("out_dir"),
     gpkg_layer: val("gpkg_layer"), gpkg_crs: gpkgCrs, m_per_level: numv("m_per_level"), default_m: numv("default_m"),
     min_valid_m: numv("min_valid_m"), max_valid_m: numv("max_valid_m"), max_levels: numv("max_levels"),
     outlier_mode: val("outlier_mode"), decimals: numv("decimals"), tiles_layer: own("tiles_layer", val("tiles_layer")),
@@ -964,7 +965,7 @@ function collectConfig() {
   };
   const config = {
     input: { path: p.path, layer: p.layer, geom_column: el.geom_column ? val("geom_column") : null, src_crs: el.src_crs ? val("src_crs") : null },
-    output: { dir: prefs.out_dir, name: val("out_name"), gpkg: prefs.want_gpkg, pmtiles: prefs.want_pmtiles, gpkg_layer: prefs.gpkg_layer, gpkg_crs: gpkgCrs, keep_temp: prefs.keep_temp },
+    output: { dir: prefs.out_dir, name: val("out_name"), gpkg: prefs.want_gpkg, pmtiles: prefs.want_pmtiles, csv: prefs.want_csv, gpkg_layer: prefs.gpkg_layer, gpkg_crs: gpkgCrs, keep_temp: prefs.keep_temp },
     attributes: { columns: $$('input[name="col"]:checked').map((c) => c.value), where: val("where"), makevalid: prefs.makevalid },
     height: {
       enabled: el.height_enabled.checked, height_col: val("height_col") || null, levels_col: val("levels_col") || null,
@@ -988,7 +989,7 @@ function collectConfig() {
 async function runJob() {
   if (!state.probe || state.probe.kind !== "vector") return;
   const { config, prefs } = collectConfig();
-  if (!config.output.gpkg && !config.output.pmtiles) { toast("Chọn ít nhất một output."); return; }
+  if (!config.output.gpkg && !config.output.pmtiles && !config.output.csv) { toast("Chọn ít nhất một output."); return; }
   if (state.probe.crs.missing && !config.input.src_crs) { toast("Cần nhập CRS nguồn."); return; }
   if (config.parts.enabled && (!config.parts.id_col || !config.parts.parent_col)) { toast("Chọn cột ID và cột parent cho toà nhà nhiều khối."); return; }
   state.prefs = { ...state.prefs, ...prefs };

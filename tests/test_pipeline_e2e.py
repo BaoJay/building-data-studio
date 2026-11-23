@@ -4,6 +4,7 @@ Needs GDAL + tippecanoe on PATH; skipped otherwise. Set BC_SAMPLE_PARQUET to a
 real export to also run the pipeline on it.
 """
 
+import csv
 import json
 import os
 import sqlite3
@@ -155,6 +156,25 @@ def test_empty_column_list_keeps_only_required_columns(plain_parquet: Path, tmp_
     # Parts ids are kept because has_parts needs them; height inputs are not copied.
     assert cols == ["fid", "geom", "building_id", "parent_building_id", "h_raw", "height_m", "h_src", "h_outlier",
                     "has_parts", "is_part"]
+
+
+def test_csv_only_output_for_qc(plain_parquet: Path, tmp_path: Path) -> None:
+    pytest.importorskip("h3")
+    cfg = _config(plain_parquet, tmp_path / "out", output={"gpkg": False, "pmtiles": False, "csv": True})
+    result = _run(cfg)
+    path = Path(result["outputs"]["csv"]["path"])
+    assert path.name == "mini.csv" and path.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert "gpkg" not in result["outputs"] and "pmtiles" not in result["outputs"]
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert sorted(r["building_id"] for r in rows) == sorted(b[0] for b in BUILDINGS)
+    assert list(rows[0])[:4] == ["h3_r8", "lat", "lon", "map_link"]
+    assert "geom" not in rows[0] and "fid" not in rows[0] and rows[0]["height_m"]
+
+
+def test_no_output_is_rejected(plain_parquet: Path, tmp_path: Path) -> None:
+    with pytest.raises(pipeline.ConfigError):
+        pipeline.parse_config(_config(plain_parquet, tmp_path / "out", output={"gpkg": False, "pmtiles": False}))
 
 
 def test_missing_crs_is_rejected(plain_parquet: Path, tmp_path: Path) -> None:

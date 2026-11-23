@@ -4,6 +4,7 @@ App chạy local (trên trình duyệt) để chuyển dữ liệu building từ
 
 - **GeoPackage (.gpkg)**: mở bằng QGIS để kiểm tra chiều cao của khối building trong khu vực
 - **PMTiles (.pmtiles)**: publish và serve cho app mobile (MapLibre, dựng 3D bằng `fill-extrusion`)
+- **CSV (.csv)** (tuỳ chọn): danh sách cho QC mở bằng Excel / Google Sheets — mỗi building một dòng với `h3_r8`, `lat`, `lon`, `map_link` và các cột, cùng định dạng với CSV QC của build canonical (xem mục Canonical)
 
 Có giao diện kéo thả, nút tải file và nút mở thư mục output. App tự sinh báo cáo chiều cao và có trang xem bản đồ 3D.
 

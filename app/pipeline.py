@@ -118,6 +118,7 @@ class JobConfig:
     category_cols: tuple[str, ...]
     report_id_col: str | None
     keep_temp: bool
+    want_csv: bool = False  # QC list for Excel (app.qccsv)
 
 
 def safe_name(raw: str) -> str:
@@ -154,8 +155,9 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
 
     want_gpkg = bool(out.get("gpkg", True))
     want_pmtiles = bool(out.get("pmtiles", True))
-    if not (want_gpkg or want_pmtiles):
-        raise ConfigError("Chọn ít nhất một output: GeoPackage hoặc PMTiles.")
+    want_csv = bool(out.get("csv", False))
+    if not (want_gpkg or want_pmtiles or want_csv):
+        raise ConfigError("Chọn ít nhất một output: GeoPackage, PMTiles hoặc CSV.")
 
     out_dir = Path(str(out.get("dir") or DEFAULT_OUTPUT_DIR)).expanduser()
     if out_dir.exists() and not out_dir.is_dir():
@@ -231,6 +233,7 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
         category_cols=tuple(str(c) for c in report_raw.get("category_cols", [])),
         report_id_col=report_raw.get("id_col") or None,
         keep_temp=bool(out.get("keep_temp", False)),
+        want_csv=want_csv,
     )
 
 
@@ -508,6 +511,8 @@ class Pipeline(StagedPipeline):
         if cfg.want_gpkg and not _same_crs(cfg.gpkg_crs, WGS84):
             steps.append(Step("reproject", f"Đổi hệ toạ độ GPKG → {cfg.gpkg_crs}"))
         steps.append(Step("report", "Báo cáo chiều cao"))
+        if cfg.want_csv:
+            steps.append(Step("csv", "Xuất CSV cho QC (Excel, Google Sheets)"))
         if cfg.want_pmtiles:
             steps += [
                 Step("fgb", "Chuẩn bị dữ liệu cho tippecanoe"),
@@ -645,6 +650,16 @@ class Pipeline(StagedPipeline):
         ]
         self._run(cmd, step)
         self._add_output("gpkg", f"GeoPackage ({self.cfg.gpkg_crs})", self.gpkg_out, "gpkg")
+
+    def _step_csv(self, step: Step) -> None:
+        from . import qccsv
+
+        written = qccsv.export_file(self.normalized, self.cfg.gpkg_layer, GEOM_NAME, self.out_dir / self.cfg.out_name,
+                                    self.job.add_log)
+        for i, path in enumerate(written, start=1):
+            key = "csv" if len(written) == 1 else f"csv_{i}"
+            self._add_output(key, "CSV cho QC" + (f" (phần {i})" if len(written) > 1 else ""), path, "data")
+        step.detail = f"{len(written)} file"
 
     def _step_report(self, step: Step) -> None:
         cfg, rule = self.cfg, self.rule

@@ -658,7 +658,7 @@ class Pipeline(StagedPipeline):
                                     self.job.add_log)
         for i, path in enumerate(written, start=1):
             key = "csv" if len(written) == 1 else f"csv_{i}"
-            self._add_output(key, "CSV cho QC" + (f" (phần {i})" if len(written) > 1 else ""), path, "data")
+            self._add_output(key, "CSV cho QC" + (f" (phần {i})" if len(written) > 1 else ""), path, "csv")
         step.detail = f"{len(written)} file"
 
     def _step_report(self, step: Step) -> None:

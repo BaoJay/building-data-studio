@@ -5,6 +5,7 @@ on synthetic footprints in DuckDB (spatial extension); the end-to-end build read
 Open Buildings snapshots written by the test (no network) and needs GDAL + tippecanoe + h3.
 """
 
+import csv
 import json
 import math
 import sqlite3
@@ -316,6 +317,17 @@ def test_build_end_to_end_ids_and_landmarks(tmp_path, monkeypatch):
     ctx = canonical.file_context(root, Path(active["pmtiles_path"]))
     assert ctx["kind"] == "canonical" and ctx["ids"][lm["id"]] == landmark_id
     assert (folder / "review_osm.gpkg").is_file() and (folder / "review_gob.gpkg").is_file()
+    # QC CSVs: same rows as the Parquet, a point, a map link and the H3 r8 cell instead of the footprint
+    qc = folder / "qc" / "qc_canonical_building_hanoi.csv"
+    assert qc.read_bytes().startswith(b"\xef\xbb\xbf")
+    with qc.open(encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == len(ids1) and {r["building_id"] for r in rows} == set(ids1.values())
+    assert list(rows[0])[:5] == ["h3_r8", "lat", "lon", "map_link", "building_id"] and "geometry" not in rows[0]
+    r = rows[0]
+    assert r["h3_r8"] == h3.latlng_to_cell(float(r["lat"]), float(r["lon"]), 8)
+    assert r["map_link"] == f"https://www.google.com/maps?q={r['lat']},{r['lon']}"
+    assert {p.name for p in (folder / "qc").glob("*.csv")} >= {qc.name, "qc_review_osm.csv", "qc_review_gob.csv"}
     with closing(sqlite3.connect(folder / build["files"]["gpkg"])) as c:
         assert c.execute("SELECT count(*) FROM buildings").fetchone()[0] == len(ids1)
 

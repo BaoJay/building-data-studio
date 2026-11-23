@@ -275,6 +275,8 @@ Luật `building_tier_v1` theo *[B-05] Quy chuẩn Building Tier* (khớp luật
 
 Mỗi build có `review_osm.gpkg` và `review_gob.gpkg` (thêm `review_gba.gpkg` khi có GBA), layer `review`: footprint nguồn của mọi trường hợp cần xem, cùng `issue_type` (`ambiguous`, `split`, `aggregate`, `coverage_gap`, `large_footprint` > 5.000 m², `landmark_lost`, `landmark_footprint_changed`), `severity`, `group_id`, `role` (winner / evidence), `canonical_building_id`, `group_iou`. Mở cả hai file trên QGIS để so footprint OSM và GOB của cùng một `group_id`. `conflation_bridge.parquet` lưu mọi cặp chồng lấn giữa các nguồn (IoU, coverage, khoảng cách tâm, match score), kể cả cặp dưới ngưỡng.
 
+**CSV cho QC** (thư mục `qc/` của build, cho người QC dùng Excel / Google Sheets thay vì QGIS): `qc_canonical_building_<vùng>.csv` (toàn bộ building) và `qc_review_osm.csv` / `qc_review_gob.csv` (danh sách review), giữ nguyên các cột, thay footprint bằng `lat`, `lon` (một điểm nằm trong toà), `map_link` (Google Maps) và `h3_r8` (ô H3 r8, khớp lớp H3 trên `/preview`, để chia việc QC theo ô). File UTF-8 có BOM để Excel hiện đúng tiếng Việt, sắp theo ô H3. File dài hơn giới hạn của Excel (1.048.576 dòng) được chia thành `_part1`, `_part2`… và một ô không bao giờ bị cắt sang hai file (Hà Nội cả thành phố: 3 file). Build mới tự xuất; build cũ bấm **Xuất CSV cho QC** trong danh sách build (vài giây).
+
 #### Kiểm tra trước khi lưu
 
 Build chỉ được lưu khi qua hết: geometry hợp lệ, `building_id` không trùng, mỗi bản ghi nguồn thuộc tối đa một building, `one_to_one` có IoU nhóm ≥ 0,50, coverage gap có reason, chiều cao trong 2–500 m, khối con có toà cha, `min_height` < `height_m`. Không qua thì build báo lỗi; canonical đang dùng, ID registry và landmark giữ nguyên.
@@ -287,7 +289,7 @@ canonical/                                  (BDS_CANONICAL_DIR)
   sources/gob/<snapshot>/gob.parquet         + source.json; raw/<ô S2>_buildings.csv.gz
   hanoi/canonical.json                       build đang dùng
   hanoi/id_registry.parquet
-  hanoi/canonical_building_hanoi__<giờ>/     .parquet .gpkg .pmtiles review_*.gpkg conflation_bridge.parquet
+  hanoi/canonical_building_hanoi__<giờ>/     .parquet .gpkg .pmtiles review_*.gpkg conflation_bridge.parquet qc/*.csv
                                              canonical_report.md build.json report.md log.txt
 ```
 

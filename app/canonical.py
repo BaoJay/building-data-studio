@@ -15,7 +15,8 @@
       <area>/canonical_building_<area>__<time>/ one build: .parquet (the deliverable, columns of the
                                                 platform's canonical_building), .gpkg, .pmtiles,
                                                 review_osm.gpkg / review_gob.gpkg (MapOps lists),
-                                                conflation_bridge.parquet, canonical_report.md, build.json
+                                                conflation_bridge.parquet, canonical_report.md, build.json,
+                                                qc/*.csv (the same lists for QC in Excel: app.qccsv)
 
 A build that fails (an invariant, a step) leaves canonical.json, the registry and the landmark
 library as they were.
@@ -42,6 +43,7 @@ from . import (
     osmdirect,
     osmgeom,
     osmtags,
+    qccsv,
     tileschema,
     tools,
 )
@@ -225,6 +227,15 @@ def activate(root: Path, area: Area, folder_name: str) -> dict[str, Any]:
     return data
 
 
+def export_qc(root: Path, area: Area, folder_name: str) -> list[Path]:
+    """The QC CSVs of a finished build (builds made before the qc step, or a redo)."""
+    folder = area_dir(root, area) / folder_name
+    data = read_build(folder)
+    if data is None or folder.parent != area_dir(root, area):
+        raise ConfigError(f"Không có build {folder_name}.")
+    return qccsv.export_build(folder, data["files"])
+
+
 def write_active(root: Path, area: Area, folder: Path, build: dict[str, Any]) -> Path:
     files = build["files"]
     data = {
@@ -399,6 +410,7 @@ class CanonicalPipeline(Pipeline):
             Step("qa", "Kiểm tra invariants"),
             Step("write", "Ghi Parquet canonical, conflation bridge, danh sách review"),
             *Pipeline.plan(self),
+            Step("qc", "Xuất CSV cho QC (Excel, Google Sheets)"),
             Step("publish", "Lưu build" + (" và đặt làm canonical đang dùng" if o.activate else " (không đặt làm active)")),
         ]
         return steps
@@ -964,6 +976,12 @@ class CanonicalPipeline(Pipeline):
                 self._add_output(f"review_{fam}", f"Danh sách review {fam.upper()} (GPKG)", path, "data")
                 self.review_files[fam] = name
             self._log(f"Review {fam}: {n:,} footprint" + (f" → {name}" if n else ""))
+
+    def _step_qc(self, step: Step) -> None:
+        files = {"parquet": self.parquet_out.name, **{f"review_{k}": v for k, v in self.review_files.items()}}
+        written = qccsv.export_build(self.out_dir, files, self._log)
+        self._add_output("qc", "CSV cho QC (thư mục qc/)", self.out_dir / qccsv.QC_DIR, "data")
+        step.detail = f"{len(written)} file"
 
     def _step_publish(self, step: Step) -> None:
         o = self.opts

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import datetime as dt
+import io
 import json
 import logging
 import os
@@ -712,62 +715,131 @@ async def delete_landmark(request: Request) -> Response:
     return JSONResponse({"ok": True, "moved_to": str(dest)})
 
 
-# ------------------------------------------------------------------ hidden buildings
-# Soft delete: building ids hidden in the 3D preview, kept in <library>/_hidden.json per dataset
-# (a canonical build's dataset, so it survives rebuilds; else the PMTiles path). Tiles are untouched.
-_hidden_lock = threading.Lock()
+# ------------------------------------------------------------------ building status (MapOps)
+# The MapOps `status` field (active / retired) as seen in the 3D preview: a retired building is
+# not drawn. The tiles carry the status MapOps exported; what the user changes in the preview is
+# kept apart in <library>/_status.json, per dataset (a canonical build's dataset, so it survives
+# rebuilds; else the PMTiles path), as {building_id: {status, updated_at}}. Tiles are untouched;
+# the changes go back to MapOps as a CSV (GET /api/status/export).
+STATUSES = ("active", "retired")
+_status_lock = threading.Lock()
 
 
-def _hidden_file() -> Path:
+def _status_file() -> Path:
+    return library.root / "_status.json"
+
+
+def _legacy_hidden_file() -> Path:
     return library.root / "_hidden.json"
 
 
-def _hidden_key(path: Path) -> str:
+def _status_key(path: Path) -> str:
     ctx = landmark_context(path)
     return f"dataset:{ctx['dataset']}" if ctx and ctx["kind"] == "canonical" else f"file:{path.resolve()}"
 
 
-def _read_hidden() -> dict[str, list[str]]:
+def _write_status(data: dict) -> None:
+    library.root.mkdir(parents=True, exist_ok=True)
+    tmp = _status_file().with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8")
+    os.replace(tmp, _status_file())
+
+
+def _read_status() -> dict[str, dict[str, dict]]:
+    """Every dataset's changes. The ids of the former soft delete (_hidden.json) become retired
+    once, and that file is set aside as _hidden.json.migrated. Call with _status_lock held."""
     try:
-        data = json.loads(_hidden_file().read_text("utf-8"))
+        data = json.loads(_status_file().read_text("utf-8"))
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    legacy = _legacy_hidden_file()
+    if legacy.is_file():
+        try:
+            hidden = json.loads(legacy.read_text("utf-8"))
+        except (OSError, ValueError):
+            hidden = {}
+        now = _now_iso()
+        for key, ids in (hidden.items() if isinstance(hidden, dict) else []):
+            for bid in ids if isinstance(ids, list) else []:
+                data.setdefault(key, {}).setdefault(str(bid), {"status": "retired", "updated_at": now})
+        _write_status(data)
+        os.replace(legacy, legacy.with_name(legacy.name + ".migrated"))
+    return data
 
 
-def set_hidden(path: Path, building_id: str | None, hidden: bool) -> list[str]:
-    """Hide or show one building (building_id None and hidden False: show them all)."""
-    key = _hidden_key(path)
-    with _hidden_lock:
-        data = _read_hidden()
-        ids = [] if building_id is None else [i for i in data.get(key, []) if i != building_id] + ([building_id] if hidden else [])
-        if ids:
-            data[key] = ids
+def _now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def get_status(path: Path) -> dict[str, dict]:
+    with _status_lock:
+        return _read_status().get(_status_key(path), {})
+
+
+def set_status(path: Path, building_id: str | None, status: str | None) -> dict[str, dict]:
+    """Set the status of one building; status None drops the change (back to the tiles' status).
+    building_id None with status None: drop every change of that dataset."""
+    if status is not None and status not in STATUSES:
+        raise ValueError(f"status phải là {' / '.join(STATUSES)}")
+    key = _status_key(path)
+    with _status_lock:
+        data = _read_status()
+        changes = {} if building_id is None else dict(data.get(key, {}))
+        if building_id is not None:
+            changes.pop(building_id, None)
+            if status is not None:
+                changes[building_id] = {"status": status, "updated_at": _now_iso()}
+        if changes:
+            data[key] = changes
         else:
             data.pop(key, None)
-        library.root.mkdir(parents=True, exist_ok=True)
-        tmp = _hidden_file().with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8")
-        os.replace(tmp, _hidden_file())
-    return ids
+        _write_status(data)
+    return changes
 
 
-async def hidden_buildings(request: Request) -> Response:
-    """GET ?f=<token>: the ids hidden on that PMTiles. POST {f, id, hidden}: hide or show one;
-    POST {f, all: true, hidden: false}: show them all again."""
+def status_csv(changes: dict[str, dict]) -> str:
+    """The changes as the CSV MapOps imports: building_id,status,updated_at (by building_id)."""
+    out = io.StringIO()
+    w = csv.writer(out, lineterminator="\n")
+    w.writerow(["building_id", "status", "updated_at"])
+    for bid in sorted(changes):
+        w.writerow([bid, changes[bid]["status"], changes[bid].get("updated_at", "")])
+    return out.getvalue()
+
+
+async def building_status(request: Request) -> Response:
+    """GET ?f=<token>: the status changes on that PMTiles, {changes: {id: {status, updated_at}}}.
+    POST {f, id, status}: set one (status null: back to the tiles' status);
+    POST {f, all: true, status: null}: drop every change."""
     body = await _json(request) if request.method == "POST" else dict(request.query_params)
     path = _source_file(str(body.get("f", "")))
     if path is None:
         return _error("File PMTiles không tồn tại.", 404)
     if request.method == "GET":
-        return JSONResponse({"ids": (await _in_thread(_read_hidden)).get(await _in_thread(_hidden_key, path), [])}, headers=NO_CACHE)
-    if body.get("all") and body.get("hidden") is False:
-        return JSONResponse({"ids": await _in_thread(set_hidden, path, None, False)})
+        return JSONResponse({"changes": await _in_thread(get_status, path)}, headers=NO_CACHE)
+    status = body.get("status")
+    if body.get("all") and status is None:
+        return JSONResponse({"changes": await _in_thread(set_status, path, None, None)})
     bid = body.get("id")
     if not isinstance(bid, str) or not bid or len(bid) > 200:
         return _error("Thiếu id building.")
-    ids = await _in_thread(set_hidden, path, bid, bool(body.get("hidden", True)))
-    return JSONResponse({"ids": ids})
+    try:
+        changes = await _in_thread(set_status, path, bid, status)
+    except ValueError as exc:
+        return _error(str(exc))
+    return JSONResponse({"changes": changes})
+
+
+async def export_status(request: Request) -> Response:
+    """GET ?f=<token>: the status changes as CSV, to import into MapOps."""
+    path = _source_file(request.query_params.get("f", ""))
+    if path is None:
+        return _error("File PMTiles không tồn tại.", 404)
+    body = status_csv(await _in_thread(get_status, path))
+    name = f"{path.name.split('.')[0]}_status_changes.csv"
+    return Response(body, media_type="text/csv; charset=utf-8",
+                    headers={**NO_CACHE, "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
 async def _receive_glb(request: Request, keep) -> Response:
@@ -1051,7 +1123,8 @@ routes = [
     Route("/api/h3/cells", h3_cells, methods=["POST"]),
     Route("/api/h3/presets", h3_presets),
     Route("/api/building", building_footprint),
-    Route("/api/hidden", hidden_buildings, methods=["GET", "POST"]),
+    Route("/api/status", building_status, methods=["GET", "POST"]),
+    Route("/api/status/export", export_status),
     Route("/api/landmarks", list_landmarks, methods=["GET"]),
     Route("/api/landmarks", register_landmark, methods=["POST"]),
     Route("/api/landmarks/manifest.json", landmarks_manifest),

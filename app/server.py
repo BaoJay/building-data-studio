@@ -407,6 +407,8 @@ def canonical_status(area_key: str = osmbase.DEFAULT_AREA) -> dict[str, Any]:
             "pmtiles_token": registry.register(folder / b["files"]["pmtiles"]),
             "report_token": registry.register(folder / b["files"]["report"]),
             "files": {k: registry.register(folder / v) for k, v in b["files"].items() if (folder / v).exists()},
+            "qc_token": registry.register(folder / canonical.qccsv.QC_DIR)
+            if any((folder / canonical.qccsv.QC_DIR).glob("*.csv")) else None,
             "landmark_warnings": sum(1 for e in b.get("landmarks", {}).get("report", []) if e.get("warning")),
         })
     out["builds"] = builds
@@ -453,6 +455,20 @@ async def activate_canonical(request: Request) -> Response:
     except pipeline.ConfigError as exc:
         return _error(str(exc), 404)
     return JSONResponse(await _in_thread(canonical_status, area.key), headers=NO_CACHE)
+
+
+async def canonical_qc_csv(request: Request) -> Response:
+    """Write the QC CSVs (app.qccsv) of a finished build, e.g. one made before they existed."""
+    body = await _json(request)
+    area = osmbase.AREAS.get(str(body.get("area") or osmbase.DEFAULT_AREA))
+    if area is None:
+        return _error("Không có khu vực này.", 404)
+    try:
+        written = await _in_thread(canonical.export_qc, CANONICAL_DIR, area, str(body.get("folder") or ""))
+    except pipeline.ConfigError as exc:
+        return _error(str(exc), 404)
+    return JSONResponse({"files": [p.name for p in written], **await _in_thread(canonical_status, area.key)},
+                        headers=NO_CACHE)
 
 
 def landmark_context(path: Path) -> dict[str, Any] | None:
@@ -1026,6 +1042,7 @@ routes = [
     Route("/api/canonical", get_canonical, methods=["GET"]),
     Route("/api/canonical/build", build_canonical, methods=["POST"]),
     Route("/api/canonical/activate", activate_canonical, methods=["POST"]),
+    Route("/api/canonical/qc-csv", canonical_qc_csv, methods=["POST"]),
     Route("/api/vmap/presets", vmap_presets),
     Route("/api/vmap/style.json", vmap_style),
     Route("/api/vmap/assets/{path:path}", vmap_asset),

@@ -330,6 +330,9 @@ function renderCanonBuilds(st) {
       <a class="btn small" href="${esc(previewUrl(b.pmtiles_token, { name: b.build_id }))}" target="_blank" rel="noopener">Xem 3D</a>
       <a class="btn small" href="/api/files/${encodeURIComponent(b.report_token)}" target="_blank" rel="noopener">Báo cáo</a>
       <button class="btn small" type="button" data-canon="reveal" data-token="${esc(b.folder_token)}">Thư mục</button>
+      ${b.qc_token
+        ? `<button class="btn small" type="button" data-canon="reveal" data-token="${esc(b.qc_token)}" title="Danh sách building và review dạng CSV, mở bằng Excel / Google Sheets">CSV cho QC</button>`
+        : `<button class="btn small" type="button" data-canon="qc" data-folder="${esc(b.folder)}" title="Xuất Parquet và danh sách review ra CSV cho QC">Xuất CSV cho QC</button>`}
       ${b.active ? "" : `<button class="btn small" type="button" data-canon="activate" data-folder="${esc(b.folder)}">Đặt làm đang dùng</button>`}
     </div></li>`).join("");
 }
@@ -354,6 +357,15 @@ async function onCanonAction(e) {
     $("#canonForm").hidden = true;  // re-rendered from the latest status
     renderCanonical(st);
     if (canon.formOpen) syncCanonForm();
+  } else if (what === "qc") {
+    btn.disabled = true;
+    btn.textContent = "Đang xuất CSV…";
+    try {
+      const res = await api("/api/canonical/qc-csv", { method: "POST", body: { area: st.area, folder: btn.dataset.folder } });
+      canon.status = res;
+      renderCanonical(res);
+      toast(`Đã xuất ${res.files.length} file CSV vào thư mục qc/ của build.`);
+    } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = "Xuất CSV cho QC"; }
   } else if (what === "activate") {
     if (!window.confirm(`Đặt build ${btn.dataset.folder} làm canonical đang dùng? Trang 3D và landmark sẽ mở bản này.`)) return;
     try {

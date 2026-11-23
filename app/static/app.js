@@ -1088,8 +1088,11 @@ function renderJob(job) {
 }
 
 function renderOutputs(job) {
-  const order = ["gpkg", "pmtiles", "grid", "report_md", "report_json", "log"];
-  const icons = { gpkg: "GPKG", pmtiles: "PMT", geojson: "JSON", report: "MD", log: "LOG" };
+  // CSV for QC: "csv", or "csv_1", "csv_2"… when it is split into parts.
+  const csvKeys = Object.keys(job.outputs).filter((k) => /^csv(_\d+)?$/.test(k))
+    .sort((a, b) => Number(a.slice(4) || 0) - Number(b.slice(4) || 0));
+  const order = ["gpkg", "pmtiles", ...csvKeys, "grid", "report_md", "report_json", "log"];
+  const icons = { gpkg: "GPKG", pmtiles: "PMT", csv: "CSV", geojson: "JSON", report: "MD", log: "LOG" };
   const outs = order.map((k) => job.outputs[k]).filter(Boolean);
   $("#outputs").innerHTML = outs.map((o) => `
     <div class="out-row">

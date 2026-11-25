@@ -29,7 +29,7 @@ const DEFAULTS = {
   m_per_level: 3.5, default_m: 3.5, min_valid_m: 2, max_valid_m: 500, max_levels: 200, outlier_mode: "fallback",
   decimals: 1, tiles_layer: "buildings", minzoom: 13, maxzoom: 15, drop: "drop-densest", extend_zooms: true,
   simplification: "", max_tile_kb: 500, shared_borders: false, attribution: "", makevalid: false, keep_temp: false,
-  shadows: false, shadow_min_height: 0,
+  shadows: false, shadow_min_height: 0, tier_enabled: true, tier_osm_tags: "",
 };
 
 const state = {
@@ -786,6 +786,12 @@ function renderOptions(p) {
       <span class="hint">Thêm <code>has_parts</code> = outline có khối con (nên ẩn khi dựng 3D để không chồng hình) và <code>is_part</code> = là khối con.</span>
     </fieldset>
 
+    <fieldset id="fsTier">
+      <legend><label class="check">${chk("tier_enabled", pr.tier_enabled && p.geometry.nlt === "MULTIPOLYGON")} Building tier v2 <span class="hint">(B-05)</span></label></legend>
+      <label class="field"><span>File tag OSM (.parquet có <code>osm_id</code>, <code>tags</code>)</span><input type="text" name="tier_osm_tags" value="${esc(pr.tier_osm_tags)}" placeholder="trống = snapshot OSM mới nhất của Canonical phủ vùng này"></label>
+      <span class="hint">Thêm <code>building_tier</code> (T1/T2/T3), <code>height_class</code> (HC0–HC4), <code>tier_rule</code>, <code>tier_basis</code>, <code>qc_flags</code> cho mọi footprint. Tag OSM lấy từ cột của file và từ file tag OSM, khớp theo id <code>way/…</code>. <code>building:part</code> kế thừa tier của footprint chứa nó.</span>
+    </fieldset>
+
     <fieldset id="fsGpkg">
       <legend>GeoPackage</legend>
       <div class="row2">
@@ -962,6 +968,7 @@ function collectConfig() {
     simplification: val("simplification"), max_tile_kb: numv("max_tile_kb"), shared_borders: el.shared_borders.checked,
     attribution: val("attribution"), makevalid: el.makevalid.checked, keep_temp: el.keep_temp.checked,
     shadows: el.shadows.checked, shadow_min_height: numv("shadow_min_height") || 0,
+    tier_enabled: el.tier_enabled.checked, tier_osm_tags: val("tier_osm_tags"),
   };
   const config = {
     input: { path: p.path, layer: p.layer, geom_column: el.geom_column ? val("geom_column") : null, src_crs: el.src_crs ? val("src_crs") : null },
@@ -982,6 +989,7 @@ function collectConfig() {
       shadow_min_height: prefs.shadow_min_height,
     },
     report: { category_cols: $$('input[name="cat"]:checked').map((c) => c.value), id_col: val("id_col") || null },
+    tier: { enabled: prefs.tier_enabled, osm_tags: prefs.tier_osm_tags || null },
   };
   return { config, prefs };
 }
@@ -1169,6 +1177,7 @@ function renderReport(job) {
       featureTable(ov.top, pm, idCol || "feature_fid", false,
         { ...OVERLAP_TIPS, ...(idCol ? { [idCol]: `id của footprint bị chồng lấn (cột ${idCol})` } : {}) }));
   }
+  if (r.building_tier) html += tierReport(r.building_tier);
   const md = job.outputs.report_md;
   if (md) html += `<div class="out-actions"><a class="btn small" href="/api/files/${esc(md.token)}?download=1" download>Tải báo cáo .md</a><a class="btn small" href="/api/files/${esc(job.outputs.report_json.token)}?download=1" download>Tải báo cáo .json</a></div>`;
   $("#report").innerHTML = html;
@@ -1181,6 +1190,19 @@ function renderReport(job) {
       window.prompt("Trình duyệt chặn clipboard, copy thủ công:", b.dataset.copy);
     }
   }));
+}
+
+// [B-05] Building Tier v2: counts by tier, basis, height_class and QC flag.
+function tierReport(t) {
+  const total = t.total || 1;
+  const table = (head, counts) => `<div class="tbl-wrap"><table><thead><tr><th>${esc(head)}</th><th class="n">Số lượng</th><th class="n">%</th></tr></thead><tbody>${
+    Object.entries(counts).map(([k, v]) => `<tr><td>${k ? `<code>${esc(k)}</code>` : '<span class="hint">(trống)</span>'}</td><td class="n">${fmtInt(v)}</td><td class="n">${fmtNum((100 * v) / total, 2)}%</td></tr>`).join("")
+  }</tbody></table></div>`;
+  const src = `Tag OSM: ${fmtInt(t.osm_tags_found)}/${fmtInt(t.with_osm_id)} feature có id OSM khớp ${t.osm_tags_file ? `<code>${esc(t.osm_tags_file)}</code>` : "<b>(không có file tag OSM)</b>"}`
+    + ` · building:part: ${fmtInt(t.parts)}${t.parts_without_parent ? `, <b>${fmtInt(t.parts_without_parent)} không có footprint cha</b> (để trống tier)` : ""}`;
+  return section("Building tier v2 (B-05)", src,
+    `<div class="opt-grid">${table("building_tier", t.counts)}${table("height_class", t.height_class)}${table("tier_basis", t.tier_basis)}${
+      Object.keys(t.flags).length ? table("qc_flags", t.flags) : ""}</div>`);
 }
 
 // How the written PMTiles compares with the tile schema, and what the data lacked or added.

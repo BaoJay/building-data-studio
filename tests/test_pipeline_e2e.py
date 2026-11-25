@@ -310,3 +310,60 @@ def test_footprint_overlap_report(tmp_path: Path) -> None:
     assert [(r["building_id"], r["worst_with"]) for r in top] == [("X", "Y"), ("Y", "X")]
     assert top[0]["overlap_pct"] == pytest.approx(50, abs=0.5)
     assert top[0]["center"][1] == pytest.approx(10.77025, abs=1e-6)
+
+
+def _box(x: float, y: float, w: float, h: float) -> list:
+    return [[[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]]]
+
+
+def test_building_tier_v2(tmp_path: Path) -> None:
+    """[B-05] tier v2 on every footprint: tags from an OSM snapshot joined by source_id, a part
+    inheriting from the footprint holding it, a footprint with no OSM id (GOB)."""
+    import duckdb
+
+    x, y = 105.80, 21.02
+    feats = [  # source_id, height_m, provenance, geometry (~0.001° ≈ 100 m)
+        ("way/1", 3.5, "default", _box(x, y, 0.0015, 0.0012)),            # 'Landmark' footprint ~17,000 m²
+        ("way/2", 336.0, "osm_height", _box(x + 0.0002, y + 0.0002, 0.0004, 0.0004)),  # its tower (part)
+        ("way/3", 7.8, "osm_height", _box(x + 0.01, y, 0.0003, 0.0004)),    # historic=monument
+        ("way/4", 3.5, "default", _box(x + 0.02, y, 0.00002, 0.00002)),     # garage
+        ("7PH7XXXX+XX", 3.5, "default", _box(x + 0.03, y, 0.0001, 0.0001)),  # GOB, no tags
+        ("way/6", 3.5, "default", _box(x + 0.05, y, 0.0002, 0.0002)),       # part with no footprint
+    ]
+    src = tmp_path / "canon.geojson"
+    src.write_text(json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"source_id": s, "height_m": h, "height_provenance": p,
+                                           "building_tier": "T3_residential"},
+         "geometry": {"type": "Polygon", "coordinates": g}} for s, h, p, g in feats]}), encoding="utf-8")
+    snap = tmp_path / "osm.parquet"
+    osm = [("way/1", "building", {"building": "commercial", "name": "Landmark72"}),
+           ("way/2", "part", {"building:part": "yes", "building:levels": "72"}),
+           ("way/3", "building", {"building": "yes", "historic": "monument", "name": "Lăng"}),
+           ("way/4", "building", {"building": "garage"}),
+           ("way/6", "part", {"building:part": "yes"})]
+    with duckdb.connect() as con:
+        con.execute("CREATE TABLE o (osm_id VARCHAR, kind VARCHAR, tags VARCHAR)")
+        con.executemany("INSERT INTO o VALUES (?, ?, ?)", [(i, k, json.dumps(t)) for i, k, t in osm])
+        con.execute(f"COPY o TO '{snap}' (FORMAT PARQUET)")
+    cfg = _config(src, tmp_path / "out", parts={"enabled": False}, output={"pmtiles": False},
+                  report={"category_cols": ["building_tier"]})
+    cfg["height"]["prov_col"] = "height_provenance"
+    cfg["tier"] = {"enabled": True, "osm_tags": str(snap)}
+    result = _run(cfg)
+    gpkg = Path(result["outputs"]["gpkg"]["path"])
+    with closing(sqlite3.connect(gpkg)) as conn:
+        rows = {r[0]: r[1:] for r in conn.execute(
+            'SELECT source_id, building_tier, height_class, tier_rule, tier_basis, qc_flags FROM "buildings"')}
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert rows["way/1"] == ("T2", "HC0", "t2_scale_medium_area", "gfa_10000_to_30000", "flag_needs_levels")
+    assert rows["way/2"] == ("T2", "HC4", "t2_scale_medium_area", "gfa_10000_to_30000", None)
+    assert rows["way/3"] == ("T1", "HC0", "t1_national_provincial_landmark", "osm_historic_monument", None)
+    assert rows["way/4"] == ("T3", "HC0", "t3_minor_structure", "minor_tag", "flag_minor_structure")
+    assert rows["7PH7XXXX+XX"][0] == "T3" and rows["7PH7XXXX+XX"][2] == "t3_default"
+    assert rows["way/6"] == (None, "HC0", None, None, None)
+    assert "_bds_tier_v2" not in tables
+    tier = result["report"]["building_tier"]
+    assert tier["parts"] == 2 and tier["parts_without_parent"] == 1 and tier["osm_tags_found"] == 5
+    assert tier["counts"] == {"": 1, "T1": 1, "T2": 2, "T3": 2}
+    cats = {c["column"]: {r["value"]: r["count"] for r in c["rows"]} for c in result["report"]["categories"]}
+    assert cats["building_tier"]["T2"] == 2  # the report reads the new values, not the input's

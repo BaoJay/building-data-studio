@@ -207,6 +207,20 @@ def test_building_tier_v1(tmp_path):
     assert set(st["counts"]) <= set(buildingtier.TIERS)
 
 
+def test_building_tier_v2(tmp_path):
+    con = _duck()
+    _load(con)
+    _conflate(con, tmp_path)
+    st = buildingtier.apply(con)  # the default rule
+    assert st["rule"] == "building_tier_v2"
+    t = {r[0]: r[1:] for r in con.execute("""SELECT c.source_id, t.building_tier, t.tier_rule, t.tier_basis, t.height_class,
+                                                    t.tier_flags FROM tier t JOIN canon c USING (node)""").fetchall()}
+    assert t["way/2"] == ("T2", "t2_scale_mid_rise", "levels_8_to_24", "HC2", [])
+    assert t["way/4"] == ("T2", "t2_function_non_residential", "nonres_tag", "HC0", ["flag_needs_levels"])
+    assert t["way/5"] == ("T2", "t2_function_non_residential", "nonres_tag", "HC2", [])  # part: parent's tier, own height
+    assert t["way/6"] == ("T3", "t3_residential_standard", "res_tag", "HC0", [])
+
+
 # ------------------------------------------------------------------ landmark binding
 
 def test_landmark_is_drawn_on_every_build_of_its_dataset(tmp_path):
@@ -309,7 +323,7 @@ def test_build_end_to_end_ids_and_landmarks(tmp_path, monkeypatch):
     assert ids1["way/2"] == landmark_id
     row = con.execute(f"SELECT resolution_mode, decided_by, building_tier FROM read_parquet('{pq}') "
                       "WHERE source_id = 'way/2'").fetchone()
-    assert row == ("manual", "landmark", "T1_iconic")
+    assert row == ("manual", "landmark", "T2")  # v2: a GLB no longer makes a tier (way/2: 12 levels)
     rec = lib.read(lm["id"])
     assert (rec["building_id"], rec["dataset"], rec["source_id"]) == (landmark_id, "hanoi", "way/2")
     active = canonical.read_active(root, canonical.AREAS["hanoi"])

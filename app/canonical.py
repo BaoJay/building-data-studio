@@ -914,7 +914,8 @@ class CanonicalPipeline(Pipeline):
                    c.name, c.levels AS building_levels, round(c.area, 1) AS footprint_area_m2,
                    c.relation AS conflation_relation_type, round(c.group_iou, 3) AS group_iou,
                    to_json(list_prepend(c.key, c.evidence_keys))::VARCHAR AS source_ids,
-                   array_to_string(c.reasons, ',') AS conflation_reasons, array_to_string(t.tier_flags, ',') AS tier_flags
+                   array_to_string(c.reasons, ',') AS conflation_reasons, array_to_string(t.tier_flags, ',') AS tier_flags,
+                   t.height_class, CAST(t.tier_rule AS VARCHAR) AS tier_rule, t.tier_basis
             FROM canon AS c JOIN ids AS i USING (node) LEFT JOIN landmark_lock AS l USING (node) LEFT JOIN tier AS t USING (node)
             LEFT JOIN parent_ids AS pp USING (node) LEFT JOIN comp_keys AS gk ON gk.comp = c.comp""")
         self._log(f"Bảng canonical: {time.time() - t0:.0f}s")

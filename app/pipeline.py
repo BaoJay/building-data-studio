@@ -3,6 +3,8 @@
     input (.parquet / .gpkg / ...)
       └─ ogr2ogr + SQL ──► normalized GeoPackage (EPSG:4326, height_m, h_src, h_outlier)
            ├─ ogrinfo SQL ──► has_parts / is_part
+           ├─ buildingtier (DuckDB + rule engine) ──► building_tier, height_class, tier_rule, tier_basis,
+           │                                          qc_flags ([B-05] Building Tier v2, optional)
            ├─ ogr2ogr ──► output GeoPackage in another CRS (optional)
            ├─ sqlite3 ──► height report (report.json / report.md)
            ├─ ogr2ogr ──► FlatGeobuf (temp) ── tippecanoe ──► PMTiles (fields + types of a
@@ -14,6 +16,7 @@ Every stage logs a feature-count accounting line so silent data loss shows up.
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import re
@@ -26,7 +29,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import __version__, overlap, probe, shadows, tileschema, tools, vmap
+from . import __version__, buildingtier, overlap, probe, shadows, tileschema, tools, vmap
 from .jobs import FileRegistry, Job, Step
 from .probe import GENERATED_FIELDS, ProbeError
 from .probe import quote_ident as q
@@ -53,6 +56,7 @@ WORK_DIR_NAME = "_work"
 NORMALIZED_NAME = "normalized.gpkg"
 TILES_INPUT_NAME = "tiles_input.fgb"
 SHADOWS_INPUT_NAME = "shadows.geojsonl"
+TIER_STAGE_TABLE = "_bds_tier_v2"
 SHADOW_MINZOOM = 15  # shadows of low-rise buildings are invisible further out
 MAX_ZOOM = 22
 MAX_NAME_LENGTH = 120
@@ -119,6 +123,8 @@ class JobConfig:
     report_id_col: str | None
     keep_temp: bool
     want_csv: bool = False  # QC list for Excel (app.qccsv)
+    tier: bool = False  # building_tier_v2 ([B-05]) on every footprint
+    tier_osm_tags: Path | None = None  # OSM tags Parquet (osm_id, tags); None = newest canonical snapshot
 
 
 def safe_name(raw: str) -> str:
@@ -141,6 +147,7 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
         height_raw = raw.get("height", {})
         parts_raw = raw.get("parts", {})
         report_raw = raw.get("report", {})
+        tier_raw = raw.get("tier") or {}
     except (KeyError, TypeError) as exc:
         raise ConfigError("Cấu hình thiếu phần 'input'.") from exc
 
@@ -208,6 +215,12 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
     if parts_raw.get("enabled") and parts_raw.get("id_col") and parts_raw.get("parent_col"):
         parts = (str(parts_raw["id_col"]), str(parts_raw["parent_col"]))
 
+    tier_osm_tags = None
+    if tier_raw.get("enabled") and str(tier_raw.get("osm_tags") or "").strip():
+        tier_osm_tags = Path(str(tier_raw["osm_tags"]).strip()).expanduser()
+        if not tier_osm_tags.is_file() or tier_osm_tags.suffix.lower() != ".parquet":
+            raise ConfigError(f"File tag OSM cho tier phải là file .parquet có sẵn: {tier_osm_tags}")
+
     try:
         where = validate_where(attrs.get("where"))
     except SpecError as exc:
@@ -234,6 +247,8 @@ def parse_config(raw: dict[str, Any]) -> JobConfig:
         report_id_col=report_raw.get("id_col") or None,
         keep_temp=bool(out.get("keep_temp", False)),
         want_csv=want_csv,
+        tier=bool(tier_raw.get("enabled")),
+        tier_osm_tags=tier_osm_tags,
     )
 
 
@@ -492,6 +507,7 @@ class Pipeline(StagedPipeline):
         self.shadow_info: dict[str, Any] | None = None
         self.schema_info: dict[str, Any] | None = None
         self.tile_fields: list[str] = []
+        self.tier_info: dict[str, Any] | None = None
         # With shadows, buildings are tiled on their own first and joined with the shadow tiles.
         self.with_shadows = cfg.want_pmtiles and cfg.tiles.shadows
         self.buildings_tiles = self.work / "buildings.pmtiles" if self.with_shadows else self.pmtiles_out
@@ -507,6 +523,8 @@ class Pipeline(StagedPipeline):
         ]
         if cfg.parts:
             steps.append(Step("parts", "Gán has_parts / is_part"))
+        if cfg.tier:
+            steps.append(Step("tier", "Building tier v2 (B-05)"))
         steps.append(Step("verify", "Đối soát số lượng feature"))
         if cfg.want_gpkg and not _same_crs(cfg.gpkg_crs, WGS84):
             steps.append(Step("reproject", f"Đổi hệ toạ độ GPKG → {cfg.gpkg_crs}"))
@@ -548,6 +566,8 @@ class Pipeline(StagedPipeline):
         if cfg.height is not None:
             self.rule = build_height_rule(cfg.height, fields)
             regenerated |= set(HEIGHT_GENERATED)
+        if cfg.tier:
+            regenerated |= set(buildingtier.V2_COLUMNS)
         if cfg.parts:
             regenerated |= set(PARTS_GENERATED)
             for name in cfg.parts:
@@ -624,6 +644,59 @@ class Pipeline(StagedPipeline):
         self.accounting["is_part"] = is_part or 0
         self.job.add_log(f"{has_parts or 0:,} toà nhà có khối con; {is_part or 0:,} khối con (is_part).")
 
+    def _step_tier(self, step: Step) -> None:
+        """building_tier_v2 on every feature: computed in DuckDB / Python, then written into the
+        GeoPackage through GDAL (its triggers need GDAL's ST_* functions)."""
+        cfg = self.cfg
+        if self.info["geometry"]["nlt"] != "MULTIPOLYGON":
+            raise ConfigError("Building tier cần dữ liệu polygon (footprint).")
+
+        def find_osm_tags(bbox: tuple[float, float, float, float]) -> Path | None:
+            from . import canonical
+
+            snap = canonical.find_osm_snapshot(canonical.default_dir(), bbox)
+            return Path(snap["path"]) if snap else None
+
+        out_csv = self.work / "tier_v2.csv"
+        try:
+            st = buildingtier.classify_file(
+                self.normalized, cfg.gpkg_layer, osm_tags=cfg.tier_osm_tags, find_osm_tags=find_osm_tags,
+                levels_col=self.rule.levels_col if self.rule else None, out_csv=out_csv, log=self.job.add_log,
+                on_con=self._use_duckdb)
+        except ValueError as exc:
+            raise PipelineError(str(exc)) from exc
+        finally:
+            self.con = None  # classify_file closes its connection
+        step.progress = 60.0
+        table, stage = q(cfg.gpkg_layer), q(TIER_STAGE_TABLE)
+        with closing(sqlite3.connect(self.normalized)) as conn, out_csv.open(encoding="utf-8") as fh:
+            rows = csv.reader(fh)
+            next(rows)
+            conn.execute(f"DROP TABLE IF EXISTS {stage}")
+            conn.execute(f"CREATE TABLE {stage} (fid INTEGER PRIMARY KEY, "
+                         + ", ".join(f"{q(c)} TEXT" for c in buildingtier.V2_COLUMNS) + ")")
+            conn.executemany(f"INSERT INTO {stage} VALUES (?, ?, ?, ?, ?, ?)",
+                             ([int(r[0]), *(v or None for v in r[1:])] for r in rows))
+            conn.commit()
+        cols = ", ".join(q(c) for c in buildingtier.V2_COLUMNS)
+        statements = [*(f"ALTER TABLE {table} ADD COLUMN {q(c)} TEXT" for c in buildingtier.V2_COLUMNS),
+                      f"UPDATE {table} SET ({cols}) = (SELECT {cols} FROM {stage} AS x WHERE x.fid = {table}.fid)"]
+        ogrinfo = tools.require("ogrinfo")
+        for sql in statements:
+            self._run([ogrinfo, str(self.normalized), "-q", "-sql", sql], step, fail_on_error_lines=True)
+        with closing(sqlite3.connect(self.normalized)) as conn:
+            conn.execute(f"DROP TABLE {stage}")
+            conn.commit()
+        self.tier_info = st
+        step.detail = " · ".join(f"{k or '(trống)'} {v:,}" for k, v in st["counts"].items())
+        self.job.add_log(f"building_tier v2: {st['counts']}; height_class: {st['height_class']}; cờ: {st['flags']}")
+        if st["parts_without_parent"]:
+            self.job.add_log(f"CẢNH BÁO: {st['parts_without_parent']:,} building:part không nằm trong footprint nào: "
+                             f"để trống building_tier (B-05 chưa quy định), fid: {st['orphan_fids']}")
+        if st["with_osm_id"] and not st["osm_tags_file"]:
+            self.job.add_log("CẢNH BÁO: file có id OSM nhưng không có file tag OSM (snapshot canonical) phủ vùng này: "
+                             "tier chỉ dựa vào cột của file, các luật theo thẻ OSM gần như không khớp.")
+
     def _step_verify(self, step: Step) -> None:
         with closing(tools.connect_ro(self.normalized)) as conn:
             table = q(self.cfg.gpkg_layer)
@@ -680,6 +753,8 @@ class Pipeline(StagedPipeline):
         report["accounting"] = self.accounting
         report["rule"] = asdict(rule) if rule else None
         report["id_col"] = id_col
+        if self.tier_info:
+            report["building_tier"] = self.tier_info
         with self.job.lock:
             self.job.report = report
         height = report.get("height")

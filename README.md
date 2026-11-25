@@ -261,8 +261,8 @@ Khối con (`building:part`) lấy tag riêng, số tầng riêng, rồi chiều
 | `build_id`, `config_version`, `updated_at` | `build-bldg-YYYYMMDD-HHMMSS`, `osm-first-v1`, thời điểm build |
 | `description` | `Rule osm-first-v1, build build-bldg-…: footprint from osm, height from osm_levels` |
 | `parent_building_id`, `min_height` | khối con: `building_id` của toà cha; đáy khối (chuỗi, như schema) |
-| `building_tier` | theo luật `building_tier_v1` (dưới) |
-| Chỉ trong Parquet / GPKG | `height_lineage`, `name`, `building_levels`, `footprint_area_m2`, `conflation_relation_type`, `group_iou`, `source_ids`, `conflation_reasons`, `tier_flags` |
+| `building_tier` | `T1`/`T2`/`T3` theo luật `building_tier_v2` (dưới) |
+| Chỉ trong Parquet / GPKG | `height_lineage`, `name`, `building_levels`, `footprint_area_m2`, `conflation_relation_type`, `group_iou`, `source_ids`, `conflation_reasons`, `tier_flags`, `height_class`, `tier_rule`, `tier_basis` |
 
 #### building_id ổn định
 
@@ -270,7 +270,9 @@ Khối con (`building:part`) lấy tag riêng, số tầng riêng, rồi chiều
 
 #### building_tier
 
-Luật `building_tier_v1` theo *[B-05] Quy chuẩn Building Tier* (khớp luật đầu tiên): `T1_iconic` (pin trong `config/building_tier/iconic_pins.geojson`, hoặc toà có landmark), `T1_landmark`, `T2_commercial`, `T2_highrise_residential`, `T2_large`, `T3_residential`. Cao tầng = ≥ 9 tầng hoặc chiều cao đo được ≥ 30 m. Khối con lấy tier của toà cha. Cờ `minor_structure` và `tiny_footprint_qc` (< 15 m²) nằm trong `tier_flags`. Luật mới (`building_tier_v2`…) là một hàm mới trong `RULES` của `app/buildingtier.py`, chạy sau conflation nên không đổi ingest, footprint, chiều cao hay danh sách review.
+Mặc định là luật `building_tier_v2` theo *[B-05] Quy chuẩn Building Tier v2*, cùng Rule Engine với Convert ([Building tier v2](#building-tier-v2-b-05)): `building_tier` = `T1`/`T2`/`T3`, thêm `height_class`, `tier_rule`, `tier_basis`; cờ QC nằm trong `tier_flags`. Tag lấy từ snapshot OSM của build; footprint GOB / GBA chỉ xét theo diện tích, chiều cao. Khối con lấy tier của toà cha (`parent_source_id`), `height_class` theo chiều cao của chính nó. Landmark (GLB) không còn làm toà lên T1. Pin iconic và file POI chỉ dùng cho v1.
+
+Luật cũ `building_tier_v1` (chọn bằng `tier_rule` trong cấu hình build): `T1_iconic` (pin trong `config/building_tier/iconic_pins.geojson`, hoặc toà có landmark), `T1_landmark`, `T2_commercial`, `T2_highrise_residential`, `T2_large`, `T3_residential`. Cao tầng = ≥ 9 tầng hoặc chiều cao đo được ≥ 30 m. Khối con lấy tier của toà cha. Cờ `minor_structure` và `tiny_footprint_qc` (< 15 m²) nằm trong `tier_flags`. Luật mới (`building_tier_v2`…) là một hàm mới trong `RULES` của `app/buildingtier.py`, chạy sau conflation nên không đổi ingest, footprint, chiều cao hay danh sách review.
 
 #### Danh sách review cho MapOps
 
@@ -359,6 +361,19 @@ Mỗi building lấy **giá trị hợp lệ đầu tiên** theo thứ tự:
 | `h_outlier` | int 0/1 | 1 = giá trị gốc bất thường, cần kiểm tra |
 | `has_parts` | boolean | Outline có khối con trỏ về (nên **ẩn** khi dựng 3D) |
 | `is_part` | boolean | Là khối con (có `parent_building_id` khác chính nó) |
+| `building_tier` | text | `T1` / `T2` / `T3` theo [B-05] Building Tier v2 (khi bật **Building tier v2**). Thay `building_tier` có sẵn trong file |
+| `height_class` | text | `HC0`–`HC4`, chỉ theo `height_m` của chính đối tượng (kể cả `building:part`) |
+| `tier_rule` / `tier_basis` | text | Quy tắc đầu tiên khớp và căn cứ của nó, vd `t1_scale_high_rise` / `levels_ge_25` |
+| `qc_flags` | text | Cờ QC, cách nhau bằng dấu phẩy: `flag_minor_structure`, `flag_tiny_footprint_qc`, `flag_review_footprint`, `flag_needs_levels` |
+
+### Building tier v2 ([B-05])
+
+Ô **Building tier v2** trong tab Convert (tự bật với file polygon) chạy Rule Engine của B-05 trên mọi footprint: duyệt quy tắc 1 → 11, quy tắc đầu tiên khớp thì dừng (code: `app/buildingtier.py`, `classify_v2`).
+
+- **Tag OSM**: lấy từ cột của file (cột `tags` JSON, hoặc cột trùng tên thẻ OSM như `building`, `name`, `amenity`) và từ **file tag OSM** (Parquet có `osm_id`, `tags`, tuỳ chọn `kind`), khớp theo id `way/…` / `relation/…` ở cột `source_id` (hoặc `osm_id`, `building_id`…). Để trống ô file thì app dùng snapshot OSM mới nhất của Canonical (`canonical/sources/osm/*/osm.parquet`) phủ hết vùng của file. Không có tag OSM thì chỉ các quy tắc theo diện tích, số tầng, chiều cao còn tác dụng; log và báo cáo ghi rõ số feature khớp được tag.
+- **Số đo**: diện tích footprint (= GFA, B-05 §4.1) tính trên ellipsoid từ geometry; số tầng từ thẻ `building:levels`, không có thì từ cột số tầng đã chọn ở phần Chiều cao (0 = trống); chiều cao là `height_m` app tính ([mục 4](#4-chiều-cao-height_m)).
+- **`building:part`** (cột `is_part`, hoặc `kind = part` / thẻ `building:part` trong tag OSM) không qua Rule Engine: kế thừa `building_tier`, `tier_rule`, `tier_basis` từ footprint nhỏ nhất chứa `ST_PointOnSurface` của part. Part không nằm trong footprint nào để trống tier (B-05 chưa quy định) và được liệt kê trong log.
+- Báo cáo có mục **Building tier v2**: số lượng theo tier, `tier_rule`, `tier_basis`, `height_class` và cờ QC.
 
 Mọi cột gốc được giữ nguyên trong GeoPackage, trừ khi bạn bỏ tick. PMTiles chỉ chứa các thuộc tính được chọn, mặc định là: `building_id, height_m, min_height, has_parts, is_part, parent_building_id, building_tier`. Khi bật **Theo schema** (tự bật với parquet canonical), PMTiles chứa đúng các field của schema VMAP, xem [Schema PMTiles của VMAP](#schema-pmtiles-của-vmap).
 
@@ -541,7 +556,7 @@ Dữ liệu nằm trong thư mục `landmarks/` cạnh `output/`. Thư mục nà
 Landmark gắn với **dataset và `building_id`** của Canonical Building Data, không gắn với một file PMTiles. `building_id` là UUID của canonical, giữ nguyên qua các build, cũng là id app Mobile dùng để nhận ra landmark. Record lưu thêm `dataset` (vd `hanoi`) và `source_id` (way OSM của toà).
 
 - **Mỗi build tìm lại toà của từng landmark**: theo `building_id`, rồi theo `source_id` OSM, cuối cùng theo footprint (IoU ≥ 0,50). Kết quả nằm trong `build.json` (`landmarks.ids`) và báo cáo.
-- **Toà có landmark bị khoá**: giữ `building_id`, `resolution_mode = manual`, `decided_by = landmark`, `building_tier = T1_iconic`. Footprint nguồn đổi nhiều (IoU < 0,90 so với footprint lúc đăng ký) thì giữ footprint cũ và cảnh báo `landmark_footprint_changed`.
+- **Toà có landmark bị khoá**: giữ `building_id`, `resolution_mode = manual`, `decided_by = landmark` (với luật v1 còn `building_tier = T1_iconic`). Footprint nguồn đổi nhiều (IoU < 0,90 so với footprint lúc đăng ký) thì giữ footprint cũ và cảnh báo `landmark_footprint_changed`.
 - **Mất toà** (way OSM bị xoá, toà bị tách…): build vẫn chạy, giữ footprint cũ của landmark với cùng `building_id` (`winning_source = landmark`), ghi cảnh báo `landmark_lost` vào báo cáo và `review_osm.gpkg`.
 - **Landmark đăng ký trước đây trên base OSM** (`building_id` = `way/…`) được chuyển sang UUID ở build canonical đầu tiên có toà đó. Lịch sử ghi *Gắn với canonical*, id cũ giữ ở `source.building_id`, nên base OSM vẫn vẽ được landmark.
 - **Tải manifest** ghi `building_id` (UUID), `source_id` và `dataset` của từng landmark.

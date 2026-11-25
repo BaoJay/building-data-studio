@@ -310,7 +310,33 @@ def render_markdown(report: dict[str, Any], title: str) -> str:
             for r in ov["top"]:
                 lines.append("| " + " | ".join(str(r.get(k, "")) for k in keys)
                              + f" | {r['center'][1]:.6f}, {r['center'][0]:.6f} |")
+    if report.get("building_tier"):
+        lines += _tier_lines(report["building_tier"])
     return "\n".join(lines) + "\n"
+
+
+def _tier_lines(t: dict[str, Any]) -> list[str]:
+    """[B-05] Building Tier v2: counts by tier, rule / basis, height_class, QC flags, tag sources."""
+    total = t["total"] or 1
+
+    def table(title: str, head: str, counts: dict[str, int]) -> list[str]:
+        return ["", f"### {title}", "", f"| {head} | Số lượng | % |", "|---|---:|---:|",
+                *[f"| {k or '(trống)'} | {v:,} | {100 * v / total:.2f} |" for k, v in counts.items()]]
+
+    lines = ["", "## Building tier v2 ([B-05])", "",
+             (f"- Tag OSM: {t['osm_tags_found']:,}/{t['with_osm_id']:,} feature có id OSM khớp file "
+              f"`{t['osm_tags_file'] or '(không có)'}` (id ở cột `{t['osm_id_col'] or '-'}`); "
+              f"cột tag trong file: {', '.join(t['tag_columns']) or '(không có)'}; "
+              f"số tầng: `{t['levels_col'] or 'building:levels'}`"),
+             f"- building:part: {t['parts']:,} kế thừa tier từ footprint cha"
+             + (f", **{t['parts_without_parent']:,} không có footprint cha** (để trống tier)" if t["parts_without_parent"] else "")]
+    lines += table("building_tier", "Tier", t["counts"])
+    lines += table("tier_rule", "tier_rule", t["tier_rule"])
+    lines += table("tier_basis", "tier_basis", t["tier_basis"])
+    lines += table("height_class", "height_class", t["height_class"])
+    if t["flags"]:
+        lines += table("qc_flags", "Cờ", t["flags"])
+    return lines
 
 
 def _schema_lines(ts: dict[str, Any]) -> list[str]:

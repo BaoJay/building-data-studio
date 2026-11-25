@@ -292,7 +292,8 @@ def convert_config(area: Area, root: Path, attribution: str) -> JobConfig:
         parts=("building_id", "parent_building_id"),
         tiles=TilesConfig(layer=schema.layer, minzoom=schema.minzoom, maxzoom=schema.maxzoom,
                           attributes=tuple(schema.fields), schema=schema, attribution=attribution),
-        category_cols=("height_provenance", "building_tier", "winning_source"),
+        category_cols=("height_provenance", "building_tier", "height_class", "tier_rule", "tier_basis",
+                       "winning_source"),
         report_id_col="building_id", keep_temp=False,
     )
 

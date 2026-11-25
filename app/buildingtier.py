@@ -605,8 +605,12 @@ def building_tier_v2(con: Any, **_: Any) -> None:
 
     from .osmtags import parse_levels
 
-    rows = con.execute("""SELECT c.node, c.kind = 'part', b.node, c.area, c.tags, c.levels, c.height_m
-                          FROM canon AS c LEFT JOIN canon AS b ON c.kind = 'part' AND b.key = 'osm:' || c.parent_source_id""").fetchall()
+    # Equi-join only: a non-key condition in the ON turns it into a nested loop (minutes at city scale).
+    rows = con.execute("""SELECT c.node, c.part, b.node, c.area, c.tags, c.levels, c.height_m
+                          FROM (SELECT *, kind = 'part' AS part,
+                                       CASE WHEN kind = 'part' THEN 'osm:' || parent_source_id END AS parent_key
+                                FROM canon) AS c
+                          LEFT JOIN canon AS b ON b.key = c.parent_key""").fetchall()
     out: dict[int, tuple[Any, ...]] = {}
     for node, part, _, area, tags, levels, h in rows:
         if not part:

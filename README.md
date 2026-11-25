@@ -407,7 +407,7 @@ Kéo file `.gpkg` vào QGIS, chuột phải layer → **Filter…**:
 
 ### Schema PMTiles của VMAP
 
-PMTiles publish cho app Mobile / web theo schema đã thống nhất với VMAP. Schema lưu ở [`schemas/vmap-buildings.json`](schemas/vmap-buildings.json), lấy từ `vector_layers` của TileJSON `building_v7_20261028.pmtiles`: layer `buildings`, zoom 13–16, 21 field.
+PMTiles publish cho app Mobile / web theo schema đã thống nhất với VMAP. Schema lưu ở [`schemas/vmap-buildings.json`](schemas/vmap-buildings.json), lấy từ `vector_layers` của TileJSON `building_v7_20261028.pmtiles`: layer `buildings`, zoom 13–16, 21 field, cộng 3 field của Building Tier v2 (`height_class`, `tier_rule`, `tier_basis`) để trang xem 3D hiện được.
 
 Trong tab **Convert**, nhóm PMTiles có ô **Theo schema `vmap-buildings`**. Ô này tự bật khi file có từ 40 % field của schema trở lên; parquet canonical có đủ. Khi bật:
 

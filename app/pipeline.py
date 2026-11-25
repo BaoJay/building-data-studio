@@ -747,7 +747,8 @@ class Pipeline(StagedPipeline):
             height_col=(RAW_HEIGHT_FIELD if rule.height_col == HEIGHT_FIELD else rule.height_col) if rule else None,
             levels_col=rule.levels_col if rule else None,
             prov_col=rule.prov_col if rule else None,
-            category_cols=cfg.category_cols,
+            # Tier v2: its columns are always broken down in the report.
+            category_cols=tuple(dict.fromkeys([*cfg.category_cols, *(buildingtier.V2_COLUMNS[:4] if cfg.tier else ())])),
         )
         report = build_report(self.normalized, spec)
         report["accounting"] = self.accounting

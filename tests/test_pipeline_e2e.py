@@ -286,3 +286,27 @@ def test_pmtiles_follow_the_tile_schema(canonical_parquet: Path, tmp_path: Path)
     assert chk["matched"] == 8  # building_id, h_m, height, height_m, height_provenance, min_height, status, updated_at
     md = Path(result["outputs"]["report_md"]["path"]).read_text(encoding="utf-8")
     assert "## Schema PMTiles `vmap-buildings`" in md and "superseded_by" in md
+
+
+def test_footprint_overlap_report(tmp_path: Path) -> None:
+    def box(x0: float, w: float) -> list:
+        x, y = 106.70 + x0, 10.77
+        return [[[x, y], [x + w, y], [x + w, y + 0.0005], [x, y + 0.0005], [x, y]]]
+
+    # X and Y share half of X; Z is alone; P is a part of X (overlaps by design, left out).
+    shapes = [("X", None, box(0, 0.0005)), ("Y", None, box(0.00025, 0.001)),
+              ("Z", None, box(0.01, 0.0005)), ("P", "X", box(0, 0.0005))]
+    src = tmp_path / "ov.geojson"
+    src.write_text(json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"building_id": b, "parent_building_id": p, "height_m": 10.0},
+         "geometry": {"type": "Polygon", "coordinates": c}} for b, p, c in shapes]}), encoding="utf-8")
+    cfg = _config(src, tmp_path / "out", output={"pmtiles": False},
+                  height={"prov_col": None}, report={"category_cols": []})
+    ov = _run(cfg)["report"]["overlap"]
+    # X = 1 unit, Y = 2 units, Z = 1 unit, overlap = 0.5 unit -> 0.5 / 4.
+    assert ov["ratio_pct"] == pytest.approx(12.5, abs=0.1)
+    assert (ov["pairs"], ov["overlapping_footprints"], ov["footprints"]) == (1, 2, 3)
+    top = ov["top"]
+    assert [(r["building_id"], r["worst_with"]) for r in top] == [("X", "Y"), ("Y", "X")]
+    assert top[0]["overlap_pct"] == pytest.approx(50, abs=0.5)
+    assert top[0]["center"][1] == pytest.approx(10.77025, abs=1e-6)

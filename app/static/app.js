@@ -1162,9 +1162,25 @@ function renderReport(job) {
     html += section(`Outlier (${fmtInt(h.outlier_count)})`, "giá trị gốc ngoài khoảng hợp lệ — cần kiểm tra lại dữ liệu nguồn", featureTable(r.outliers, pm, idCol, true));
     html += section("Cao nhất (hợp lệ)", "top 20 theo height_m", featureTable(r.tallest, pm, idCol, false));
   }
+  const ov = r.overlap;
+  if (ov) {
+    html += section(`Footprint chồng lấn: ${fmtNum(ov.ratio_pct, 3)}%`,
+      `Σ diện tích giao từng cặp / Σ diện tích footprint = ${fmtInt(ov.overlap_m2)} / ${fmtInt(ov.total_m2)} m² · ${fmtInt(ov.pairs)} cặp ≥ ${ov.min_m2} m² · ${fmtInt(ov.overlapping_footprints)}/${fmtInt(ov.footprints)} footprint bị chồng${ov.parts_excluded ? " · không tính khối con" : ""} · top ${ov.top.length} theo % diện tích bị đè`,
+      featureTable(ov.top, pm, idCol || "feature_fid", false,
+        { ...OVERLAP_TIPS, ...(idCol ? { [idCol]: `id của footprint bị chồng lấn (cột ${idCol})` } : {}) }));
+  }
   const md = job.outputs.report_md;
   if (md) html += `<div class="out-actions"><a class="btn small" href="/api/files/${esc(md.token)}?download=1" download>Tải báo cáo .md</a><a class="btn small" href="/api/files/${esc(job.outputs.report_json.token)}?download=1" download>Tải báo cáo .json</a></div>`;
   $("#report").innerHTML = html;
+  $$("#report [data-copy]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(b.dataset.copy);
+      b.textContent = "Đã copy";
+      setTimeout(() => { b.textContent = "Copy lat,long"; }, 1500);
+    } catch {
+      window.prompt("Trình duyệt chặn clipboard, copy thủ công:", b.dataset.copy);
+    }
+  }));
 }
 
 // How the written PMTiles compares with the tile schema, and what the data lacked or added.
@@ -1189,11 +1205,20 @@ function schemaReport(ts) {
   return `<div class="alert warn"><span class="icon">!</span><div>${head} ${esc([...problems, ...notes].join(" "))}</div></div>`;
 }
 
-function featureTable(rows, pm, idCol, isOutlier) {
+const OVERLAP_TIPS = {
+  area_m2: "Diện tích footprint này (m²)",
+  overlap_m2: "Tổng diện tích phần giao với mọi footprint khác (m², cộng từng cặp, mỗi cặp ≥ 1 m²)",
+  overlap_pct: "overlap_m2 / area_m2 × 100. Trên 100% nghĩa là có nhiều footprint đè chồng lên cùng một chỗ (thường là dữ liệu trùng)",
+  overlaps: "Số footprint khác đè lên footprint này",
+  worst_with: "Footprint đè lên footprint này nhiều nhất (theo m² giao)",
+  feature_fid: "fid của footprint trong GeoPackage (input không có cột id)",
+};
+
+function featureTable(rows, pm, idCol, isOutlier, tips = {}) {
   if (!rows?.length) return `<p class="hint">Không có.</p>`;
   const skip = new Set(["bbox", "center", "fid"]);
   const keys = Object.keys(rows[0]).filter((k) => !skip.has(k));
-  const head = `<tr>${keys.map((k) => `<th class="${typeof rows[0][k] === "number" ? "n" : ""}">${esc(k)}${k === "height_m" && isOutlier ? " (sau xử lý)" : ""}</th>`).join("")}<th></th></tr>`;
+  const head = `<tr>${keys.map((k) => `<th class="${typeof rows[0][k] === "number" ? "n" : ""}"${tips[k] ? ` title="${esc(tips[k])}"` : ""}>${esc(k)}${k === "height_m" && isOutlier ? " (sau xử lý)" : ""}</th>`).join("")}<th></th></tr>`;
   const body = rows.map((r) => {
     const cells = keys.map((k) => {
       const v = r[k];
@@ -1206,6 +1231,8 @@ function featureTable(rows, pm, idCol, isOutlier) {
       if (idCol && r[idCol] != null) Object.assign(params, { idcol: idCol, id: String(r[idCol]) });
       link = pm ? `<a class="btn small" href="${previewUrl(pm.token, params)}" target="_blank" rel="noopener">Xem 3D</a>`
         : `<span class="hint mono">${r.center[1].toFixed(5)}, ${r.center[0].toFixed(5)}</span>`;
+      const ll = `${r.center[1].toFixed(6)},${r.center[0].toFixed(6)}`;
+      link += ` <button type="button" class="btn small" data-copy="${ll}" title="Copy lat,long: ${ll}">Copy lat,long</button>`;
     }
     return `<tr>${cells}<td>${link}</td></tr>`;
   }).join("");

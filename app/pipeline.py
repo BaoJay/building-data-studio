@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import __version__, probe, shadows, tileschema, tools, vmap
+from . import __version__, overlap, probe, shadows, tileschema, tools, vmap
 from .jobs import FileRegistry, Job, Step
 from .probe import GENERATED_FIELDS, ProbeError
 from .probe import quote_ident as q
@@ -511,6 +511,7 @@ class Pipeline(StagedPipeline):
         if cfg.want_gpkg and not _same_crs(cfg.gpkg_crs, WGS84):
             steps.append(Step("reproject", f"Đổi hệ toạ độ GPKG → {cfg.gpkg_crs}"))
         steps.append(Step("report", "Báo cáo chiều cao"))
+        steps.append(Step("overlap", "Tỷ lệ footprint chồng lấn"))
         if cfg.want_csv:
             steps.append(Step("csv", "Xuất CSV cho QC (Excel, Google Sheets)"))
         if cfg.want_pmtiles:
@@ -688,6 +689,24 @@ class Pipeline(StagedPipeline):
                 f"Chiều cao thực: {height['real_count']:,}/{report['total']:,} ({height['real_pct']}%), "
                 f"outlier: {height['outlier_count']:,}, {HEIGHT_FIELD} trung vị {s['median']} m, max {s['max']} m"
             )
+
+    def _step_overlap(self, step: Step) -> None:
+        if self.info["geometry"]["nlt"] != "MULTIPOLYGON":
+            step.detail = "Bỏ qua: không phải polygon"
+            return
+        try:
+            section = overlap.overlap_section(self.normalized, self.cfg.gpkg_layer, GEOM_NAME,
+                                              (self.job.report or {}).get("id_col"), self.work,
+                                              lambda cmd: self._run(cmd, step))
+        except Exception as exc:  # QA only: never fail the convert over it
+            step.detail = "Lỗi, bỏ qua"
+            self.job.add_log(f"CẢNH BÁO: không tính được chồng lấn footprint: {exc}")
+            return
+        with self.job.lock:
+            self.job.report = {**(self.job.report or {}), "overlap": section}
+        step.detail = f"{section['ratio_pct']}% diện tích"
+        self.job.add_log(f"Chồng lấn: {section['overlap_m2']:,} / {section['total_m2']:,} m² "
+                         f"({section['ratio_pct']}%), {section['pairs']:,} cặp ≥ {section['min_m2']:g} m²")
 
     def _step_fgb(self, step: Step) -> None:
         cfg = self.cfg

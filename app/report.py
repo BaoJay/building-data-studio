@@ -297,6 +297,19 @@ def render_markdown(report: dict[str, Any], title: str) -> str:
         for r in report["outliers"]:
             center = f"{r['center'][0]:.6f}, {r['center'][1]:.6f}" if r.get("center") else ""
             lines.append("| " + " | ".join(str(r.get(k, "")) for k in keys) + f" | {center} |")
+    ov = report.get("overlap")
+    if ov:
+        lines += ["", "## Footprint chồng lấn", "",
+                  f"- Tỷ lệ chồng lấn = Σ diện tích giao từng cặp / Σ diện tích footprint = "
+                  f"{ov['overlap_m2']:,} / {ov['total_m2']:,} m² = **{ov['ratio_pct']}%**",
+                  f"- {ov['pairs']:,} cặp chồng nhau (≥ {ov['min_m2']:g} m²), {ov['overlapping_footprints']:,}/"
+                  f"{ov['footprints']:,} footprint bị chồng" + (" · không tính khối con" if ov["parts_excluded"] else "")]
+        if ov["top"]:
+            keys = [k for k in ov["top"][0] if k != "center"]
+            lines += ["", "| " + " | ".join(keys) + " | lat, long |", "|" + "---|" * (len(keys) + 1)]
+            for r in ov["top"]:
+                lines.append("| " + " | ".join(str(r.get(k, "")) for k in keys)
+                             + f" | {r['center'][1]:.6f}, {r['center'][0]:.6f} |")
     return "\n".join(lines) + "\n"
 
 
